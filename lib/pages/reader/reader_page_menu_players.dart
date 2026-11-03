@@ -33,7 +33,7 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
             ),
           ),
           if (video)
-            // 87 = 听书钮的下边距 20 + 直径 42 + 两颗钮之间 11 的间隙；两颗
+            // 73 = 听书钮的下边距 20 + 直径 42 + 两颗钮之间 11 的间隙；两颗
             // 钮一起缩到 42 后这条留白得跟着收，否则「看」会飘到正文里。
             Padding(
               padding: const EdgeInsets.only(right: 16, bottom: 73),

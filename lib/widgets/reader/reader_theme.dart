@@ -74,8 +74,7 @@ extension ReaderThemeColors on ReaderThemePreset {
   /// The wash behind a text selection. 官方 markingConfig.b()(ReaderViewLayout
   /// 的 ie5.a 实现)= un4.j.C(theme, 0.16f) —— 强调色 @ 16%,C 会整体重设
   /// alpha,所以夜间也是 16% 橙。
-  Color get selectionWashColor =>
-      selectionAccentColor.withValues(alpha: 0.16);
+  Color get selectionWashColor => selectionAccentColor.withValues(alpha: 0.16);
 
   /// 控点实色(un4.j.t):夜间降到 60% 的橙,其余主题用强调色原色。
   Color get selectionHandleColor =>
@@ -96,6 +95,12 @@ extension ReaderThemeColors on ReaderThemePreset {
   Color get narrationHighlightColor => isEink
       ? Colors.black.withValues(alpha: 0.10)
       : Color.alphaBlend(textColor.withValues(alpha: 0.10), backgroundColor);
+
+  /// Dialogue uses a quiet theme accent, separate from the playback color.
+  Color get dialogueHighlightColor => Color.alphaBlend(
+    accentColor.withValues(alpha: isDark ? 0.18 : 0.12),
+    backgroundColor,
+  );
 
   Color get panelColor {
     if (isEink) return Colors.white;
@@ -121,6 +126,7 @@ extension ReaderThemeColors on ReaderThemePreset {
     if (isOled) return const Color(0xFF2E2E34);
     return textColor.withValues(alpha: 0.09);
   }
+
   /// 排版面板表面 = 阅读页背景本身(官方 bottombar/t.java 直接把面板根
   /// View 设为 readerConfig.getBackgroundColor(),面板与页面同色);chip/
   /// 控件底色另走 fieldColor(官方是白色 5% 叠加,x4 色表)。
@@ -193,9 +199,7 @@ extension ReaderThemeColors on ReaderThemePreset {
             surfaceContainerLow: isOled ? const Color(0xFF0C0C0E) : null,
             surfaceContainer: isOled ? const Color(0xFF121215) : null,
             surfaceContainerHigh: isOled ? const Color(0xFF17171A) : null,
-            surfaceContainerHighest: isOled
-                ? const Color(0xFF1F1F23)
-                : null,
+            surfaceContainerHighest: isOled ? const Color(0xFF1F1F23) : null,
             outlineVariant: isOled ? const Color(0xFF2E2E34) : null,
           );
     return base.copyWith(

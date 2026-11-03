@@ -7,8 +7,9 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
   /// chapter can never answer a drag.
   ReaderSelectionScope _marksScopeFor(
     ReaderThemePreset preset,
-    ReaderChapterLayout layout,
-  ) {
+    ReaderChapterLayout layout, {
+    bool active = true,
+  }) {
     // 用户自定义高亮色优先，null 时跟随主题按背景派生。
     final custom = _preferences.narrationHighlightColor;
     // 样式：显式选了就用它，否则墨水屏下划线、其余背景色块。
@@ -21,21 +22,39 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
       (false, final int? c) =>
         c == null ? preset.narrationHighlightColor : Color(c),
     };
-    if (_marksScope == null ||
-        !identical(_marksScopeLayout, layout) ||
-        _marksScope!.narrationColor != narration ||
-        _marksScope!.narrationUnderline != narrationUnderline) {
-      _marksScope = ReaderSelectionScope(
-        geometry: ReaderSelectionGeometry(),
-        washColor: preset.selectionWashColor,
-        handleColor: preset.selectionHandleColor,
-        underlineColor: preset.selectionUnderlineColor,
-        narrationColor: narration,
-        narrationUnderline: narrationUnderline,
-      );
+    final dialogueUnderline = _preferences.dialogueUnderlineFor(preset);
+    final dialogueColor = dialogueUnderline
+        ? preset.accentColor
+        : preset.dialogueHighlightColor;
+    final dialogueRanges = _preferences.dialogueHighlight
+        ? layout.dialogueRangesByBlock
+        : const <int, List<(int, int)>>{};
+    if (active &&
+        _marksScope != null &&
+        identical(_marksScopeLayout, layout) &&
+        _marksScope!.narrationColor == narration &&
+        _marksScope!.narrationUnderline == narrationUnderline &&
+        identical(_marksScope!.dialogueRangesByBlock, dialogueRanges) &&
+        _marksScope!.dialogueColor == dialogueColor &&
+        _marksScope!.dialogueUnderline == dialogueUnderline) {
+      return _marksScope!;
+    }
+    final scope = ReaderSelectionScope(
+      geometry: ReaderSelectionGeometry(),
+      washColor: preset.selectionWashColor,
+      handleColor: preset.selectionHandleColor,
+      underlineColor: preset.selectionUnderlineColor,
+      narrationColor: narration,
+      narrationUnderline: narrationUnderline,
+      dialogueRangesByBlock: dialogueRanges,
+      dialogueColor: dialogueColor,
+      dialogueUnderline: dialogueUnderline,
+    );
+    if (active) {
+      _marksScope = scope;
       _marksScopeLayout = layout;
     }
-    return _marksScope!;
+    return scope;
   }
 
   /// The drag handles, floated above the content: handles living inside a
