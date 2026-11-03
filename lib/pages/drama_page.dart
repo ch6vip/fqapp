@@ -205,6 +205,34 @@ DramaChannel? serverChannelOf(ChannelTab tab) {
   }
 }
 
+/// 频道条去重：同一频道在服务端表里出现多次时只留第一条。
+///
+/// `ChannelTable.fromPayload` 对 `tab_item` 是原序透传、不去重的（模型层故意
+/// 忠实反映上游），所以上游重复下发同一个 `tab_type` 时，频道条上就是两个一模
+/// 一样的标签（真机出现过两个「漫剧」）。
+///
+/// 判据用频道**身份**而不是 `serverType`：[serverChannelOf] 本来就把 8 与 4 归成
+/// 同一个 case（看剧），按 serverType 去重会留下两条看剧。可见名字再兜一层：
+/// 两个不同频道顶着同一个 title 时，用户在频道条上分不出谁是谁，留第一条
+/// （官方 `m0` 也是先到先得）。
+List<DramaChannel> dedupeChannels(List<DramaChannel> channels) {
+  final kept = <DramaChannel>[];
+  final identities = <String>{};
+  final labels = <String>{};
+  for (final channel in channels) {
+    final identity =
+        '${channel.source.name}:${channel.tabIndex}:${channel.kind}';
+    final label = channel.label.trim();
+    // 先查后占：如果在这里就 `identities.add`，后面因名字重复被拦下的那条
+    // 会白占一个身份，把同身份的合法频道也一并吞掉（整个频道从频道条上消失）。
+    if (identities.contains(identity) || labels.contains(label)) continue;
+    identities.add(identity);
+    labels.add(label);
+    kept.add(channel);
+  }
+  return kept;
+}
+
 /// 搜索行高度（首页 `fua` 的 51dp）：6dp 上留白 + 36dp 框体 + 9dp 下留白。
 /// 原先沿用 `ap4.xml` 的 38dp，上下只剩 1dp，频道标签几乎贴着搜索框。
 const _dramaSearchRowHeight = 51.0;
@@ -325,6 +353,17 @@ class DramaPage extends ConsumerStatefulWidget {
 int dramaDesktopColumns(BuildContext context) =>
     (MediaQuery.sizeOf(context).width / 190).floor().clamp(3, 9);
 
+/// 某个频道上次真正渲染时的形状与内容，横滑时用来画邻页预览。
+///
+/// 只存数据不存 widget：短剧的内容带着活的接线（`_pages` 控制器、瀑布格的
+/// `NotificationListener`、PageView 的 `onPageChanged`），同屏两份会互相抢。
+typedef _ChannelSnapshot = ({
+  bool isFeed,
+  int columns,
+  int titleMaxLines,
+  List<MediaItem> items,
+});
+
 class _DramaPageState extends ConsumerState<DramaPage>
     with WidgetsBindingObserver {
   /// 顶栏在本页内容上方占的高度：移动端是搜索行 + 频道条两行；桌面端
@@ -341,6 +380,16 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   final PageController _pages = PageController();
   int _channel = 0;
+
+  /// 每个频道上次渲染时的形状与内容：横滑时给邻页画惰性副本用。
+  ///
+  /// 首页那边可以直接缓存 sliver 树，短剧不行——这里的内容由 `_pages`
+  /// 控制器驱动、瀑布格的 `NotificationListener` 触底会 `loadMore`、PageView 的
+  /// `onPageChanged` 会 `setState` 换屏，同屏摆两份就会抢同一个控制器、把邻页的
+  /// 滚动通知当成当前频道的。所以只存数据，预览另画一份不带接线的副本。
+  final Map<int, _ChannelSnapshot> _channelSnapshots = {};
+  double? _snapshotWidth;
+  double? _snapshotTextScale;
   String? _openingId;
 
   /// 最近/收藏频道处于官方编辑模式（`S()`）。官方进编辑时把 SeriesMall 的
@@ -591,11 +640,12 @@ class _DramaPageState extends ConsumerState<DramaPage>
       return;
     }
     if (!mounted) return;
-    final mapped = <DramaChannel>[];
+    final raw = <DramaChannel>[];
     for (final tab in table.tabs) {
       final channel = serverChannelOf(tab);
-      if (channel != null) mapped.add(channel);
+      if (channel != null) raw.add(channel);
     }
+    final mapped = dedupeChannels(raw);
     final isSeriesmallStrip = mapped.any(
       (channel) =>
           channel.serverType == kChannelVideoFeed && channel.label == '推荐',
@@ -629,6 +679,13 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _channels = List.unmodifiable(mapped);
       _channel = index;
       _screenIndex = 0;
+      // 换表 = 同一个下标对应的频道变了，旧快照（列数 / 是不是视频流 /
+      // items）全部作废。不清就会拿旧视频流的 `columns: 0` 去画新表里排在同一
+      // 个下标的瀑布格，`SliverGridDelegateWithFixedCrossAxisCount` 直接
+      // assert（release 下是除零）。
+      _channelSnapshots.clear();
+      _snapshotWidth = null;
+      _snapshotTextScale = null;
     });
     // 频道表换了以后，**订阅流也要跟着换**：否则频道条高亮的是新频道，
     // 下面的 feed 还是旧的，两边对不上。这里复用 `_selectChannel` 的同一条
@@ -796,18 +853,24 @@ class _DramaPageState extends ConsumerState<DramaPage>
     // 记住这次选择（官方把 `tab_type` 写回 SP）：下次冷启动直接落在这里。
     final type = channel.serverType;
     if (type != null) unawaited(DramaChannelPreferences.save(type));
-    // 壳层的 dock / 系统导航栏跟着频道换肤（推荐＝深色，浅色页＝画布色）。
-    dramaLightPageNotifier.value = !channel.playsInline;
     // Local channels read this device's own data; switching the provider would
     // silently load a feed nobody asked for.
     if (channel.isFeed) {
       ref.read(dramaProvider.notifier).selectTab(channel.tabIndex);
     }
-    if (!channel.playsInline) {
-      // Grids and local lists have no inline video: free any hidden decoder.
-      unawaited(_inline.releaseAll());
-    }
+    // 换频道回第一集：**必须在这一帧之前**做完。`_pages` 是各 feed 频道共用的
+    // controller，挪到帧后的话，feed→feed 切换会先按旧页码画一帧（旧频道停在
+    // 第 N 集，新频道也就闪出第 N 集）再跳回第一集。
     if (_pages.hasClients) _pages.jumpToPage(0);
+    // 下面两件都不影响这一帧的画面（新内容由上面的 setState 重建），却都不
+    // 便宜：换肤会把整壳的重建+毛玻璃切换排在同一帧，释放解码器要跟平台线程
+    // 打交道。挤在切频道那一帧里做，真机上就是「内容换完了、画面还顿一下」。
+    // 挪到帧后：dock 颜色晚一帧、旧播放器晚一帧释放，肉眼看不出来。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || index != _channel) return;
+      dramaLightPageNotifier.value = !channel.playsInline;
+      if (!channel.playsInline) unawaited(_inline.releaseAll());
+    });
   }
 
   /// A vertical drag pauses first: the new card may only start after the feed
@@ -1383,6 +1446,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
     final state = ref.watch(dramaProvider);
     final channel = _current;
     final items = _visibleItems(state);
+    // 横滑时要给邻页画预览，先把本频道这一帧的形状与内容记下来。
+    _rememberChannel(_channel, channel, items);
     // 浅色页（看剧/漫剧/最近/收藏）跟随外观色板：深色 / OLED 下不能再用
     // 白底深字，否则整页和主题完全脱节。视频流仍固定黑底。
     final palette = HomePalette.of(context);
@@ -1426,6 +1491,10 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 index: _channel,
                 count: _channels.length,
                 onSelect: _selectChannel,
+                // 拖动时把邻页真的画出来。短剧的顶栏本来就在滑动区外面（不会被
+                // 遮），但内容移开后那一侧原本只剩页面底色——深色视频频道下就是一
+                // 块黑面板，和首页修掉的是同一个观感问题。
+                previewBuilder: _buildChannelPreview,
                 // 播放器打开、弹窗、最近频道编辑时都不该被横滑打断。
                 enabled: !_modalOpen && _openingId == null && !_recentEditing,
                 // 整片横滑都切频道，播放流也一样。唯一的例外是底部进度条：
@@ -1433,44 +1502,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 // 其余区域一律切频道（见 TabSwipeArea 的类文档）。
                 // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
                 // 选中项，不被动画拖着走。
-                child: switch (channel) {
-                  DramaChannel(
-                    source: DramaChannelSource.feed,
-                    kind: 'manju',
-                  ) =>
-                    _browseGrid(
-                      state,
-                      items,
-                      columns: 3,
-                      gridKey: 'drama_manju_grid',
-                      titleMaxLines: 1,
-                    ),
-                  DramaChannel(
-                    source: DramaChannelSource.feed,
-                    serverType: kChannelVideoEpisode,
-                  ) =>
-                    _browseGrid(
-                      state,
-                      items,
-                      columns: 3,
-                      gridKey: 'drama_episode_grid',
-                      titleMaxLines: 2,
-                    ),
-                  DramaChannel(source: DramaChannelSource.feed) => _feed(
-                    state,
-                    items,
-                  ),
-                  _ => _LocalList(
-                    channel: channel,
-                    // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
-                    onOpen: _openDetail,
-                    onPlay: _openPlayer,
-                    onFind: () => _selectChannel(0),
-                    onEditingChanged: (editing) {
-                      if (mounted) setState(() => _recentEditing = editing);
-                    },
-                  ),
-                },
+                child: _channelBody(channel, state, items),
               ),
             ),
             Positioned(
@@ -1546,6 +1578,165 @@ class _DramaPageState extends ConsumerState<DramaPage>
                 child: _SwipeUpHint(visible: _guideVisible),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 频道的瀑布格形状（列数 / gridKey / 片名行数）；不是瀑布格返回 null。
+  ///
+  /// 真正的渲染分支（[_channelBody]）和横滑预览（[_buildChannelPreview]）都读
+  /// 这一处，免得两处判据走偏——之前这两条判据写在 build 的 switch 里，想复用
+  /// 就得抄一遍。
+  ({int columns, String gridKey, int titleMaxLines})? _gridShape(
+    DramaChannel channel,
+  ) {
+    if (channel.source != DramaChannelSource.feed) return null;
+    if (channel.kind == 'manju') {
+      return (columns: 3, gridKey: 'drama_manju_grid', titleMaxLines: 1);
+    }
+    if (channel.serverType == kChannelVideoEpisode) {
+      return (columns: 3, gridKey: 'drama_episode_grid', titleMaxLines: 2);
+    }
+    return null;
+  }
+
+  /// 当前频道的内容。渲染走这里，横滑预览走 [_buildChannelPreview]，
+  /// 两边共用 [_gridShape] 判据。
+  Widget _channelBody(
+    DramaChannel channel,
+    HomeState state,
+    List<MediaItem> items,
+  ) {
+    final grid = _gridShape(channel);
+    if (grid != null) {
+      return _browseGrid(
+        state,
+        items,
+        columns: grid.columns,
+        gridKey: grid.gridKey,
+        titleMaxLines: grid.titleMaxLines,
+      );
+    }
+    if (channel.source == DramaChannelSource.feed) {
+      return _feed(state, items);
+    }
+    return _LocalList(
+      channel: channel,
+      // 官方最近/收藏卡点击都直接进播放页续播，不经过详情页。
+      onOpen: _openDetail,
+      onPlay: _openPlayer,
+      onFind: () => _selectChannel(0),
+      onEditingChanged: (editing) {
+        if (mounted) setState(() => _recentEditing = editing);
+      },
+    );
+  }
+
+  /// 记下当前频道这一帧的形状与内容，供横滑时给邻页画预览。
+  ///
+  /// 视口宽度或字号档变了就整批丢掉：副本是按当时的列数与卡宽画的，留着会画歪。
+  void _rememberChannel(
+    int index,
+    DramaChannel channel,
+    List<MediaItem> items,
+  ) {
+    final width = MediaQuery.sizeOf(context).width;
+    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    if (_snapshotWidth != width || _snapshotTextScale != textScale) {
+      _channelSnapshots.clear();
+      _snapshotWidth = width;
+      _snapshotTextScale = textScale;
+    }
+    final grid = _gridShape(channel);
+    _channelSnapshots[index] = (
+      isFeed: grid == null && channel.source == DramaChannelSource.feed,
+      columns: grid?.columns ?? 0,
+      titleMaxLines: grid?.titleMaxLines ?? 0,
+      items: items,
+    );
+  }
+
+  /// 横滑时「正在进来」的那一页。
+  ///
+  /// 短剧的顶栏本来就在滑动区外面（不会被遮），但内容移开后那一侧原本只剩页面
+  /// 底色——深色视频频道下就是一块黑面板，和首页修掉的是同一个观感问题。这里把
+  /// 邻页真的画出来：进过、内容还在的频道画惰性副本；没进过的铺上真内容那条形
+  /// 「正在刷新内容」的提示，至少不是一块底色。
+  Widget _buildChannelPreview(int target) {
+    if (target < 0 || target >= _channels.length) {
+      return const SizedBox.shrink();
+    }
+    final channel = _channels[target];
+    // 底色跟着目标频道走：视频流是黑底，海报格/本机列表是画布色。用错就会在
+    // 切过去之前先看到一块错色的板。
+    final background = channel.playsInline
+        ? Colors.black
+        : HomePalette.of(context).canvas;
+    final snapshot = _channelSnapshots[target];
+    final grid = _gridShape(channel);
+    final seen = snapshot != null && snapshot.items.isNotEmpty;
+    final Widget body;
+    if (seen && grid != null) {
+      body = _previewGrid(snapshot);
+    } else if (seen && snapshot.isFeed) {
+      body = _previewFeedPoster(snapshot.items.first);
+    } else if (channel.isFeed && channel.playsInline) {
+      body = const _FeedMessage(message: '正在刷新内容', showSpinner: true);
+    } else {
+      body = const _GridMessage(message: '正在刷新内容', showSpinner: true);
+    }
+    // 预览只是「下一页长这样」的预告，不接任何手势：它在当前内容下面，
+    // 真接了点击会在拖动过程中误进播放页。
+    return IgnorePointer(child: ColoredBox(color: background, child: body));
+  }
+
+  /// 瀑布格的惰性副本：同样的列数、间距与卡片，但不滚动、不通知、不点击。
+  Widget _previewGrid(_ChannelSnapshot snapshot) {
+    final wide = isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840;
+    final columns = wide ? dramaDesktopColumns(context) : snapshot.columns;
+    return GridView.builder(
+      // 预览跟着当前内容一起被 Transform 平移，自己不该能滚。
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        MediaQuery.paddingOf(context).top + _topChromeHeight + 12,
+        12,
+        _effectiveBottomInset(context) + 20,
+      ),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 16,
+        childAspectRatio: wide
+            ? .58
+            : columns == 2
+            ? 0.56
+            : (snapshot.titleMaxLines >= 2 ? 0.47 : 0.52),
+      ),
+      itemCount: snapshot.items.length,
+      itemBuilder: (context, index) => _BrowseCard(
+        key: ValueKey('preview.$index.${snapshot.items[index].id}'),
+        item: snapshot.items[index],
+        titleMaxLines: snapshot.titleMaxLines,
+        onTap: () {},
+      ),
+    );
+  }
+
+  /// 视频流频道的预览：只铺首集海报，不起播放器、不挂弹幕层。
+  Widget _previewFeedPoster(MediaItem item) {
+    return Padding(
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top + _topChromeHeight,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) => StoryCover(
+          item: item,
+          cacheWidth:
+              (constraints.maxWidth * MediaQuery.devicePixelRatioOf(context))
+                  .ceil(),
+          alignment: Alignment.center,
         ),
       ),
     );
