@@ -163,6 +163,9 @@ extension _ReaderPageBuild on _ReaderPageState {
                             pageIndex: _pageIndex,
                           ),
                           onReturnOriginalProgress: _returnToOriginalProgress,
+                          // 「从本页听」= 从当前页第一段重新起播，引擎跟圆钮
+                          // 听书同一个默认值（系统朗读时留在阅读页念，不再
+                          // 硬吃作品音频），由 `_openListening` 统一分派。
                           onListenFromPage: () =>
                               unawaited(_openListening(fromPage: true)),
                           viewportChanges: _scrollController,

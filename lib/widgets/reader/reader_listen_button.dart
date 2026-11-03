@@ -47,7 +47,7 @@ class ReaderListenButton extends StatelessWidget {
         child: InkWell(
           onTap: loading ? null : onTap,
           child: SizedBox.square(
-            dimension: 56,
+            dimension: kReaderActionSize,
             child: ExcludeSemantics(
               child: Stack(
                 alignment: Alignment.center,
@@ -55,18 +55,20 @@ class ReaderListenButton extends StatelessWidget {
                   if (preset.isEink)
                     const Text(
                       '听',
-                      style: TextStyle(color: Colors.black, fontSize: 32),
+                      // 42 圆里字框四角离圆心 = 字号×√2/2，要 ≤ 半径 21，
+                      // 字号上限约 29。28 贴住上限留一点余量；32 会出圆被裁。
+                      style: TextStyle(color: Colors.black, fontSize: 28),
                     )
                   else
                     Ink.image(
                       image: AssetImage('assets/images/reader/$asset.webp'),
-                      width: 56,
-                      height: 56,
+                      width: kReaderActionSize,
+                      height: kReaderActionSize,
                       fit: BoxFit.contain,
                     ),
                   if (loading)
                     SizedBox.square(
-                      dimension: 22,
+                      dimension: 18,
                       child: reducedMotion
                           ? Icon(Icons.hourglass_empty, color: preset.textColor)
                           : const CircularProgressIndicator(
