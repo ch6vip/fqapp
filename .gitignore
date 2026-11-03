@@ -54,6 +54,7 @@ app.*.map.json
 # Rust 原生核心（rust/）的构建输出。/android/app/src/main/jniLibs/*/*.so 已在下面忽略，
 # 因此 Rust ARM64 库同样不入库，由 scripts/build_rust_backend.ps1 / .sh 重建。
 /rust/target/
+/rust/target-*/
 
 # Rust 原生核心（rust/）与 C 加密库都可由源码重建，不提交生成的 .so。
 # shortplay 加密库由 native/ 中的 C 源码通过 CMake 构建。
@@ -72,6 +73,7 @@ _sessionzip/
 .workbuddy/
 .zcode/
 .zcodeignore
+/.claude/worktrees/
 # 宿主（PI-Desktop）生成的目标契约产物，每次会话都会重建。
 .pi/
 

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -32,15 +31,14 @@ import 'detail_page.dart';
 import 'rank_page.dart';
 import 'search_page.dart';
 import 'home_provider.dart';
-import 'home_tab_switch.dart';
 
 /// 书城首页：以书为主的书架。
 ///
 /// 版式（用户 2026-10-26 起的设计方向）：
 ///
 /// ```
-/// 搜索行
-/// 分类条（吸顶）
+/// 搜索行（固定）
+/// 分类条（固定，仅下方内容横滑）
 /// 继续阅读          ← 只有「推荐」且有阅读史：一行字，无封面无卡面
 /// 排行榜            ← 上游 RankCellV3，横滑大封面 + 名次
 /// 为你推荐 / 分类名  ← 统一的书籍网格
@@ -83,22 +81,11 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   late final ScrollController _scroll =
       widget.scrollController ?? ScrollController();
-
-  /// 分类条吸顶的位置靠它量：搜索行的高度就是内容区的第一行。
-  final GlobalKey _heroKey = GlobalKey();
-  late final _homeTabs = HomeTabSwitch(_scroll, ref, _heroKey);
-
-  /// 进过一次内容之后就是「切分类」，不再是冷启动：前者不能铺整页骨架。
+  bool get _ownsScroll => widget.scrollController == null;
   bool _hadContent = false;
-
-  /// 各分类上一次渲染出的内容 slivers：横滑时直接拿它铺「正在进来」那一侧。
-  ///
-  /// 只缓存进过的分类；没进过的退回骨架。宽度或字号变了就整份丢掉——这些
-  /// sliver 是按当时的栅格宽度建好的，换个尺寸复用会把旧版式画进新窗口。
   final Map<int, List<Widget>> _previewBodies = {};
   double? _previewGridWidth;
   double? _previewTextScale;
-
   Timer? _loadMoreTimer;
   bool _visible = false;
 
@@ -185,7 +172,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       _onLocalDataChanged,
     );
     // 外部传入的控制器归壳层所有，这里不能释放。
-    if (widget.scrollController == null) _scroll.dispose();
+    if (_ownsScroll) _scroll.dispose();
     super.dispose();
   }
 
@@ -210,6 +197,13 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (mounted) _onScroll();
     });
     ref.read(homeProvider.notifier).loadMore();
+  }
+
+  void _selectTab(int index) {
+    if (index == ref.read(homeProvider).tabIndex) return;
+    // Both headers are outside the viewport, so content starts at zero.
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    ref.read(homeProvider.notifier).selectTab(index);
   }
 
   /// 下拉与冷启动错误里的「重试」都走手动刷新：手动刷新会跳过续接快照，
@@ -280,70 +274,57 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
           child: SafeArea(
             bottom: false,
-            // 冷启动失败不再整页替换：搜索行与分类条留在原位，错误信息进
-            // feed 里滚动，用户换个分类或下拉都能继续用。
-            child: RefreshIndicator(
-              color: HomePalette.accent,
-              backgroundColor: palette.surface,
-              onRefresh: _refresh,
-              // The grid is measured once here, outside the sliver: a sliver's
-              // constraints carry the scroll offset, so measuring inside one
-              // re-ran the builder and rebuilt every visible card per frame.
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final gridWidth = constraints.maxWidth - homeGutter * 2;
-                  final content = _contentSlivers(state, gridWidth);
-                  _rememberPreviewBody(
-                    state.tabIndex,
-                    content,
-                    gridWidth,
-                    textScale,
-                  );
-                  return TabSwipeArea(
-                    index: state.tabIndex,
-                    count: categories.length,
-                    onSelect: _homeTabs.select,
-                    // 拖动时把邻页真正画出来：缓存过的分类直接复用上次的
-                    // sliver 树，没进过的铺骨架。没有它，移开的那一侧只能
-                    // 露页面底色——深色主题下就是一块黑面板。
-                    previewBuilder: (target) => _buildTabPreview(
-                      target,
-                      textScale: textScale,
-                      canvas: palette.canvas,
-                    ),
-                    // 顶栏靠反向位移钉住，重绘边界会把它的右半截裁掉。
-                    isolateChild: false,
-                    child: CustomScrollView(
-                      key: const Key('home_feed'),
-                      controller: _scroll,
-                      // 顶栏用反向位移钉在屏幕上（SwipeStationary），会被画到
-                      // 视口之外。视口默认 Clip.hardEdge 只认自己的 bounds，会把
-                      // 搜索行右半截和末位标签裁掉；裁剪统一交给 TabSwipeArea
-                      // 外层的 ClipRect。
-                      clipBehavior: Clip.none,
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
-                      ),
-                      slivers: [
-                        _heroSliver(),
-                        SliverPersistentHeader(
-                          pinned: true,
-                          delegate: HomeTabBarDelegate(
-                            selectedIndex: state.tabIndex,
-                            onSelect: _homeTabs.select,
-                            categories: categories,
-                            extent: HomeTabBarDelegate.extentFor(textScale),
-                            dark: palette.dark,
-                            eink: palette.eink,
-                            oled: palette.oled,
+            child: Column(
+              children: [
+                HomeHero(
+                  onSearch: _openSearch,
+                  onCategory: _openCategory,
+                  cueLoader: widget.cueLoader,
+                ),
+                HomeTabBar(
+                  selectedIndex: state.tabIndex,
+                  onSelect: _selectTab,
+                  categories: categories,
+                ),
+                Expanded(
+                  // Headers stay outside both the horizontal transform and
+                  // the vertical viewport, including loading/error states.
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final gridWidth = constraints.maxWidth - homeGutter * 2;
+                      final content = _contentSlivers(state, gridWidth);
+                      _rememberPreviewBody(
+                        state.tabIndex,
+                        content,
+                        gridWidth,
+                        textScale,
+                      );
+                      return ClipRect(
+                        child: TabSwipeArea(
+                          index: state.tabIndex,
+                          count: categories.length,
+                          onSelect: _selectTab,
+                          previewBuilder: (target) =>
+                              _buildTabPreview(target, palette.canvas),
+                          child: RefreshIndicator(
+                            color: HomePalette.accent,
+                            backgroundColor: palette.surface,
+                            onRefresh: _refresh,
+                            child: CustomScrollView(
+                              key: const Key('home_feed'),
+                              controller: _scroll,
+                              physics: const BouncingScrollPhysics(
+                                parent: AlwaysScrollableScrollPhysics(),
+                              ),
+                              slivers: content,
+                            ),
                           ),
                         ),
-                        ...content,
-                      ],
-                    ),
-                  );
-                },
-              ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -351,19 +332,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  /// 搜索行。横滑切分类时它不跟着走：它属于「页面」，不属于「内容」。
-  SliverToBoxAdapter _heroSliver() => SliverToBoxAdapter(
-    child: SwipeStationary(
-      child: HomeHero(
-        key: _heroKey,
-        onSearch: _openSearch,
-        onCategory: _openCategory,
-        cueLoader: widget.cueLoader,
-      ),
-    ),
-  );
-
-  /// 记下当前分类这一帧的内容 slivers，供横滑时预渲染邻页。
   void _rememberPreviewBody(
     int tabIndex,
     List<Widget> slivers,
@@ -378,17 +346,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _previewBodies[tabIndex] = slivers;
   }
 
-  /// 横滑时「正在进来」的那一页。
-  ///
-  /// 只铺内容区（搜索行、分类条由当前页的 [SwipeStationary] 钉住），并用
-  /// [_previewContentTop] 对齐到切换后内容所在的第一行——新分类从自己的
-  /// 第一行开始显示，与 [HomeTabSwitch] 的落点一致。没进过的分类铺骨架，
-  /// 至少不是一块底色。
-  Widget _buildTabPreview(
-    int target, {
-    required double textScale,
-    required Color canvas,
-  }) {
+  Widget _buildTabPreview(int target, Color canvas) {
     if (target < 0 || target >= homeCategories.length) {
       return const SizedBox.shrink();
     }
@@ -396,30 +354,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     return ColoredBox(
       color: canvas,
       child: CustomScrollView(
+        primary: false,
         physics: const NeverScrollableScrollPhysics(),
-        slivers: [
-          SliverToBoxAdapter(
-            child: SizedBox(height: _previewContentTop(textScale)),
-          ),
-          if (body != null)
-            ...body
-          else
-            const SliverToBoxAdapter(child: HomeSkeleton()),
-        ],
+        slivers: body ?? const [SliverToBoxAdapter(child: HomeSkeleton())],
       ),
     );
-  }
-
-  /// 切到邻页后，内容区第一行在屏幕上的 y。
-  ///
-  /// 搜索行高度 + 分类条高度 - 落点。落点与 [HomeTabSwitch] 一致：滚过搜索行
-  /// 就停在搜索行高度（分类条吸顶），否则原地不动。
-  double _previewContentTop(double textScale) {
-    final hero = _heroKey.currentContext?.size?.height ?? 0;
-    final bar = HomeTabBarDelegate.extentFor(textScale);
-    final pixels = _scroll.hasClients ? _scroll.position.pixels : 0.0;
-    final landing = pixels > hero ? hero : pixels;
-    return math.max(bar, hero + bar - landing);
   }
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
@@ -476,8 +415,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
       }
       // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
-      // paints the skeleton rather than a spinner. 切分类不是冷启动：满屏脉冲
-      // 骨架 + 搜索行被带回来，正是「整页重新加载」的观感，用轻量提示代替。
+      // paints the skeleton rather than a spinner.
       if (_hadContent) {
         return const [SliverToBoxAdapter(child: HomeFeedLoading())];
       }

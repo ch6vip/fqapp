@@ -147,6 +147,7 @@ extension _ReaderJoinedContent on _ReaderPageState {
     ReaderChapterLayout layout,
     ReaderSelectionScope scope,
   ) {
+    final adjacentScopes = <ReaderChapterLayout, ReaderSelectionScope>{};
     return ReaderJoinedScroll(
       key: _joinedKey,
       controller: _scrollController,
@@ -181,7 +182,20 @@ extension _ReaderJoinedContent on _ReaderPageState {
           block: block,
           spec: chapterLayout.spec,
           imageProviderFactory: widget.imageProviderFactory,
-          selectionScope: active ? scope : null,
+          // Adjacent chapters need dialogue marks too, but must not register
+          // their paragraph indices in the active chapter's selection map.
+          selectionScope: active
+              ? scope
+              : _preferences.dialogueHighlight
+              ? adjacentScopes.putIfAbsent(
+                  chapterLayout,
+                  () => _marksScopeFor(
+                    _effectivePreset,
+                    chapterLayout,
+                    active: false,
+                  ),
+                )
+              : null,
           selection: active ? _selection : null,
           rangeUnderlines: active ? _displayRangeUnderlines : const [],
           narrationRange: active ? _narrationRange : null,

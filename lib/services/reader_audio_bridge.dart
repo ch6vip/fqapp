@@ -35,6 +35,14 @@ abstract final class ReaderAudioBridge {
         final currentBook =
             owner._sessionBookMatches(bookId) ||
             (tts != null && !tts.closed && tts.book.bookId == bookId);
+        if (currentBook && owner._playbackError != null) {
+          // The reader hides the global capsule, not its playback errors.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted && ModalRoute.of(context)?.isCurrent == true) {
+              owner._toastNewError(readerBookId: bookId);
+            }
+          });
+        }
         return builder(context, currentBook);
       },
     );
@@ -45,9 +53,7 @@ abstract final class ReaderAudioBridge {
     required bool monochrome,
     VoidCallback? onOpenBook,
   }) =>
-      _owner(
-        context,
-      )?._buildCapsule(
+      _owner(context)?._buildCapsule(
         context,
         inReaderMenu: true,
         monochrome: monochrome,
@@ -94,8 +100,7 @@ abstract final class ReaderAudioBridge {
     if (owner == null) return false;
     if (owner._switchNeedsReader(engine)) {
       final switcher = ReaderEngineSwitch.maybeOf(context);
-      final bookId = owner._switchBookId;
-      if (switcher != null && bookId != null && bookId == switcher.bookId) {
+      if (switcher != null && owner._switchBookMatches(switcher.bookId)) {
         await switcher.onSwitch();
         return true;
       }
@@ -271,7 +276,7 @@ abstract final class ReaderAudioBridge {
                     AbsorbPointer(
                       absorbing: selecting,
                       child: VoiceSettingsSheet(
-                        selectedId: tones.hasFixedTone
+                        selectedId: session._hasFixedTone
                             ? session._bookId
                             : session._toneId,
                         narrators: narrators,
