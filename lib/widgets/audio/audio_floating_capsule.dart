@@ -212,6 +212,19 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     await _showListenEngineSheet(context);
   }
 
+  /// 系统朗读的三点：和作品音频同一条规矩——暂停/没在播先选引擎。
+  ///
+  /// 系统朗读没有音色可选，以前三点无条件跳朗读设置页，把「换引擎」藏进
+  /// 了设置里：暂停时用户多半是想换一套来源重听，结果点开只看到语速。
+  /// 朗读中才给设置页（语速、引擎参数），暂停时给「选择播放引擎」。
+  Future<void> _showTtsMore(BuildContext context, SystemTtsPlayback tts) async {
+    if (tts.wantPlay && !tts.closed) {
+      _openTtsSettings(context);
+      return;
+    }
+    await _showListenEngineSheet(context);
+  }
+
   /// 「选择播放引擎」：智能朗读（作品音频）或系统朗读（手机本地 TTS）。
   ///
   /// 选完写进 [AudioPreferences]，之后所有听书入口起播都按它走——阅读页
@@ -271,6 +284,7 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     BuildContext context, {
     bool inReaderMenu = false,
     bool monochrome = false,
+    VoidCallback? onOpenBook,
   }) {
     final routes = _routes;
     if (routes == null) return const SizedBox.shrink();
@@ -333,10 +347,12 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
             canToggle: true,
             visible: visible,
             bottomInset: routes.bottomInset,
-            onOpen: () => _openTts(tts),
+            onOpen: () => _openTts(tts, onOpenBook: onOpenBook),
             onToggle: () => unawaited(tts.toggle()),
-            // 系统朗读没有音色可选，三点直接进朗读设置页（引擎 / 语速）。
-            onMore: inReaderMenu ? () => _openTtsSettings(context) : null,
+            // 播放中给朗读设置（语速等），暂停时给「选择播放引擎」。
+            onMore: inReaderMenu
+                ? () => unawaited(_showTtsMore(context, tts))
+                : null,
             onClose: () => unawaited(stopTts(tts)),
           );
         } else if (recent != null) {
