@@ -39,6 +39,8 @@ class ReaderPreferences {
   static const _showReadingInfoKey = 'reader_show_reading_info';
   static const _readingInfoModeKey = 'reader_info_mode';
   static const _showSystemStatusBarKey = 'reader_show_system_status_bar';
+  static const _showSystemNavigationBarKey =
+      'reader_show_system_navigation_bar';
   static const _followSystemBrightnessKey = 'reader_follow_system_brightness';
   static const _brightnessKey = 'reader_brightness';
   static const _fontPathKey = 'reader_font_path';
@@ -74,6 +76,7 @@ class ReaderPreferences {
   final ReaderTitleAlignment titleAlignment;
   final ReaderInfoMode readingInfoMode;
   final bool showSystemStatusBar;
+  final bool showSystemNavigationBar;
   bool get showReadingInfo => readingInfoMode != ReaderInfoMode.hidden;
   final bool followSystemBrightness;
   final double brightness;
@@ -172,6 +175,7 @@ class ReaderPreferences {
     bool? showReadingInfo,
     ReaderInfoMode readingInfoMode = ReaderInfoMode.compact,
     this.showSystemStatusBar = true,
+    this.showSystemNavigationBar = false,
     this.followSystemBrightness = true,
     this.brightness = 0.5,
     this.fontPath = '',
@@ -212,6 +216,7 @@ class ReaderPreferences {
     bool? showReadingInfo,
     ReaderInfoMode? readingInfoMode,
     bool? showSystemStatusBar,
+    bool? showSystemNavigationBar,
     bool? followSystemBrightness,
     double? brightness,
     String? fontPath,
@@ -261,6 +266,8 @@ class ReaderPreferences {
               ? ReaderInfoMode.compact
               : this.readingInfoMode),
       showSystemStatusBar: showSystemStatusBar ?? this.showSystemStatusBar,
+      showSystemNavigationBar:
+          showSystemNavigationBar ?? this.showSystemNavigationBar,
       followSystemBrightness:
           followSystemBrightness ?? this.followSystemBrightness,
       brightness: brightness ?? this.brightness,
@@ -313,6 +320,7 @@ class ReaderPreferences {
       titleAlignment: titleAlignment,
       readingInfoMode: readingInfoMode,
       showSystemStatusBar: showSystemStatusBar,
+      showSystemNavigationBar: showSystemNavigationBar,
       followSystemBrightness: followSystemBrightness,
       brightness: brightness.isFinite ? brightness.clamp(0.02, 1) : 0.5,
       fontPath: fontPath,
@@ -372,6 +380,8 @@ class ReaderPreferences {
       ),
       showSystemStatusBar:
           _boolean(preferences, _showSystemStatusBarKey) ?? true,
+      showSystemNavigationBar:
+          _boolean(preferences, _showSystemNavigationBarKey) ?? false,
       followSystemBrightness:
           _boolean(preferences, _followSystemBrightnessKey) ?? true,
       brightness: _number(preferences, _brightnessKey) ?? 0.5,
@@ -445,6 +455,10 @@ class ReaderPreferences {
       preferences.setBool(_showReadingInfoKey, value.showReadingInfo),
       preferences.setString(_readingInfoModeKey, value.readingInfoMode.name),
       preferences.setBool(_showSystemStatusBarKey, value.showSystemStatusBar),
+      preferences.setBool(
+        _showSystemNavigationBarKey,
+        value.showSystemNavigationBar,
+      ),
       preferences.setBool(
         _followSystemBrightnessKey,
         value.followSystemBrightness,
