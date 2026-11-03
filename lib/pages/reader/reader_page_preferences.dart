@@ -94,6 +94,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
             (_routeCurrent || _ideasSheetOpen) &&
             widget.chapters.isNotEmpty,
         showStatusBar: _preferences.showSystemStatusBar,
+        showNavigationBar: _preferences.showSystemNavigationBar,
       ),
     );
   }
