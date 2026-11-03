@@ -94,35 +94,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  /// 顶栏在滑动区**里面**的宿主（首页的形状）：顶栏套 `SwipeStationary` 钉住，
-  /// 下方内容跟着横滑走。
+  /// Match HomePage: the header is a sibling of the swipeable content.
   Widget hostWithHeader(ValueNotifier<int> index) => MaterialApp(
     home: Scaffold(
       body: ValueListenableBuilder<int>(
         valueListenable: index,
-        builder: (context, value, _) => TabSwipeArea(
-          index: value,
-          count: 3,
-          onSelect: (next) => index.value = next,
-          // 与首页一致：顶栏在滚动视口里反向位移，不能套重绘边界。
-          isolateChild: false,
-          child: Column(
-            children: [
-              SwipeStationary(
-                child: SizedBox(
-                  height: 48,
-                  child: Center(child: Text('header')),
-                ),
+        builder: (context, value, _) => Column(
+          children: [
+            const SizedBox(height: 48, child: Center(child: Text('header'))),
+            Expanded(
+              child: TabSwipeArea(
+                index: value,
+                count: 3,
+                onSelect: (next) => index.value = next,
+                child: Center(child: Text('page $value')),
               ),
-              Expanded(child: Text('page $value')),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     ),
   );
 
-  testWidgets('包在 SwipeStationary 里的顶栏钉在屏幕上，不跟着横滑', (tester) async {
+  testWidgets('内容区外的顶栏钉在屏幕上，不跟着横滑', (tester) async {
     await tester.binding.setSurfaceSize(surface);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final index = ValueNotifier<int>(0);
@@ -233,63 +227,64 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('反向位移上面不许再套重绘边界（真机顶栏被裁的根因）', (tester) async {
+  testWidgets('顶栏不进入内容的位移和裁剪子树', (tester) async {
     await tester.binding.setSurfaceSize(surface);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final index = ValueNotifier<int>(0);
     addTearDown(index.dispose);
     await tester.pumpWidget(hostWithHeader(index));
 
-    final counter = find.descendant(
-      of: find.byType(SwipeStationary),
-      matching: find.byType(Transform),
+    expect(
+      find.ancestor(
+        of: find.text('header'),
+        matching: find.byType(TabSwipeArea),
+      ),
+      findsNothing,
     );
-    expect(counter, findsOneWidget);
-
-    // 反向位移与 SwipeStationary 之间不许插重绘边界：边界的栅格只有它自己 size
-    // 那么大，反向位移把内容推出这块范围就直接不画——真机上搜索行右半截、「分类」
-    // 按钮、末位标签一起消失，露出黑色画布压在顶栏上（2026-11-02 实拍）。
-    //
-    // 不能数「上面一共几层边界」：MaterialApp / Scaffold 自己就会插边界（实测 3
-    // 层），要锁的是这一层的位置，所以走到 SwipeStationary 就停。
-    //
-    // 为什么不断言像素：flutter_test 的软件光栅不复现这个裁切（破坏版截图仍然
-    // 「通过」），只有真机看得出来，所以这里锁住它的成因。
-    var boundaryInside = false;
-    tester.element(counter.first).visitAncestorElements((ancestor) {
-      if (ancestor.widget is SwipeStationary) return false;
-      if (ancestor.widget is RepaintBoundary) {
-        boundaryInside = true;
-        return false;
-      }
-      return true;
-    });
-    expect(boundaryInside, isFalse, reason: '反向位移外面套了一层重绘边界，顶栏会被它裁掉');
+    expect(
+      find.descendant(
+        of: find.byType(TabSwipeArea),
+        matching: find.text('page 0'),
+      ),
+      findsOneWidget,
+    );
+    final header = tester.getRect(find.text('header'));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(TabSwipeArea)),
+    );
+    await gesture.moveBy(const Offset(-100, 0));
+    await tester.pump();
+    expect(translateX(tester), lessThan(0));
+    expect(tester.getRect(find.text('header')), header);
+    await gesture.up();
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('位移层外面不许套重绘边界（栅格只认自己的 bounds，会把顶栏裁掉）', (tester) async {
+  testWidgets('内容在重绘边界外位移，由滑动区裁剪', (tester) async {
     await tester.binding.setSurfaceSize(surface);
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final index = ValueNotifier<int>(0);
     addTearDown(index.dispose);
     await tester.pumpWidget(hostWithHeader(index));
 
-    // 位移层（Transform 的 child）就是整棵页面。外面套重绘边界时，钉住的
-    // 顶栏会被反向位移推到边界栅格之外，超出部分直接不画——真机上搜索行
-    // 右半截、「分类」按钮、末位标签一起消失，露出黑色画布。
-    final translated = find.byType(TabSwipeOffset);
+    final translated = find.descendant(
+      of: find.byType(TabSwipeArea),
+      matching: find.byType(Transform),
+    );
     expect(translated, findsOneWidget);
-    var boundary = false;
+    expect(tester.widget<Transform>(translated).child, isA<RepaintBoundary>());
+    var clippedBeforeArea = false;
     tester.element(translated).visitAncestorElements((ancestor) {
       if (ancestor.widget is TabSwipeArea) return false;
-      if (ancestor.widget is RepaintBoundary) {
-        boundary = true;
-        return false;
-      }
+      if (ancestor.widget is ClipRect) clippedBeforeArea = true;
       return true;
     });
-    expect(boundary, isFalse, reason: '位移层被重绘边界包住，顶栏会被栅格裁剪');
+    expect(clippedBeforeArea, isTrue);
+    expect(
+      find.descendant(of: translated, matching: find.text('header')),
+      findsNothing,
+    );
   });
 
   testWidgets('拖动时缺口里铺的是邻页内容', (tester) async {

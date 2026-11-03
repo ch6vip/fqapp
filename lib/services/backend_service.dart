@@ -129,7 +129,7 @@ class BackendService {
     return Isolate.run(() => _bytesEqual(existing, bundled));
   }
 
-  /// Deploys the runtime files the Rust core reads (config + filters + plugins).
+  /// Deploys the runtime files the Rust core reads (config + filters).
   Future<void> _deploy() async {
     final dir = await _backendDir();
 
@@ -155,12 +155,10 @@ class BackendService {
       await _copyAsset('assets/config/device_pool.example.json', poolFile);
     }
 
-    // Use the bundle manifest so nested CSS/fonts and plugin files are
-    // deployed along with the top-level HTML and filters.
-    const runtimeRoots = ['assets/filters/', 'assets/plugins/'];
+    // Enumerate the manifest so filters in nested directories deploy as well.
     final manifest = await AssetManifest.loadFromAssetBundle(_assets);
     for (final asset in manifest.listAssets()) {
-      if (runtimeRoots.any(asset.startsWith)) {
+      if (asset.startsWith('assets/filters/')) {
         final relative = asset.substring('assets/'.length);
         await _copyAsset(asset, File('${dir.path}/$relative'));
       }

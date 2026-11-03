@@ -444,19 +444,23 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
         return true;
       }
       final book = tts.book;
-      if (book.localOnly) return false;
+      final request = AudioPage(
+        bookId: book.bookId,
+        title: book.title,
+        cover: book.coverUrl,
+        chapters: book.chapters,
+        startIndex: tts.index,
+      );
       try {
+        final override = AudioPlaybackScope.startListeningOverride;
+        if (override != null) {
+          final accepted = await override(context, request);
+          if (accepted) await _closeTts();
+          return accepted;
+        }
+        if (book.localOnly) return false;
         // 当前 context 属于 scope 自身，不能经祖先查找取回自己；切换由队列接管。
-        return await acquire(
-              AudioPage(
-                bookId: book.bookId,
-                title: book.title,
-                cover: book.coverUrl,
-                chapters: book.chapters,
-                startIndex: tts.index,
-              ),
-            ) !=
-            null;
+        return await acquire(request) != null;
       } catch (_) {
         return false;
       }
