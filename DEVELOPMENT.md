@@ -10,6 +10,7 @@
 
 - [架构总览](#架构总览)
 - [项目结构](#项目结构)
+- [注释与公开依据](#注释与公开依据)
 - [构建环境](#构建环境)
 - [构建 APK](#构建-apk)
 - [测试](#测试)
@@ -65,7 +66,7 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
 
 ### 数据流
 
-1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器、插件部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
+1. **启动**：`main.dart` → `BackendService.start()` 将配置、过滤器部署到 app 私有目录 → 通过 flutter_rust_bridge 在进程内初始化 Rust 核心（`libfqapi_core.so`）→ 轮询 `/health` 直到 200。核心没有独立进程，也不再有 Kotlin/JNI 桥或桌面可执行文件。
 2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
@@ -94,7 +95,7 @@ fqapp/
 ├── rust/                            # fqapi_core 源码、协议夹具和 Rust 测试
 ├── android/                         # Android 工程、原生插件与 JVM 测试
 ├── native/                          # CENC 流式 C 解密库、JNI 与 CMake
-├── assets/                          # 配置示例、插件、图片和动画
+├── assets/                          # 配置示例、过滤器、图片和动画
 ├── test/                            # Flutter 测试及 Node 主机回归
 ├── scripts/                         # 构建、验证和资源生成；见 scripts/README.md
 ├── .github/workflows/               # Android APK 与原生库 CI
@@ -109,6 +110,12 @@ fqapp/
 >
 > 体积参考：Rust `libfqapi_core.so`（arm64-v8a）为 6,125,392 字节（约 5.84 MiB）。这是本地 release
 > 构建产物的实测大小，不是安装包体积，也不是性能结论。
+
+## 注释与公开依据
+
+- 历史注释中的 `.agents/notes/...` 是维护者本地笔记，被 `.gitignore` 有意排除，不随源码分发；不是缺失的构建依赖，也不要求贡献者补齐这些文件。`docs/` 同样是本地资料目录，不能作为公开依据的唯一落点。
+- 新增或修改注释时，关键业务理由、边界条件和结论应在注释正文中用一两句话说明，不再新增只指向本地笔记的依据。需要展开时，链接仓库内已跟踪的文档、公开 issue/PR 或提交；私人日志、设备信息和取证材料不直接入库。
+- 现有引用暂不批量改写；维护相关代码时补齐自足说明，不把无关的注释清理混入功能改动。历史“为守住行数预算而拆分”等说明不代表当前规则：`scripts/check_line_budget.sh` 只报告体量，拆分应基于职责和可读性，不设固定行数门禁（#253）。
 
 ---
 
@@ -363,8 +370,14 @@ $serial = '127.0.0.1:16384' # 仅为已验证示例，必须按本次 info 输�
 
 1. 将 `config.json`、`filter.json`、`device_pool.example.json` 部署到应用私有目录 `files/backend/config/`。
 2. 首次启动时用示例初始化 `device_pool.json`；以后保留后端注册并保存的实际设备池。
-3. 从 Flutter 资源清单枚举并部署全部 `filters/`、`plugins/` 文件。内容变更时替换旧资源。
+3. 从 Flutter 资源清单枚举并部署 `assets/filters/` 下的文件（含清单中的嵌套文件）到 `backend/filters/`。内容变更时替换旧资源。
 4. 运行时资源不含任何可执行后端二进制；Rust 核心以 `libfqapi_core.so` 随 APK 打包，在进程内加载。
+
+### 废弃的 HTML 插件资产（#252）
+
+`assets/plugins/player.html` 没有产品调用方，按历史残留移除，不作为待接入功能保留；同时移除 `pubspec.yaml` 的目录声明和 `BackendService._deploy` 的插件部署入口。播放器继续使用现有 `NativePlayer` 平台实现，漫画阅读继续走 Flutter 页面；Rust 的通用静态文件服务不是这些 HTML 的调用方，不作改动。
+
+新安装包不再包含或部署该插件。升级时不主动删除旧版本已落盘的 `backend/plugins/` 文件，不清空应用数据；这些遗留文件不会因本次改动重新部署。冻结的 `test/backend_service_test.dart` 仍以插件 HTML 作为部署样本，其“插件被部署并更新”断言与当前行为不再一致；本次不修改、删除或跳过测试，也不为旧断言保留产品部署路径。
 
 ### 启动流程（`BackendService.start`）
 
