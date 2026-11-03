@@ -69,6 +69,16 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
 2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
+### 小说离线缓存
+
+`ChapterCacheStore` 是 UI 门面；专用 `chapter-cache` isolate 串行管理加密目录和正文箱，执行扫描、迁移、加解密及淘汰。密钥仍由主 isolate 从安全存储取得，worker 不调用平台插件。桌面退出时先排空缓存操作并关闭 worker，再关闭其他 Hive 箱。
+
+- 正文保留在 `chapter_cache_v1_enc`，使用 `LazyBox` 按章读取；正常的书架/离线列表查询不打开正文箱。
+- `chapter_cache_catalog_v1_enc` 保存 `book:<bookId>` 目录和不含正文的 `chapter:<JSON [bookId, chapterId]>` 索引。索引记录字节数、访问时间和章节级 `pinned`；书籍总量在 worker 内从索引派生，不再持久化书籍级缓存计数或整本 `pinned` 标志。
+- 自动淘汰只访问索引，仅排除明确下载的章节。同书中未下载的章节仍受自动缓存容量限制。
+- `meta:catalogue_version = 2` 表示迁移已完成，不能以“目录非空”代替。跨箱修改正文前先持久化 `meta:body_write_pending`，正文与索引写入完成后再清除；中断或失败后的请求会重建派生索引。迁移保留已有目录，分批写入索引，落盘后移除正文箱中的旧目录及旧计数字段。
+- 首次升级仍需读取旧正文来建索引，但全部在 worker 内逐章处理。`LazyBox` 本身仍扫描文件校验和，不能单独作为不卡顿的保证。迁移耗时和恢复告警转发到应用日志的 `chapter-cache` / `hive` 标签；临时打开失败不缓存为永久失败。
+
 ---
 
 ## 项目结构
@@ -656,6 +666,7 @@ App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `
 
 ### 漫画（`comic_reader_page.dart`）
 - 按接口顺序竖向阅读图片，支持章节目录和上下章
+- 请求为 `/api/v1/manga/<itemId>?book_id=<bookId>`，阅读器传入已知书籍 ID，避免降级再次依赖失败的主接口。未提供 `book_id` 的调用仍从章节元数据解析；主路径和 `full` 降级都按章节取图，失败时返回错误，不再用书籍级 `book_detail` 图片代替目标章节。
 - 图片按需加载并限制解码尺寸；单张失败可重试，点图可放大查看
 - 用“图片序号 + 图片内位置”记录进度，图片加载改变高度后仍保持阅读位置
 - 空章、章节请求失败和未显示成功的图片不会覆盖已有阅读进度
