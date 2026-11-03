@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:hive_ce/hive.dart';
 
@@ -97,6 +98,7 @@ class EncryptedHive {
     HiveInterface hive,
     String name, {
     SecureKeyProvider? keys,
+    Uint8List? encryptionKey,
     bool requireEncryption = false,
     CompactionStrategy? compactionStrategy,
   }) async {
@@ -109,7 +111,9 @@ class EncryptedHive {
     final encName = encryptedBoxName(name);
     if (hive.isBoxOpen(encName)) return hive.box<E>(encName);
 
-    final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
+    final key =
+        encryptionKey ??
+        await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
     if (key == null) {
       if (requireEncryption) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
@@ -186,14 +190,14 @@ class EncryptedHive {
 
   /// Lazy variant of [openBox] for large chapter bodies.
   ///
-  /// `Hive.openLazyBox` reads only the frame headers/keys during open. The
-  /// values (a 200 MB chapter cache can hold tens of thousands of them) stay
-  /// on disk until [LazyBox.get] asks for one. This is what keeps opening the
-  /// bookshelf or offline-cache page off the UI isolate's critical path.
+  /// Values are decrypted on demand, but opening still scans frame checksums.
+  /// Large boxes must therefore be owned by a background isolate. Its key is
+  /// obtained on the UI isolate and passed through [encryptionKey].
   static Future<LazyBox<E>> openLazyBox<E>(
     HiveInterface hive,
     String name, {
     SecureKeyProvider? keys,
+    Uint8List? encryptionKey,
     bool requireEncryption = false,
     CompactionStrategy? compactionStrategy,
   }) async {
@@ -203,7 +207,9 @@ class EncryptedHive {
     final encName = encryptedBoxName(name);
     if (hive.isBoxOpen(encName)) return hive.lazyBox<E>(encName);
 
-    final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
+    final key =
+        encryptionKey ??
+        await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
     if (key == null) {
       if (requireEncryption) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
@@ -215,15 +221,14 @@ class EncryptedHive {
     }
 
     final cipher = HiveAesCipher(key);
+    LazyBox<E>? box;
     if (await hive.boxExists(encName)) {
       try {
-        final box = await hive.openLazyBox<E>(
+        box = await hive.openLazyBox<E>(
           encName,
           encryptionCipher: cipher,
           compactionStrategy: strategy,
         );
-        await _reconcileLegacyLazy(hive, name, box);
-        return box;
       } on HiveError catch (e) {
         if (!_looksLikeDecryptionFailure(e)) rethrow;
         final preserved = _quarantineUnreadableBox(encName);
@@ -238,30 +243,18 @@ class EncryptedHive {
       }
     }
 
-    if (await hive.boxExists(name)) {
-      final legacy = await hive.openBox<E>(name);
-      final entries = <dynamic, dynamic>{};
-      for (final legacyKey in legacy.keys) {
-        entries[legacyKey] = legacy.get(legacyKey);
-      }
-      await legacy.close();
-      final box = await hive.openLazyBox<E>(
-        encName,
-        encryptionCipher: cipher,
-        compactionStrategy: strategy,
-      );
-      if (entries.isNotEmpty) {
-        await box.putAll(Map<dynamic, E>.from(entries));
-      }
-      await _reconcileLegacyLazy(hive, name, box);
-      return box;
-    }
-
-    return hive.openLazyBox<E>(
+    box ??= await hive.openLazyBox<E>(
       encName,
       encryptionCipher: cipher,
       compactionStrategy: strategy,
     );
+    try {
+      await _reconcileLegacyLazy(hive, name, box);
+      return box;
+    } catch (_) {
+      await box.close();
+      rethrow;
+    }
   }
 
   static Future<void> _reconcileLegacyLazy<E>(
@@ -270,17 +263,22 @@ class EncryptedHive {
     LazyBox<E> encrypted,
   ) async {
     if (!await hive.boxExists(name)) return;
-    final legacy = await hive.openBox<E>(name);
+    final legacy = await hive.openLazyBox<E>(name);
     try {
-      final missing = <dynamic, dynamic>{};
+      final missing = <dynamic, E>{};
       for (final key in legacy.keys) {
         if (!encrypted.containsKey(key)) {
-          missing[key] = legacy.get(key);
+          missing[key] = await legacy.get(key) as E;
+        }
+        if (missing.length >= 64) {
+          await encrypted.putAll(missing);
+          missing.clear();
         }
       }
       if (missing.isNotEmpty) {
-        await encrypted.putAll(Map<dynamic, E>.from(missing));
+        await encrypted.putAll(missing);
       }
+      await encrypted.flush();
     } finally {
       await legacy.close();
     }
