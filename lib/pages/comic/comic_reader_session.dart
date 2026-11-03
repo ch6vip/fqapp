@@ -56,7 +56,10 @@ extension _ComicReaderSession on _ComicReaderPageState {
         request,
         () async =>
             await (widget.chapterLoader?.call(chapter) ??
-                ApiClient.instance.comicImages(chapter.itemId)),
+                ApiClient.instance.comicImages(
+                  chapter.itemId,
+                  bookId: widget.bookId,
+                )),
       );
       if (!mounted || generation != _loadGeneration) return;
       if (images.isEmpty) throw const ApiException('本章暂无可阅读图片');

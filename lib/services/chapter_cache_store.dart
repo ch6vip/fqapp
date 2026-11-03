@@ -120,6 +120,14 @@ class CachedBookSummary {
   const CachedBookSummary(this.book, this.stats);
 }
 
+/// Stores chapter text and a small per-book catalogue.
+///
+/// The catalogue lives in its own small box so the bookshelf and offline-cache
+/// page never open the chapter-body box. Opening that body box used to read
+/// and decrypt the whole cache (a heavy download can be hundreds of megabytes)
+/// and freeze the UI isolate for about a minute. The chapter body box is only
+/// opened when the reader actually needs a chapter text; list queries are
+/// proportional to the number of books, not the number of chapters.
 class ChapterCacheStore implements ChapterCache {
   ChapterCacheStore({
     HiveInterface? hive,
@@ -131,6 +139,7 @@ class ChapterCacheStore implements ChapterCache {
 
   static final ChapterCacheStore instance = ChapterCacheStore();
   static const _boxName = 'chapter_cache_v1';
+  static const _catalogBoxName = 'chapter_cache_catalog_v1';
 
   final HiveInterface _hive;
 
@@ -154,7 +163,10 @@ class ChapterCacheStore implements ChapterCache {
   /// Detached (catalogue-only) records untouched for this long are dropped.
   final Duration catalogTtl;
   final ValueNotifier<int> changes = ValueNotifier(0);
+
   Future<Box<dynamic>>? _opening;
+  Future<Box<dynamic>>? _catalogOpening;
+  bool _catalogMigrated = false;
   Future<void> _writes = Future<void>.value();
   final Map<String, int> _accessTimes = {};
   final _byteCounter = ChapterCacheByteCounter();
@@ -167,9 +179,10 @@ class ChapterCacheStore implements ChapterCache {
   int get textEncodes => _byteCounter.encodes;
 
   Future<Box<dynamic>> _box() async {
-    // P1-5: decrypted chapter text stays in the encrypted box (offline
-    // reading still works — the box is on disk, just ciphertext). Never a
-    // plaintext fallback: without a key the open fails closed.
+    // Make sure the catalogue has been migrated before the chapter box is
+    // opened. Migration only reads book records from the old box lazily, so it
+    // never loads the 200 MB chapter payload into the UI isolate.
+    await _catalogBox();
     final box = await (_opening ??= EncryptedHive.openBox<dynamic>(
       _hive,
       _boxName,
@@ -183,8 +196,33 @@ class ChapterCacheStore implements ChapterCache {
     return _box();
   }
 
-  Future<T> _serialize<T>(Future<T> Function(Box<dynamic>) action) {
-    final operation = _writes.then((_) async => action(await _box()));
+  Future<Box<dynamic>> _catalogBox() async {
+    final box = await (_catalogOpening ??= EncryptedHive.openBox<dynamic>(
+      _hive,
+      _catalogBoxName,
+      keys: _keys,
+      requireEncryption: true,
+      compactionStrategy: (entries, deleted) =>
+          deleted >= 50 && deleted > entries ~/ 2,
+    ));
+    if (!box.isOpen) {
+      _catalogOpening = null;
+      return _catalogBox();
+    }
+    if (!_catalogMigrated) {
+      _catalogMigrated = true;
+      try {
+        await _migrateLegacyCatalogue(box);
+      } catch (_) {
+        _catalogMigrated = false;
+        rethrow;
+      }
+    }
+    return box;
+  }
+
+  Future<T> _enqueue<T>(Future<T> Function() action) {
+    final operation = _writes.then((_) => action());
     _writes = operation.then<void>(
       (_) {},
       onError: (Object _) {
@@ -194,8 +232,28 @@ class ChapterCacheStore implements ChapterCache {
     return operation;
   }
 
+  Future<T> _serialize<T>(Future<T> Function(Box<dynamic>) action) =>
+      _enqueue(() async => action(await _box()));
+
+  Future<T> _serializeCatalog<T>(Future<T> Function(Box<dynamic>) action) =>
+      _enqueue(() async => action(await _catalogBox()));
+
   String _key(String bookId, String chapterId) =>
       'chapter:${jsonEncode([bookId, chapterId])}';
+
+  List<String>? _chapterKeyParts(dynamic key) {
+    if (key is! String || !key.startsWith('chapter:')) return null;
+    try {
+      final parts = jsonDecode(key.substring('chapter:'.length));
+      if (parts is! List || parts.length < 2) return null;
+      final bookId = parts[0];
+      final chapterId = parts[1];
+      if (bookId is! String || chapterId is! String) return null;
+      return [bookId, chapterId];
+    } catch (_) {
+      return null;
+    }
+  }
 
   bool _isChapter(dynamic value) =>
       value is Map &&
@@ -220,20 +278,32 @@ class ChapterCacheStore implements ChapterCache {
     return _accessTimes[key] = _lastAccessTime;
   }
 
+  Map<String, dynamic> _map(dynamic raw) => <String, dynamic>{
+    for (final item in (raw as Map).entries)
+      if (item.key is String) item.key as String: item.value,
+  };
+
+  List<String> _cachedIds(Map record) => [
+    for (final id in (record['cachedChapterIds'] as List? ?? const []))
+      if (id is String && id.isNotEmpty) id,
+  ];
+
+  ChapterCacheStats _statsOf(Map record) => ChapterCacheStats(
+    chapterCount: (record['cachedChapterCount'] as num?)?.toInt() ?? 0,
+    byteCount: (record['cachedByteCount'] as num?)?.toInt() ?? 0,
+  );
+
   @override
   Future<String?> read({required String bookId, required String chapterId}) =>
       _serialize((box) async {
         final key = _key(bookId, chapterId);
-        final raw = box.get(key);
+        final raw = await box.get(key);
         if (!_isChapter(raw) ||
             raw['bookId'] != bookId ||
             raw['chapterId'] != chapterId) {
           return null;
         }
-        final entry = <String, dynamic>{
-          for (final item in (raw as Map).entries)
-            if (item.key is String) item.key as String: item.value,
-        };
+        final entry = _map(raw);
         final now = _touch(key);
         final lastSaved = _accessedAt(entry);
         if (now - lastSaved >= const Duration(hours: 1).inMicroseconds) {
@@ -259,7 +329,9 @@ class ChapterCacheStore implements ChapterCache {
     final bytes = utf8.encode(text).length;
     if (bytes > maxBytes) throw StateError('该章节超过缓存容量上限');
     final key = _key(bookId, chapterId);
-    final previous = box.get(key);
+    final previous = await box.get(key);
+    final previousValid = _isChapter(previous);
+    final previousBytes = previousValid ? _bytes(previous as Map) : 0;
     final keepPinned = pinned || (previous is Map && _isPinned(previous));
     final accessedAt = _touch(key);
     await box.put(key, {
@@ -271,117 +343,171 @@ class ChapterCacheStore implements ChapterCache {
       'accessedAt': accessedAt,
       if (keepPinned) 'pinned': true,
     });
-    await _trim(box, keepBook: bookId);
+    await _updateCatalogueAfterWrite(
+      bookId: bookId,
+      chapterId: chapterId,
+      title: title,
+      bytes: bytes,
+      previousBytes: previousValid ? previousBytes : null,
+      pinned: keepPinned,
+    );
+    // A pinned write does not consume the automatic budget, so it cannot make
+    // an unpinned chapter overflow. Skipping trim here avoids scanning a
+    // whole-book cache once per downloaded chapter.
+    if (!keepPinned) await _trim(box, keepBook: bookId);
     changes.value++;
   });
 
   @override
-  Future<void> saveBook(CachedBook book) => _serialize((box) async {
+  Future<void> saveBook(CachedBook book) => _serializeCatalog((box) async {
     if (book.id.isEmpty || book.chapters.isEmpty) return;
     final record = book.toMap();
+    final previous = box.get('book:${book.id}');
+    if (previous is Map) {
+      for (final field in const [
+        'cachedChapterIds',
+        'cachedChapterCount',
+        'cachedByteCount',
+        'pinned',
+        'lastAccessedAt',
+      ]) {
+        if (previous.containsKey(field)) record[field] = previous[field];
+      }
+    }
     record['cachedAt'] = DateTime.now().millisecondsSinceEpoch;
+    record.putIfAbsent('cachedChapterIds', () => <String>[]);
+    record.putIfAbsent('cachedChapterCount', () => 0);
+    record.putIfAbsent('cachedByteCount', () => 0);
     await box.put('book:${book.id}', record);
     await _sweepCatalogues(box, keepBook: book.id);
   });
 
-  @override
-  Future<Set<String>> cachedChapterIds(String bookId) =>
-      _serialize((box) async {
-        return {
-          for (final value in box.values)
-            if (_isChapter(value) && value['bookId'] == bookId)
-              value['chapterId'] as String,
-        };
-      });
-
-  Future<ChapterCacheStats> stats({String? bookId}) => _serialize((box) async {
-    var bytes = 0;
-    var chapters = 0;
-    for (final value in box.values) {
-      if (!_isChapter(value) || (bookId != null && value['bookId'] != bookId)) {
-        continue;
-      }
-      chapters++;
-      bytes += _bytes(value as Map);
+  Future<void> _updateCatalogueAfterWrite({
+    required String bookId,
+    required String chapterId,
+    required String title,
+    required int bytes,
+    required int? previousBytes,
+    required bool pinned,
+  }) async {
+    final box = await _catalogBox();
+    final raw = box.get('book:$bookId');
+    final record = raw is Map
+        ? _map(raw)
+        : <String, dynamic>{
+            'id': bookId,
+            'title': bookId,
+            'cover': '',
+            'chapters': <dynamic>[],
+          };
+    final ids = _cachedIds(record).toSet()..add(chapterId);
+    record['cachedChapterIds'] = ids.toList();
+    record['cachedChapterCount'] = ids.length;
+    final oldBytes = (record['cachedByteCount'] as num?)?.toInt() ?? 0;
+    record['cachedByteCount'] = oldBytes + bytes - (previousBytes ?? 0);
+    record['pinned'] = record['pinned'] == true || pinned;
+    record['lastAccessedAt'] = DateTime.now().millisecondsSinceEpoch;
+    final chapters = record['chapters'];
+    if (chapters is! List || chapters.isEmpty) {
+      record['chapters'] = [
+        {'itemId': chapterId, 'title': title, 'volumeName': '', 'version': ''},
+      ];
     }
-    return ChapterCacheStats(chapterCount: chapters, byteCount: bytes);
-  });
-
-  Future<List<CachedBookSummary>> books() =>
-      _serialize((box) async => _summaries(box));
-
-  @override
-  Future<CachedBook?> cachedBook(String bookId) => _serialize((box) async {
-    if (bookId.isEmpty) return null;
-    final summaries = _summaries(box, onlyBookId: bookId);
-    return summaries.isEmpty ? null : summaries.first.book;
-  });
-
-  @override
-  Future<CachedBook?> savedCatalogue(String bookId) => _serialize((box) async {
-    if (bookId.isEmpty) return null;
-    return CachedBook.fromMap(box.get('book:$bookId'));
-  });
-
-  /// 把章节记录按书聚合成摘要；[onlyBookId] 只统计一本书。
-  ///
-  /// A batch's catalogue can be evicted while later chapters for the same book
-  /// still land; rebuild the summary from those chapters so the offline entry
-  /// stays discoverable instead of orphaning them.
-  List<CachedBookSummary> _summaries(Box<dynamic> box, {String? onlyBookId}) {
-    final counts = <String, int>{};
-    final bytes = <String, int>{};
-    final accessed = <String, num>{};
-    final chaptersByBook = <String, List<Chapter>>{};
-    for (final value in box.values) {
-      if (!_isChapter(value)) continue;
-      final id = value['bookId'] as String;
-      if (onlyBookId != null && id != onlyBookId) continue;
-      counts[id] = (counts[id] ?? 0) + 1;
-      bytes[id] = (bytes[id] ?? 0) + _bytes(value as Map);
-      final time = _accessedAt(value);
-      if (time > (accessed[id] ?? 0)) accessed[id] = time;
-      (chaptersByBook[id] ??= <Chapter>[]).add(
-        Chapter(
-          itemId: value['chapterId'] as String,
-          title: value['title']?.toString() ?? '',
-          volumeName: '',
-        ),
-      );
-    }
-    final books = <CachedBookSummary>[];
-    for (final id in counts.keys) {
-      final book =
-          CachedBook.fromMap(box.get('book:$id')) ??
-          CachedBook(id: id, title: id, chapters: chaptersByBook[id]!);
-      books.add(
-        CachedBookSummary(
-          book,
-          ChapterCacheStats(chapterCount: counts[id]!, byteCount: bytes[id]!),
-        ),
-      );
-    }
-    books.sort(
-      (a, b) => (accessed[b.book.id] ?? 0).compareTo(accessed[a.book.id] ?? 0),
-    );
-    return books;
+    await box.put('book:$bookId', record);
   }
 
+  @override
+  Future<Set<String>> cachedChapterIds(String bookId) =>
+      _serializeCatalog((box) async {
+        await _ensureCatalogueCoverage(box);
+        final record = box.get('book:$bookId');
+        return record is Map ? _cachedIds(record).toSet() : <String>{};
+      });
+
+  Future<ChapterCacheStats> stats({String? bookId}) =>
+      _serializeCatalog((box) async {
+        await _ensureCatalogueCoverage(box);
+        var chapters = 0;
+        var bytes = 0;
+        for (final key in box.keys) {
+          if (key is! String || !key.startsWith('book:')) continue;
+          if (bookId != null && key.substring('book:'.length) != bookId) {
+            continue;
+          }
+          final raw = box.get(key);
+          if (raw is! Map) continue;
+          chapters += (raw['cachedChapterCount'] as num?)?.toInt() ?? 0;
+          bytes += (raw['cachedByteCount'] as num?)?.toInt() ?? 0;
+        }
+        return ChapterCacheStats(chapterCount: chapters, byteCount: bytes);
+      });
+
+  Future<List<CachedBookSummary>> books() => _serializeCatalog((box) async {
+    await _ensureCatalogueCoverage(box);
+    final books = <CachedBookSummary>[];
+    for (final key in box.keys) {
+      if (key is! String || !key.startsWith('book:')) continue;
+      final raw = box.get(key);
+      if (raw is! Map) continue;
+      final stats = _statsOf(raw);
+      if (stats.chapterCount <= 0) continue;
+      final book = CachedBook.fromMap(raw);
+      if (book == null) continue;
+      books.add(CachedBookSummary(book, stats));
+    }
+    books.sort(
+      (a, b) => _bookSortKey(
+        box,
+        'book:${b.book.id}',
+      ).compareTo(_bookSortKey(box, 'book:${a.book.id}')),
+    );
+    return books;
+  });
+
+  int _bookSortKey(Box<dynamic> box, String key) {
+    final raw = box.get(key);
+    if (raw is! Map) return 0;
+    final value = raw['lastAccessedAt'] ?? raw['cachedAt'];
+    return value is num && value.isFinite ? value.toInt() : 0;
+  }
+
+  @override
+  Future<CachedBook?> cachedBook(String bookId) =>
+      _serializeCatalog((box) async {
+        if (bookId.isEmpty) return null;
+        await _ensureCatalogueCoverage(box);
+        final raw = box.get('book:$bookId');
+        if (raw is! Map || _statsOf(raw).chapterCount <= 0) return null;
+        return CachedBook.fromMap(raw);
+      });
+
+  @override
+  Future<CachedBook?> savedCatalogue(String bookId) =>
+      _serializeCatalog((box) async {
+        if (bookId.isEmpty) return null;
+        return CachedBook.fromMap(box.get('book:$bookId'));
+      });
+
   Future<void> clear({String? bookId}) => _serialize((box) async {
+    final catalog = await _catalogBox();
     if (bookId == null) {
       await box.clear();
+      await catalog.clear();
       _accessTimes.clear();
     } else {
       await box.deleteAll([
         'book:$bookId',
         for (final key in box.keys)
-          if (key is String &&
-              key.startsWith('chapter:[${jsonEncode(bookId)},'))
-            key,
+          if ((_chapterKeyParts(key)?.first ?? '') == bookId) key,
       ]);
-      _accessTimes.removeWhere((key, _) => !box.containsKey(key));
+      await catalog.delete('book:$bookId');
+      _accessTimes.removeWhere((key, _) {
+        final parts = _chapterKeyParts(key);
+        return key == 'book:$bookId' || (parts != null && parts[0] == bookId);
+      });
     }
     await box.compact();
+    await catalog.compact();
     changes.value++;
   });
 
@@ -390,42 +516,80 @@ class ChapterCacheStore implements ChapterCache {
   bool _isPinned(Map entry) => entry['pinned'] == true;
 
   Future<void> _trim(Box<dynamic> box, {required String keepBook}) async {
-    final entries = <({dynamic key, int bytes, num accessedAt})>[];
+    final catalog = await _catalogBox();
+    final pinnedBooks = <String>{};
+    for (final key in catalog.keys) {
+      if (key is! String || !key.startsWith('book:')) continue;
+      final raw = catalog.get(key);
+      if (raw is Map && raw['pinned'] == true) {
+        pinnedBooks.add(key.substring('book:'.length));
+      }
+    }
+
+    final entries =
+        <({dynamic key, String bookId, int bytes, num accessedAt})>[];
     var totalBytes = 0;
     for (final key in box.keys) {
-      final raw = box.get(key);
+      final parts = _chapterKeyParts(key);
+      if (parts == null || pinnedBooks.contains(parts[0])) continue;
+      final raw = await box.get(key);
       if (!_isChapter(raw)) continue;
-      // Pinned chapters sit outside the budget entirely: they can neither be
-      // evicted nor push an automatically cached chapter out of the running.
       if (_isPinned(raw as Map)) continue;
       final bytes = _bytes(raw);
       totalBytes += bytes;
       entries.add((
         key: key,
+        bookId: parts[0],
         bytes: bytes,
         accessedAt: _accessTimes[key] ?? _accessedAt(raw),
       ));
     }
     entries.sort((a, b) => a.accessedAt.compareTo(b.accessedAt));
-    final removed = <dynamic>[];
+    final removed =
+        <({dynamic key, String bookId, int bytes, num accessedAt})>[];
     var remaining = entries.length;
     for (final entry in entries) {
       if (remaining <= maxEntries && totalBytes <= maxBytes) break;
-      removed.add(entry.key);
+      removed.add(entry);
       remaining--;
       totalBytes -= entry.bytes;
     }
     if (removed.isNotEmpty) {
-      await box.deleteAll(removed);
-      for (final key in removed) {
-        _accessTimes.remove(key);
+      await box.deleteAll([for (final entry in removed) entry.key]);
+      for (final entry in removed) {
+        _accessTimes.remove(entry.key);
       }
+      await _removeFromCatalogue(removed);
     }
-    // Catalogue records are not chapters, so a trim pass never removes one
-    // just because it evicted a chapter: the catalogue is written before the
-    // first chapter of a batch lands, and a later chapter for the same book
-    // would otherwise be orphaned from the offline entry.
-    await _sweepCatalogues(box, keepBook: keepBook);
+    await _sweepCatalogues(await _catalogBox(), keepBook: keepBook);
+  }
+
+  Future<void> _removeFromCatalogue(
+    List<({dynamic key, String bookId, int bytes, num accessedAt})> removed,
+  ) async {
+    final box = await _catalogBox();
+    final byBook = <String, List<({String chapterId, int bytes})>>{};
+    for (final entry in removed) {
+      final parts = _chapterKeyParts(entry.key);
+      if (parts == null) continue;
+      (byBook[parts[0]] ??= []).add((chapterId: parts[1], bytes: entry.bytes));
+    }
+    for (final item in byBook.entries) {
+      final raw = box.get('book:${item.key}');
+      if (raw is! Map) continue;
+      final record = _map(raw);
+      final ids = _cachedIds(record).toSet();
+      var removedBytes = 0;
+      for (final chapter in item.value) {
+        ids.remove(chapter.chapterId);
+        removedBytes += chapter.bytes;
+      }
+      record['cachedChapterIds'] = ids.toList();
+      record['cachedChapterCount'] = ids.length;
+      record['cachedByteCount'] =
+          ((record['cachedByteCount'] as num?)?.toInt() ?? 0) - removedBytes;
+      await box.put('book:${item.key}', record);
+    }
   }
 
   /// Drops catalogue records whose book has no cached chapters. A detached
@@ -433,17 +597,16 @@ class ChapterCacheStore implements ChapterCache {
   /// progress, so it is kept; the rest age out, and the survivors are capped at
   /// [maxEntries] so browsing books online cannot grow Hive without bound.
   Future<void> _sweepCatalogues(Box<dynamic> box, {String? keepBook}) async {
-    final liveBooks = <String>{
-      for (final value in box.values)
-        if (_isChapter(value)) value['bookId'] as String,
-    };
     final now = DateTime.now().millisecondsSinceEpoch;
     final ttl = catalogTtl.inMilliseconds;
     final detached = <({dynamic key, int cachedAt})>[];
     for (final key in box.keys) {
       if (key is! String || !key.startsWith('book:')) continue;
-      if (liveBooks.contains(key.substring(5))) continue;
       final raw = box.get(key);
+      if (raw is Map &&
+          ((raw['cachedChapterCount'] as num?)?.toInt() ?? 0) > 0) {
+        continue;
+      }
       detached.add((
         key: key,
         cachedAt:
@@ -473,6 +636,183 @@ class ChapterCacheStore implements ChapterCache {
     }
     if (doomed.isEmpty) return;
     await box.deleteAll(doomed);
+  }
+
+  /// Reconciles debris left by old versions or by tests that write the
+  /// chapter box directly. Production writes keep the catalogue exact; this
+  /// pass only runs when the chapter box is already open (so it can never be
+  /// the thing that opens a 200 MB box on the UI isolate).
+  Future<void> _ensureCatalogueCoverage(Box<dynamic> catalog) async {
+    final encName = EncryptedHive.encryptedBoxName(_boxName);
+    Box<dynamic>? data;
+    if (_hive.isBoxOpen(encName)) {
+      data = _hive.box<dynamic>(encName);
+    } else if (_hive.isBoxOpen(_boxName)) {
+      data = _hive.box<dynamic>(_boxName);
+    }
+    if (data == null) return;
+
+    var catalogCount = 0;
+    for (final key in catalog.keys) {
+      if (key is! String || !key.startsWith('book:')) continue;
+      final raw = catalog.get(key);
+      if (raw is Map) {
+        catalogCount += (raw['cachedChapterCount'] as num?)?.toInt() ?? 0;
+      }
+    }
+    var dataCount = 0;
+    for (final key in data.keys) {
+      if (_chapterKeyParts(key) != null) dataCount++;
+    }
+    if (catalogCount == dataCount) return;
+    await _rebuildCatalogueFromData(catalog, data);
+  }
+
+  Future<void> _rebuildCatalogueFromData(
+    Box<dynamic> catalog,
+    Box<dynamic> data,
+  ) async {
+    final records = <String, Map<String, dynamic>>{};
+    for (final key in catalog.keys) {
+      if (key is! String || !key.startsWith('book:')) continue;
+      final raw = catalog.get(key);
+      if (raw is Map) records[key] = _map(raw);
+    }
+
+    final counts = <String, int>{};
+    final bytes = <String, int>{};
+    final pinned = <String>{};
+    final chapters = <String, List<Map<String, dynamic>>>{};
+    for (final key in data.keys) {
+      final parts = _chapterKeyParts(key);
+      if (parts == null) continue;
+      final raw = data.get(key);
+      if (!_isChapter(raw)) continue;
+      final bookId = parts[0];
+      counts[bookId] = (counts[bookId] ?? 0) + 1;
+      bytes[bookId] = (bytes[bookId] ?? 0) + _bytes(raw as Map);
+      if (_isPinned(raw)) pinned.add(bookId);
+      (chapters[bookId] ??= <Map<String, dynamic>>[]).add({
+        'itemId': parts[1],
+        'title': raw['title']?.toString() ?? '',
+        'volumeName': '',
+        'version': '',
+      });
+    }
+
+    for (final item in counts.entries) {
+      final key = 'book:${item.key}';
+      final record =
+          records[key] ??
+          <String, dynamic>{
+            'id': item.key,
+            'title': item.key,
+            'cover': '',
+            'chapters': <dynamic>[],
+            'cachedAt': DateTime.now().millisecondsSinceEpoch,
+          };
+      record['cachedChapterIds'] = [
+        for (final chapter in chapters[item.key] ?? const []) chapter['itemId'],
+      ];
+      record['cachedChapterCount'] = item.value;
+      record['cachedByteCount'] = bytes[item.key] ?? 0;
+      if (pinned.contains(item.key)) record['pinned'] = true;
+      if (record['chapters'] is! List || (record['chapters'] as List).isEmpty) {
+        record['chapters'] = chapters[item.key] ?? <Map<String, dynamic>>[];
+      }
+      records[key] = record;
+    }
+    if (records.isNotEmpty) await catalog.putAll(records);
+  }
+
+  /// Copies old `book:` records from the monolithic v1 box into the new
+  /// catalogue box. The old box is opened lazily, so only the small book
+  /// records are decrypted here; chapter values are read to compute the
+  /// per-book byte totals and are never kept in memory after the pass.
+  Future<void> _migrateLegacyCatalogue(Box<dynamic> catalog) async {
+    final encName = EncryptedHive.encryptedBoxName(_boxName);
+    final exists =
+        await _hive.boxExists(encName) || await _hive.boxExists(_boxName);
+    if (!exists) return;
+    if (catalog.isNotEmpty) return;
+
+    final old = await EncryptedHive.openLazyBox<dynamic>(
+      _hive,
+      _boxName,
+      keys: _keys,
+      requireEncryption: true,
+    );
+    try {
+      final keys = old.keys.toList();
+      final bookKeys = <String>[];
+      final chapterKeys = <dynamic>[];
+      for (final key in keys) {
+        if (key is! String) continue;
+        if (key.startsWith('book:')) {
+          bookKeys.add(key);
+        } else if (key.startsWith('chapter:')) {
+          chapterKeys.add(key);
+        }
+      }
+
+      final counts = <String, int>{};
+      final bytes = <String, int>{};
+      final pinned = <String>{};
+      final chapters = <String, List<Map<String, dynamic>>>{};
+      for (final key in chapterKeys) {
+        final parts = _chapterKeyParts(key);
+        final raw = await old.get(key);
+        if (parts == null || !_isChapter(raw)) continue;
+        final bookId = parts[0];
+        counts[bookId] = (counts[bookId] ?? 0) + 1;
+        bytes[bookId] = (bytes[bookId] ?? 0) + _bytes(raw as Map);
+        if (_isPinned(raw)) pinned.add(bookId);
+        (chapters[bookId] ??= <Map<String, dynamic>>[]).add({
+          'itemId': parts[1],
+          'title': raw['title']?.toString() ?? '',
+          'volumeName': '',
+          'version': '',
+        });
+      }
+
+      final records = <String, dynamic>{};
+      for (final key in bookKeys) {
+        final raw = await old.get(key);
+        if (raw is! Map) continue;
+        final bookId = key.substring('book:'.length);
+        final record = _map(raw);
+        record['cachedChapterIds'] = [
+          for (final chapter in chapters[bookId] ?? const []) chapter['itemId'],
+        ];
+        record['cachedChapterCount'] = counts[bookId] ?? 0;
+        record['cachedByteCount'] = bytes[bookId] ?? 0;
+        if (pinned.contains(bookId)) record['pinned'] = true;
+        if (record['chapters'] is! List ||
+            (record['chapters'] as List).isEmpty) {
+          record['chapters'] = chapters[bookId] ?? <Map<String, dynamic>>[];
+        }
+        records[key] = record;
+      }
+      for (final item in chapters.entries) {
+        final key = 'book:${item.key}';
+        if (records.containsKey(key)) continue;
+        records[key] = {
+          'id': item.key,
+          'title': item.key,
+          'cover': '',
+          'chapters': item.value,
+          'cachedChapterIds': [
+            for (final chapter in item.value) chapter['itemId'],
+          ],
+          'cachedChapterCount': counts[item.key] ?? 0,
+          'cachedByteCount': bytes[item.key] ?? 0,
+          'cachedAt': DateTime.now().millisecondsSinceEpoch,
+        };
+      }
+      if (records.isNotEmpty) await catalog.putAll(records);
+    } finally {
+      await old.close();
+    }
   }
 }
 

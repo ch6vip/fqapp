@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,6 +32,7 @@ import 'detail_page.dart';
 import 'rank_page.dart';
 import 'search_page.dart';
 import 'home_provider.dart';
+import 'home_tab_switch.dart';
 
 /// 书城首页：以书为主的书架。
 ///
@@ -81,7 +83,22 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   late final ScrollController _scroll =
       widget.scrollController ?? ScrollController();
-  bool get _ownsScroll => widget.scrollController == null;
+
+  /// 分类条吸顶的位置靠它量：搜索行的高度就是内容区的第一行。
+  final GlobalKey _heroKey = GlobalKey();
+  late final _homeTabs = HomeTabSwitch(_scroll, ref, _heroKey);
+
+  /// 进过一次内容之后就是「切分类」，不再是冷启动：前者不能铺整页骨架。
+  bool _hadContent = false;
+
+  /// 各分类上一次渲染出的内容 slivers：横滑时直接拿它铺「正在进来」那一侧。
+  ///
+  /// 只缓存进过的分类；没进过的退回骨架。宽度或字号变了就整份丢掉——这些
+  /// sliver 是按当时的栅格宽度建好的，换个尺寸复用会把旧版式画进新窗口。
+  final Map<int, List<Widget>> _previewBodies = {};
+  double? _previewGridWidth;
+  double? _previewTextScale;
+
   Timer? _loadMoreTimer;
   bool _visible = false;
 
@@ -131,7 +148,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         ..addListener(_onLocalDataChanged);
     }
     // 关闭「继续阅读」是个持久化开关，加载完成后要重画这一行。
-    HomeContinuePreferences.instance.dismissedId.addListener(_onLocalDataChanged);
+    HomeContinuePreferences.instance.dismissedId.addListener(
+      _onLocalDataChanged,
+    );
     unawaited(HomeContinuePreferences.instance.load());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(homeProvider.notifier).load();
@@ -166,7 +185,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       _onLocalDataChanged,
     );
     // 外部传入的控制器归壳层所有，这里不能释放。
-    if (_ownsScroll) _scroll.dispose();
+    if (widget.scrollController == null) _scroll.dispose();
     super.dispose();
   }
 
@@ -239,7 +258,6 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
-    final notifier = ref.read(homeProvider.notifier);
     final palette = HomePalette.of(context);
     final categories = _categoriesOf(state);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
@@ -255,7 +273,10 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 窗口再宽只把卡片放大，不会往格子里塞更多小封面。
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840 ? double.infinity : 840,
+            maxWidth:
+                isWindowsDesktop || MediaQuery.sizeOf(context).width >= 840
+                ? double.infinity
+                : 840,
           ),
           child: SafeArea(
             bottom: false,
@@ -269,52 +290,136 @@ class _HomePageState extends ConsumerState<HomePage> {
               // constraints carry the scroll offset, so measuring inside one
               // re-ran the builder and rebuilt every visible card per frame.
               child: LayoutBuilder(
-                builder: (context, constraints) => TabSwipeArea(
-                  index: state.tabIndex,
-                  count: categories.length,
-                  onSelect: notifier.selectTab,
-                  child: CustomScrollView(
-                    key: const Key('home_feed'),
-                    controller: _scroll,
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
+                builder: (context, constraints) {
+                  final gridWidth = constraints.maxWidth - homeGutter * 2;
+                  final content = _contentSlivers(state, gridWidth);
+                  _rememberPreviewBody(
+                    state.tabIndex,
+                    content,
+                    gridWidth,
+                    textScale,
+                  );
+                  return TabSwipeArea(
+                    index: state.tabIndex,
+                    count: categories.length,
+                    onSelect: _homeTabs.select,
+                    // 拖动时把邻页真正画出来：缓存过的分类直接复用上次的
+                    // sliver 树，没进过的铺骨架。没有它，移开的那一侧只能
+                    // 露页面底色——深色主题下就是一块黑面板。
+                    previewBuilder: (target) => _buildTabPreview(
+                      target,
+                      textScale: textScale,
+                      canvas: palette.canvas,
                     ),
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: HomeHero(
-                          onSearch: _openSearch,
-                          onCategory: _openCategory,
-                          cueLoader: widget.cueLoader,
+                    // 顶栏靠反向位移钉住，重绘边界会把它的右半截裁掉。
+                    isolateChild: false,
+                    child: CustomScrollView(
+                      key: const Key('home_feed'),
+                      controller: _scroll,
+                      // 顶栏用反向位移钉在屏幕上（SwipeStationary），会被画到
+                      // 视口之外。视口默认 Clip.hardEdge 只认自己的 bounds，会把
+                      // 搜索行右半截和末位标签裁掉；裁剪统一交给 TabSwipeArea
+                      // 外层的 ClipRect。
+                      clipBehavior: Clip.none,
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      slivers: [
+                        _heroSliver(),
+                        SliverPersistentHeader(
+                          pinned: true,
+                          delegate: HomeTabBarDelegate(
+                            selectedIndex: state.tabIndex,
+                            onSelect: _homeTabs.select,
+                            categories: categories,
+                            extent: HomeTabBarDelegate.extentFor(textScale),
+                            dark: palette.dark,
+                            eink: palette.eink,
+                            oled: palette.oled,
+                          ),
                         ),
-                      ),
-                      SliverPersistentHeader(
-                        pinned: true,
-                        delegate: HomeTabBarDelegate(
-                          selectedIndex: state.tabIndex,
-                          onSelect: notifier.selectTab,
-                          categories: categories,
-                          extent:
-                              HomeTabBarDelegate.barHeight +
-                              HomeTabBarDelegate.bottomPadding +
-                              (textScale - 1).clamp(0, 2) * 16,
-                          dark: palette.dark,
-                          eink: palette.eink,
-                          oled: palette.oled,
-                        ),
-                      ),
-                      ..._contentSlivers(
-                        state,
-                        constraints.maxWidth - homeGutter * 2,
-                      ),
-                    ],
-                  ),
-                ),
+                        ...content,
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// 搜索行。横滑切分类时它不跟着走：它属于「页面」，不属于「内容」。
+  SliverToBoxAdapter _heroSliver() => SliverToBoxAdapter(
+    child: SwipeStationary(
+      child: HomeHero(
+        key: _heroKey,
+        onSearch: _openSearch,
+        onCategory: _openCategory,
+        cueLoader: widget.cueLoader,
+      ),
+    ),
+  );
+
+  /// 记下当前分类这一帧的内容 slivers，供横滑时预渲染邻页。
+  void _rememberPreviewBody(
+    int tabIndex,
+    List<Widget> slivers,
+    double gridWidth,
+    double textScale,
+  ) {
+    if (_previewGridWidth != gridWidth || _previewTextScale != textScale) {
+      _previewBodies.clear();
+      _previewGridWidth = gridWidth;
+      _previewTextScale = textScale;
+    }
+    _previewBodies[tabIndex] = slivers;
+  }
+
+  /// 横滑时「正在进来」的那一页。
+  ///
+  /// 只铺内容区（搜索行、分类条由当前页的 [SwipeStationary] 钉住），并用
+  /// [_previewContentTop] 对齐到切换后内容所在的第一行——新分类从自己的
+  /// 第一行开始显示，与 [HomeTabSwitch] 的落点一致。没进过的分类铺骨架，
+  /// 至少不是一块底色。
+  Widget _buildTabPreview(
+    int target, {
+    required double textScale,
+    required Color canvas,
+  }) {
+    if (target < 0 || target >= homeCategories.length) {
+      return const SizedBox.shrink();
+    }
+    final body = _previewBodies[target];
+    return ColoredBox(
+      color: canvas,
+      child: CustomScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: SizedBox(height: _previewContentTop(textScale)),
+          ),
+          if (body != null)
+            ...body
+          else
+            const SliverToBoxAdapter(child: HomeSkeleton()),
+        ],
+      ),
+    );
+  }
+
+  /// 切到邻页后，内容区第一行在屏幕上的 y。
+  ///
+  /// 搜索行高度 + 分类条高度 - 落点。落点与 [HomeTabSwitch] 一致：滚过搜索行
+  /// 就停在搜索行高度（分类条吸顶），否则原地不动。
+  double _previewContentTop(double textScale) {
+    final hero = _heroKey.currentContext?.size?.height ?? 0;
+    final bar = HomeTabBarDelegate.extentFor(textScale);
+    final pixels = _scroll.hasClients ? _scroll.position.pixels : 0.0;
+    final landing = pixels > hero ? hero : pixels;
+    return math.max(bar, hero + bar - landing);
   }
 
   List<Widget> _contentSlivers(HomeState state, double gridWidth) {
@@ -334,6 +439,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
 
     final items = _visibleItems(state);
+    if (items.isNotEmpty) _hadContent = true;
     final now = _readingNow(state);
     final lead = now?.item;
     final blockBody = _blockBodySlivers(
@@ -370,7 +476,11 @@ class _HomePageState extends ConsumerState<HomePage> {
         WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
       }
       // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
-      // paints the skeleton rather than a spinner.
+      // paints the skeleton rather than a spinner. 切分类不是冷启动：满屏脉冲
+      // 骨架 + 搜索行被带回来，正是「整页重新加载」的观感，用轻量提示代替。
+      if (_hadContent) {
+        return const [SliverToBoxAdapter(child: HomeFeedLoading())];
+      }
       return const [SliverToBoxAdapter(child: HomeSkeleton())];
     }
     return [
