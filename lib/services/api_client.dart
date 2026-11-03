@@ -486,10 +486,11 @@ class ApiClient {
     required String tab,
     String? toneId,
     String? mode,
+    String? bookId,
   }) {
     final id = Uri.encodeComponent(itemId);
     return switch (tab) {
-      '漫画' => _url('/api/v1/manga/$id', const {}),
+      '漫画' => _url('/api/v1/manga/$id', {'book_id': ?bookId}),
       '短剧' || '漫剧' => _url('/api/v1/videos/$id', {'mode': ?mode}),
       _ => _url('/api/v1/chapters/$id', {'tone_id': ?toneId}),
     };
@@ -1334,9 +1335,9 @@ class ApiClient {
   }
 
   /// Returns comic pages in backend order with absolute HTTP(S) URLs.
-  Future<List<ComicImage>> comicImages(String itemId) async {
+  Future<List<ComicImage>> comicImages(String itemId, {String? bookId}) async {
     final response = await _get(
-      _contentUrl(itemId, tab: '漫画'),
+      _contentUrl(itemId, tab: '漫画', bookId: bookId),
       timeout: _comicTimeout,
     );
     final statusCode = response.statusCode;
