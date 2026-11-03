@@ -1,0 +1,42 @@
+**/dgph
+*.mode1v3
+*.mode2v3
+*.moved-aside
+*.pbxuser
+*.perspectivev3
+**/*sync/
+.sconsign.dblite
+.tags*
+**/.vagrant/
+**/DerivedData/
+Icon?
+**/Pods/
+**/.symlinks/
+profile
+xcuserdata
+**/.generated/
+Flutter/App.framework
+Flutter/Flutter.framework
+Flutter/Flutter.podspec
+Flutter/Generated.xcconfig
+# Flutter >= 3.22 的 pub get 还会额外生成这一份；官方模板漏了它。
+Flutter/Flutter-Generated.xcconfig
+Flutter/ephemeral/
+Flutter/app.flx
+Flutter/app.zip
+Flutter/flutter_assets/
+Flutter/flutter_export_environment.sh
+# 本地签名配置（含 DEVELOPMENT_TEAM），模板见 Flutter/Signing.xcconfig.example。
+Flutter/Signing.xcconfig
+ServiceDefinitions.json
+Runner/GeneratedPluginRegistrant.*
+
+# Exceptions to above rules.
+!default.mode1v3
+!default.mode2v3
+!default.pbxuser
+!default.perspectivev3
+
+# fqapp: Rust 核心静态库由 scripts/build_rust_ios.sh 生成，不入库
+Frameworks/*.a
+Frameworks/*.xcframework

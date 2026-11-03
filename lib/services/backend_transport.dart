@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../src/rust/api.dart' as rust;
 import '../src/rust/frb_generated.dart';
 import 'app_log.dart';
+import 'rust_bootstrap.dart';
 import 'secure_key_provider.dart';
 
 /// One backend response.
@@ -241,7 +242,7 @@ class RustBackendTransport implements BackendTransport {
   /// [RustLib.init]. A seam rather than a direct call, so the retry behavior
   /// can be tested without loading the shared library.
   @visibleForTesting
-  static Future<void> Function() runtimeInitializer = RustLib.init;
+  static Future<void> Function() runtimeInitializer = initRustRuntime;
 
   /// Whether FRB already installed its process-wide state.
   ///
@@ -259,7 +260,7 @@ class RustBackendTransport implements BackendTransport {
   @visibleForTesting
   static void resetRuntimeForTest() {
     _runtimeReady = null;
-    runtimeInitializer = RustLib.init;
+    runtimeInitializer = initRustRuntime;
     runtimeInitialized = () => RustLib.instance.initialized;
     disposeRuntime = RustLib.dispose;
   }

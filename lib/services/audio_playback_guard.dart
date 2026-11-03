@@ -211,15 +211,16 @@ Future<SubtitleTrack?> _synthesizeSubtitles(
   }
   final duration = c._duration;
   if (duration <= Duration.zero) return null;
+  final String text;
   try {
-    final text = await ApiClient.instance.contentText(itemId);
-    if (text.trim().isEmpty) return null;
-    return SubtitleSynthesis.buildAsync(
-      text: text,
-      duration: duration,
-      anchors: c._timeTrack,
-    );
+    text = await ApiClient.instance.contentText(itemId);
   } catch (_) {
     return null;
   }
+  if (text.trim().isEmpty) return null;
+  return SubtitleSynthesis.buildAsync(
+    text: text,
+    duration: duration,
+    anchors: c._timeTrack,
+  );
 }

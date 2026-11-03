@@ -1,0 +1,19 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+#include "Generated.xcconfig"
+
+// 签名用的 DEVELOPMENT_TEAM 不进仓库：各机器自己建 ios/Flutter/Signing.xcconfig
+// （模板见 Signing.xcconfig.example，已被 ios/.gitignore 忽略）。
+// Xcode 里「Automatically manage signing」选的 Team 会读这个构建设置。
+#include? "Signing.xcconfig"
+
+// ---- fqapp: iOS 上的 Rust 核心（fqapi_core）链接配置 ----
+// iOS 不允许像 Android 那样从 App 包内 dlopen 共享库，所以 Rust 编成静态库整体链进主二进制；
+// 运行时由 flutter_rust_bridge 的 ExternalLibrary.process() 从进程自身符号表里查找入口
+// （见 lib/services/rust_bootstrap_io.dart）。三件事缺一不可：
+//   1) -force_load：静态库默认只按需取目标文件，这里要把全部目标文件装进来；
+//   2) DEAD_CODE_STRIPPING=NO：Release 默认的 dead_strip 会把「无人引用、只在运行时 dlsym」的符号删掉；
+//   3) -Wl,-export_dynamic：主可执行文件默认不导出全局符号，dlsym 会找不到 Rust 入口。
+// STRIP_INSTALLED_PRODUCT=NO 用于避免安装期 strip 再把符号表裁掉。
+OTHER_LDFLAGS = $(inherited) -force_load $(SRCROOT)/Frameworks/libfqapi_core.a -framework Security -framework CoreFoundation -Wl,-export_dynamic
+DEAD_CODE_STRIPPING = NO
+STRIP_INSTALLED_PRODUCT = NO
