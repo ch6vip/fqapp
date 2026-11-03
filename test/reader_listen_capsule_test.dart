@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/chapter_media.dart';
+import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/pages/system_tts_settings_page.dart';
