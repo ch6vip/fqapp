@@ -26,7 +26,8 @@ import '../widgets/series_detail/series_detail_top_bar.dart';
 import 'detail_page.dart' show openBookDetail;
 import 'player_page.dart' show PlayerPage;
 
-/// 短剧详情：版式照 `mockups/detail-redesign.html` 右机。
+/// 短剧详情：版式照 PR #200（`feat/series-detail-redesign`，提交 `2c3a3e3`）
+/// 定稿的设计稿右机——设计稿本身不在仓库里，版式规则以下面这段为准。
 ///
 /// 自上而下：顶栏（只有返回）→ 头部 → 播放 / 收藏 → 选集 → 简介 →
 /// 剧评 → 原著小说。页面跟随应用主题（浅色 / 深色 / 墨水屏 / OLED）；
