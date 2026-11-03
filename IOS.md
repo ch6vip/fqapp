@@ -31,11 +31,24 @@ ditto build/ios/iphoneos/Runner.app /tmp/pack/Payload/Runner.app
 (cd /tmp/pack && zip -qry fqapp_ios_unsigned.ipa Payload)
 ```
 
-用 `~/workspace/ios-sideload`（免费 Apple ID，7 天有效）签名并安装：
+## 签名
+
+`DEVELOPMENT_TEAM` 不入库。首次构建前把它放进本地文件：
 
 ```bash
-cd ~/workspace/ios-sideload
-BUNDLE_ID=com.lihangyu.fqapp IPA=/tmp/pack/fqapp_ios_unsigned.ipa ./all.sh --mint
+cp ios/Flutter/Signing.xcconfig.example ios/Flutter/Signing.xcconfig
+# 把 DEVELOPMENT_TEAM 改成自己的 Team ID；该文件已被 ios/.gitignore 忽略
+```
+
+只要改 `Signing.xcconfig` 就够了，别在 Xcode 的 Signing 页里再选一次 Team——那样
+Xcode 会把 `DEVELOPMENT_TEAM` 写回 `ios/Runner.xcodeproj/project.pbxproj`，让工程文件变脏。
+`CODE_SIGN_STYLE` 仍是 Automatic，Team 由 xcconfig 供值。
+
+装到真机可以走自签（免费 Apple ID 7 天有效，过期后 App 闪退，重新签一次即可）。
+下面的命令按你自己的签名脚本替换：
+
+```bash
+BUNDLE_ID=com.fqapp.fqapp IPA=/tmp/pack/fqapp_ios_unsigned.ipa ./your-sign-script.sh
 ```
 
 ## iOS 专用改动（为什么需要）
@@ -57,8 +70,11 @@ BUNDLE_ID=com.lihangyu.fqapp IPA=/tmp/pack/fqapp_ios_unsigned.ipa ./all.sh --min
 - **视频不可用**：短剧/漫剧页显示「暂不支持」。要补需要接 `media_kit` + `media_kit_libs_ios_video`（播放走 Rust 的 `/src/*` 回环解密），或写 AVPlayer 插件。
 - **听书不可用**：`fqapp/system_tts`（Android TextToSpeech + WSOLA）没有 iOS 实现，界面上会提示「当前平台不支持系统朗读」；可以接 `flutter_tts`（AVSpeechSynthesizer）补上。
 - 分享、导入导出、后台播放、LAN 分享、番茄书架导入等只在 Android 上验证过。
-- 免费 Apple ID 签名 7 天过期，过期后 App 闪退，重跑 `ios-sideload` 的 `./all.sh`。
+- 免费 Apple ID 签名 7 天过期，过期后 App 闪退，重跑一次自签脚本即可。
 
 ## 与 Android 构建的关系
 
-iOS 需要 Flutter 3.47+（Xcode 27 适配），因此 `pubspec.lock` 的传递依赖被一并升级到 3.47.9 能解析的版本。**Android CI 目前 pin 的是 Flutter 3.44.6**，若继续用旧 lock 会冲突：要么把 CI 的 `FLUTTER_VERSION` 也升到 3.47.x，要么 Android 与 iOS 分两个 lock（不推荐）。
+iOS 需要 Flutter 3.47+（Xcode 27 适配），因此 `pubspec.lock` 的传递依赖被一并升级到
+3.47.9 能解析的版本，Android / Windows 的 CI 也统一到 3.47.9（见 `chore(deps)` 那个
+commit）。若上游要保留旧 SDK，把那一个 commit 整体回退、再在 3.44.6 上重新生成
+`pubspec.lock` 即可，iOS 侧的改动不受影响。

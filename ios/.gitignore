@@ -26,6 +26,8 @@ Flutter/app.flx
 Flutter/app.zip
 Flutter/flutter_assets/
 Flutter/flutter_export_environment.sh
+# 本地签名配置（含 DEVELOPMENT_TEAM），模板见 Flutter/Signing.xcconfig.example。
+Flutter/Signing.xcconfig
 ServiceDefinitions.json
 Runner/GeneratedPluginRegistrant.*
 

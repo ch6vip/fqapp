@@ -1,6 +1,11 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
 #include "Generated.xcconfig"
 
+// 签名用的 DEVELOPMENT_TEAM 不进仓库：各机器自己建 ios/Flutter/Signing.xcconfig
+// （模板见 Signing.xcconfig.example，已被 ios/.gitignore 忽略）。
+// Xcode 里「Automatically manage signing」选的 Team 会读这个构建设置。
+#include? "Signing.xcconfig"
+
 // ---- fqapp: iOS 上的 Rust 核心（fqapi_core）链接配置 ----
 // iOS 不允许像 Android 那样从 App 包内 dlopen 共享库，所以 Rust 编成静态库整体链进主二进制；
 // 运行时由 flutter_rust_bridge 的 ExternalLibrary.process() 从进程自身符号表里查找入口
