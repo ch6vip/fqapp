@@ -48,7 +48,7 @@ import '../widgets/audio/audio_cover_card.dart';
 import '../widgets/audio/audio_sections.dart';
 import '../widgets/audio/audio_subtitle_scroller.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
-import '../widgets/audio/system_tts_controls.dart';
+import '../widgets/reader/reader_listen_capsule.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/comment_images.dart';
 import '../widgets/home/home_design.dart';
