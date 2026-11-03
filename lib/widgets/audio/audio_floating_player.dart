@@ -278,7 +278,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
         children: [
           const SizedBox(width: 4),
           _button(
-            key: ValueKey('{widget.keyPrefix}-open'),
+            key: ValueKey("${widget.keyPrefix}-open"),
             label: '\u6253\u5f00\u542c\u4e66\uff1a${widget.title}',
             width: 42,
             onTap: widget.onOpen,
@@ -286,7 +286,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           ),
           SizedBox(width: more == null ? 14 : 2),
           _button(
-            key: ValueKey('{widget.keyPrefix}-toggle'),
+            key: ValueKey("${widget.keyPrefix}-toggle"),
             label: widget.loading
                 ? '\u6b63\u5728\u52a0\u8f7d'
                 : widget.playing
@@ -338,7 +338,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           if (more != null) ...[
             const SizedBox(width: 2),
             _button(
-              key: ValueKey('{widget.keyPrefix}-more'),
+              key: ValueKey("${widget.keyPrefix}-more"),
               label: '更多选项',
               width: 26,
               onTap: widget.canMore ? more : null,
@@ -354,7 +354,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           ] else
             const SizedBox(width: 10),
           _button(
-            key: ValueKey('{widget.keyPrefix}-close'),
+            key: ValueKey("${widget.keyPrefix}-close"),
             label: '\u5173\u95ed\u64ad\u653e',
             width: 26,
             onTap: _close,
