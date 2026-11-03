@@ -31,18 +31,30 @@ class PlayletClearScreenButton extends StatelessWidget {
         width: 48,
         height: 48,
         child: Center(
-          child: SizedBox(
+          child: PlayletClearScreenIcon(
             key: const ValueKey('player-clear-icon'),
-            width: 28,
-            height: 28,
-            child: Center(
-              child: CustomPaint(
-                size: const Size(20, 23),
-                painter: _ClearScreenIconPainter(color),
-              ),
-            ),
+            color: color,
           ),
         ),
+      ),
+    ),
+  );
+}
+
+/// 旧底栏与右栏共用的清屏图标；[color] 需要跟随所在底色。
+class PlayletClearScreenIcon extends StatelessWidget {
+  const PlayletClearScreenIcon({super.key, this.color = Colors.white});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 28,
+    height: 28,
+    child: Center(
+      child: CustomPaint(
+        size: const Size(20, 23),
+        painter: _ClearScreenIconPainter(color),
       ),
     ),
   );
