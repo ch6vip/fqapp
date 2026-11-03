@@ -247,3 +247,38 @@ class HomeFeedError extends StatelessWidget {
     );
   }
 }
+
+/// 切分类时的占位。
+///
+/// 冷启动首载铺 `HomeSkeleton`（官方 `alx.xml` 的 `SkeletonLayout`），但横滑
+/// 切到一个还没进过的分类时，满屏脉冲骨架会被读成「整页重新加载了」——搜
+/// 索行和分类条也会跟着回来。这里对齐短剧页切频道的观感：一段安静的提示，
+/// 顶栏、分类条、滚动位置都留在原地。
+class HomeFeedLoading extends StatelessWidget {
+  const HomeFeedLoading({super.key, this.message = '正在刷新内容'});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 56),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: palette.muted,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(message, style: TextStyle(fontSize: 13, color: palette.muted)),
+        ],
+      ),
+    );
+  }
+}
