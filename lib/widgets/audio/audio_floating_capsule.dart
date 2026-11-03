@@ -270,7 +270,18 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     if (picked == null || !mounted) return;
     await AudioPreferences.instance.setListenEngine(picked);
     if (!mounted) return;
-    _toast(picked == ListenEngine.smart ? '播放引擎：智能朗读' : '播放引擎：系统朗读');
+    // 暂停态换引擎要立刻接上：以前只记偏好，当前会话还挂着旧引擎，用户
+    // 得关掉胶囊再重进才生效。接不上（音频切系统朗读时不在书页）就只记
+    // 偏好，提示下一步怎么走。
+    final resumed = await ReaderAudioBridge.resumeWithEngine(context, picked);
+    if (!mounted) return;
+    _toast(
+      resumed
+          ? (picked == ListenEngine.smart ? '播放引擎：智能朗读' : '播放引擎：系统朗读')
+          : (picked == ListenEngine.smart
+                ? '已切换到智能朗读，点「听书」继续'
+                : '已切换到系统朗读，回书页点「听书」继续'),
+    );
   }
 
   void _openTtsSettings(BuildContext context) {
