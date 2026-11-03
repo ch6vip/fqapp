@@ -31,7 +31,6 @@ import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/player_layout_preferences.dart';
 import 'services/backend_service.dart';
-import 'services/chapter_cache_store.dart';
 import 'services/digg_store.dart';
 import 'services/drama_channel_preferences.dart';
 import 'services/drama_download_store.dart';
@@ -105,11 +104,6 @@ Future<void> _prepareRuntime() async {
         await BackendService.instance.stop();
       } catch (error, stack) {
         AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
-      }
-      try {
-        await ChapterCacheStore.instance.close();
-      } catch (error, stack) {
-        AppLog.w('exit', '退出前关闭章节缓存失败', error: error, stack: stack);
       }
       await Hive.close();
     };
