@@ -20,9 +20,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// * 封面：回到书页。菜单就长在书页上，收起菜单即可，不另开控制页。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const more = ValueKey('audio-floating-more');
-  const open = ValueKey('audio-floating-open');
-  const toggle = ValueKey('audio-floating-toggle');
+  const more = ValueKey('reader-menu-more');
+  const open = ValueKey('reader-menu-open');
+  const toggle = ValueKey('reader-menu-toggle');
 
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
