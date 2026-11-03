@@ -4,7 +4,6 @@
 
 import 'package:flutter/widgets.dart';
 
-// TODO(justinmc): replace with `RawButton` or equivalent when available.
 /// A very basic button for use in widget tests.
 class TestButton extends StatelessWidget {
   const TestButton({
