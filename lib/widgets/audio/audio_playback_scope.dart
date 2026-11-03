@@ -444,24 +444,28 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
         return true;
       }
       final book = tts.book;
-      await _closeTts();
-      if (!mounted) return false;
-      return ReaderAudioBridge.startListeningInBackground(
-        context,
-        AudioPage(
-          bookId: book.bookId,
-          title: book.title,
-          cover: book.coverUrl,
-          chapters: book.chapters,
-          startIndex: book.startIndex,
-        ),
-      );
+      if (book.localOnly) return false;
+      try {
+        // 当前 context 属于 scope 自身，不能经祖先查找取回自己；切换由队列接管。
+        return await acquire(
+              AudioPage(
+                bookId: book.bookId,
+                title: book.title,
+                cover: book.coverUrl,
+                chapters: book.chapters,
+                startIndex: tts.index,
+              ),
+            ) !=
+            null;
+      } catch (_) {
+        return false;
+      }
     }
     final session = _session;
     if (session != null && !session._closed && session._ready) {
-      // 缓冲中不给 toggle（与胶囊的 canToggle 同一条规矩）。
       if (engine == ListenEngine.system) return false;
-      await session._togglePlayback();
+      // 选择当前引擎只恢复播放，不能把缓冲中或已恢复的会话反向暂停。
+      if (!session._wantPlay) await session._togglePlayback();
       return true;
     }
     return false;
