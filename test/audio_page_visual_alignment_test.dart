@@ -19,8 +19,9 @@ import 'support/controlled_player.dart';
 /// 听书页的视觉对齐回归：墨水屏纯黑白配色，以及播放速度 / 播放设置 /
 /// 定时关闭 / 目录四个弹层共用 HomeSheetFrame 外壳。
 ///
-/// 从 `audio_real_alignment_test.dart` 拆出来，避免两边测试合并后超出
-/// `scripts/line_budget.json` 的记录行数。
+/// 从 `audio_real_alignment_test.dart` 拆出来：两边合并后单文件过大、定位失败
+/// 用例费劲。拆分的动机与行数无关（上游已把行数门禁改成只报告，
+/// `scripts/line_budget.json` 已不存在），纯粹是可读性。
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});

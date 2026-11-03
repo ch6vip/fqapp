@@ -5,7 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/home_cell.dart';
 
 /// 用真机抓到的 `build/home_raw.json` 验证解析层：顶栏分类与区块都要出来。
-/// 这个文件是 2026-10-22 从 `/api/v1/recommend/homepage?tab_type=2` 抓的真实响应。
+///
+/// 样本来自设备上的 Rust 核心路由（`build/` 已 gitignore，样本不入库）。刷新方法：
+/// 启动 App 后
+/// `adb forward tcp:18921 tcp:18921`，再请求
+/// `http://127.0.0.1:18921/api/v1/recommend/homepage?tab_type=2&offset=0`
+/// 存成 `build/home_raw.json`。
+///
+/// 注意：这里只断言**结构与形状**（分类集合、区块 showType/名字/条数、副标题槽位
+/// 是否保留），不钉上游会轮播的具体文案。
 void main() {
   test('真实响应的 tab_item 与 cell_data 都能解析出来', () {
     final file = File('build/home_raw.json');
@@ -44,11 +52,14 @@ void main() {
     expect(cells[1].name, '猜你喜欢');
     expect(cells[1].flatten().length, greaterThanOrEqualTo(11));
 
-    // 排行行的副标题：官方 TagLayout 渲染 secondary_info_list 的 content
-    // （真机样本第一条是「多人二刷 / 9320万热度」），解析层必须保留。
+    // 排行行的副标题：官方 TagLayout 渲染 secondary_info_list 的 content，
+    // 解析层必须把它保留下来。第一条文案是上游轮播的（抓到过「多人二刷」也
+    // 抓到过「16个老书虫在看」），钉字面值会随上游内容天天变，所以只验槽位形状：
+    // 两个槽位都在，末位是热度类指标。
     final firstRankBook = cells[0].flatten().first;
     expect(firstRankBook.rankTags, isNotEmpty);
-    expect(firstRankBook.rankTags.first, '多人二刷');
+    expect(firstRankBook.rankTags.length, greaterThanOrEqualTo(2));
+    expect(firstRankBook.rankTags.first, isNotEmpty);
     expect(firstRankBook.rankTags.last, contains('热度'));
   });
 }
