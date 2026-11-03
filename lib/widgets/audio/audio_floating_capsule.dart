@@ -269,7 +269,7 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     );
     if (picked == null || !mounted) return;
     await AudioPreferences.instance.setListenEngine(picked);
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     // 暂停态换引擎要立刻接上：以前只记偏好，当前会话还挂着旧引擎，用户
     // 得关掉胶囊再重进才生效。接不上（音频切系统朗读时不在书页）就只记
     // 偏好，提示下一步怎么走。
