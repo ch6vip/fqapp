@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
+import '../../services/reader_dialogue.dart';
 import '../../services/text_replacement_engine.dart';
 import '../../services/reader_underline_store.dart';
 import 'reader_bubble.dart';
@@ -364,6 +365,10 @@ class ReaderChapterLayout {
   final List<_SourceBlock> _sourceBlocks;
   final int sourceTextLength;
 
+  /// Lazy, presentation-only ranges: toggling marks never reflows the text.
+  late final Map<int, List<(int, int)>> dialogueRangesByBlock =
+      _dialogueRangesByBlock();
+
   ReaderChapterLayout._(
     this.spec,
     this.blocks,
@@ -502,6 +507,35 @@ class ReaderChapterLayout {
       List.unmodifiable(sourceBlocks),
       math.max(0, sourceOffset - 1),
     );
+  }
+
+  Map<int, List<(int, int)>> _dialogueRangesByBlock() {
+    if (blocks.length <= 1) return const {};
+    final body = blocks.skip(1);
+    final base = blocks[1].start;
+    final ranges = readerDialogueRanges(
+      body.map((block) => block.text).join('\n'),
+    );
+    if (ranges.isEmpty) return const {};
+    final byBlock = <int, List<(int, int)>>{};
+    var first = 0;
+    for (final block in body) {
+      if (block.isImage || block.text.isEmpty) continue;
+      while (first < ranges.length && ranges[first].$2 + base <= block.start) {
+        first++;
+      }
+      final local = <(int, int)>[];
+      for (var index = first; index < ranges.length; index++) {
+        final range = ranges[index];
+        if (range.$1 + base >= block.end) break;
+        local.add((
+          math.max(range.$1 + base, block.start) - block.start,
+          math.min(range.$2 + base, block.end) - block.start,
+        ));
+      }
+      if (local.isNotEmpty) byBlock[block.index] = List.unmodifiable(local);
+    }
+    return Map.unmodifiable(byBlock);
   }
 
   int sourceOffsetForDisplay(

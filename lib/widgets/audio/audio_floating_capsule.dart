@@ -152,18 +152,25 @@ extension _AudioCapsule on _AudioPlaybackScopeState {
     );
   }
 
+  Object? get _playbackError {
+    final session = _session;
+    return session != null && !session._closed ? session._error : _tts?.error;
+  }
+
   /// Officially a playback error is a toast; the capsule falls back to its
   /// play icon (`pn2/i.java` `b.i`). The listening page shows errors inline.
-  void _toastNewError() {
-    final session = _session;
-    final Object? error = session != null && !session._closed
-        ? session._error
-        : _tts?.error;
+  void _toastNewError({String? readerBookId}) {
+    final error = _playbackError;
     if (error == null) {
       _toastedError = null;
       return;
     }
-    if (error == _toastedError || !(_routes?.visible ?? false)) return;
+    final readerMatches =
+        readerBookId != null && _switchBookMatches(readerBookId);
+    if (error == _toastedError ||
+        (!readerMatches && !(_routes?.visible ?? false))) {
+      return;
+    }
     _toastedError = error;
     _toast(error.toString());
   }

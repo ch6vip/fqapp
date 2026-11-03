@@ -34,12 +34,15 @@ class ReaderTextSelection {
   int get length => end - start;
   bool get isValid => end > start;
 
-  ReaderTextSelection copyWith({int? start, int? end, bool? isWholeParagraph}) =>
-      ReaderTextSelection(
-        start: start ?? this.start,
-        end: end ?? this.end,
-        isWholeParagraph: isWholeParagraph ?? this.isWholeParagraph,
-      );
+  ReaderTextSelection copyWith({
+    int? start,
+    int? end,
+    bool? isWholeParagraph,
+  }) => ReaderTextSelection(
+    start: start ?? this.start,
+    end: end ?? this.end,
+    isWholeParagraph: isWholeParagraph ?? this.isWholeParagraph,
+  );
 
   /// Moves one bound to [offset] within the chapter text of length
   /// [textLength], keeping the selection non-empty: a drag landing exactly on
@@ -136,7 +139,10 @@ int snapToCharacter(String text, int offset) {
   var x = isStart ? 0.0 : columnWidth;
   final leading = block.isTitle ? 0 : 1;
   final boxes = painter.getBoxesForSelection(
-    TextSelection(baseOffset: textOffset + leading, extentOffset: textOffset + leading + 1),
+    TextSelection(
+      baseOffset: textOffset + leading,
+      extentOffset: textOffset + leading + 1,
+    ),
     boxHeightStyle: BoxHeightStyle.tight,
   );
   if (boxes.isNotEmpty) {
@@ -241,7 +247,9 @@ class ReaderSelectionGeometry {
     final entry = _entryAt(global);
     if (entry == null) return null;
     final local = entry.box.globalToLocal(global);
-    final y = local.dy.clamp(0.0, math.max(0.0, entry.block.height - .01)).toDouble();
+    final y = local.dy
+        .clamp(0.0, math.max(0.0, entry.block.height - .01))
+        .toDouble();
     final position = entry.painter.getPositionForOffset(Offset(local.dx, y));
     final leading = entry.block.isTitle ? 0 : 1;
     final textOffset = (position.offset - leading).clamp(
@@ -263,6 +271,9 @@ class ReaderSelectionScope {
 
   /// 朗读句画成下划线而非色块（墨水屏色块会整屏拖影）。
   final bool narrationUnderline;
+  final Map<int, List<(int, int)>> dialogueRangesByBlock;
+  final Color dialogueColor;
+  final bool dialogueUnderline;
 
   ReaderSelectionScope({
     required this.geometry,
@@ -271,6 +282,9 @@ class ReaderSelectionScope {
     required this.underlineColor,
     required this.narrationColor,
     this.narrationUnderline = false,
+    this.dialogueRangesByBlock = const {},
+    this.dialogueColor = Colors.transparent,
+    this.dialogueUnderline = false,
   });
 }
 
@@ -393,6 +407,11 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
               narrationRange: narrationRange,
               narrationColor: widget.scope.narrationColor,
               narrationUnderline: widget.scope.narrationUnderline,
+              dialogueRanges:
+                  widget.scope.dialogueRangesByBlock[widget.block.index] ??
+                  const [],
+              dialogueColor: widget.scope.dialogueColor,
+              dialogueUnderline: widget.scope.dialogueUnderline,
             ),
           ),
         ),
@@ -514,6 +533,9 @@ class ReaderBlockMarkPainter extends CustomPainter {
   final (int, int)? narrationRange;
   final Color narrationColor;
   final bool narrationUnderline;
+  final List<(int, int)> dialogueRanges;
+  final Color dialogueColor;
+  final bool dialogueUnderline;
 
   const ReaderBlockMarkPainter({
     required this.block,
@@ -525,6 +547,9 @@ class ReaderBlockMarkPainter extends CustomPainter {
     required this.narrationRange,
     required this.narrationColor,
     this.narrationUnderline = false,
+    this.dialogueRanges = const [],
+    this.dialogueColor = Colors.transparent,
+    this.dialogueUnderline = false,
   });
 
   /// Per-line glyph rects for a block-text range: the vertical span of the
@@ -538,7 +563,10 @@ class ReaderBlockMarkPainter extends CustomPainter {
       final lineEnd = math.min(to, line.end);
       if (lineEnd <= lineStart) continue;
       final boxes = painter.getBoxesForSelection(
-        TextSelection(baseOffset: lineStart + leading, extentOffset: lineEnd + leading),
+        TextSelection(
+          baseOffset: lineStart + leading,
+          extentOffset: lineEnd + leading,
+        ),
         boxHeightStyle: BoxHeightStyle.tight,
       );
       for (final TextBox box in boxes) {
@@ -551,15 +579,33 @@ class ReaderBlockMarkPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Narration first (underneath): a user selection over the narrated
-    // sentence must stay visible on top of it.
+    // Dialogue sits below playback and selection marks, without changing the
+    // spans that pagination, comments and selection offsets address.
+    final dialoguePaint = Paint()
+      ..color = dialogueColor
+      ..strokeWidth = 1.2;
+    for (final range in dialogueRanges) {
+      for (final rect in _lineRects(range.$1, range.$2)) {
+        if (dialogueUnderline) {
+          _strokeRow(canvas, rect, dialoguePaint);
+        } else {
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+            dialoguePaint,
+          );
+        }
+      }
+    }
+    // A user selection must stay visible over the narrated sentence.
     final narration = narrationRange;
     if (narration != null) {
       final rects = _lineRects(narration.$1, narration.$2);
       if (narrationUnderline) {
         // 墨水屏走下划线：色块会整屏拖影，线只刷几行。线要够粗才看得见
         // （2px 在高 dpi 上仍嫌细），颜色由调用方保证是深色/不透明。
-        final line = Paint()..color = narrationColor..strokeWidth = 3;
+        final line = Paint()
+          ..color = narrationColor
+          ..strokeWidth = 3;
         for (final rect in rects) {
           _strokeRow(canvas, rect, line);
         }
@@ -604,6 +650,11 @@ class ReaderBlockMarkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(ReaderBlockMarkPainter old) =>
+      !identical(old.block, block) ||
+      !identical(old.painter, painter) ||
+      !listEquals(old.dialogueRanges, dialogueRanges) ||
+      old.dialogueColor != dialogueColor ||
+      old.dialogueUnderline != dialogueUnderline ||
       old.selectionRange != selectionRange ||
       !listEquals(old.rangeUnderlines, rangeUnderlines) ||
       old.washColor != washColor ||

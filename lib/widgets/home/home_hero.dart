@@ -114,16 +114,11 @@ class _HomeHeroState extends State<HomeHero> {
       // [HomeHero.maxToolbarWidth]——约等于 6 张卡片的宽度，左端仍与网格、
       // 分区头同一条 16dp 竖线。
       //
-      // 必须先过一层 [Align]：本 widget 挂在 `SliverToBoxAdapter` 里，sliver
-      // 给的是**紧**的横向约束，`ConstrainedBox` 的 maxWidth 会被父约束用
-      // `enforce` 抬回去（min=max=窗口宽），等于没封顶——实测 2560 的窗口里
-      // 搜索胶囊仍是 2445.5 宽。`Align` 先把紧约束松成 0..宽，封顶才生效。
+      // Align loosens the parent's width constraint before applying the cap.
       child: Align(
         alignment: Alignment.centerLeft,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: HomeHero.maxToolbarWidth,
-          ),
+          constraints: const BoxConstraints(maxWidth: HomeHero.maxToolbarWidth),
           child: Row(
             children: [
               Expanded(
@@ -143,7 +138,11 @@ class _HomeHeroState extends State<HomeHero> {
                     ),
                     child: Row(
                       children: [
-                        Icon(LucideIcons.search, size: 15, color: palette.muted),
+                        Icon(
+                          LucideIcons.search,
+                          size: 15,
+                          color: palette.muted,
+                        ),
                         const SizedBox(width: 10),
                         Expanded(child: _cueText(palette, animate)),
                       ],

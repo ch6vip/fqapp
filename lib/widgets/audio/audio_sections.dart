@@ -11,7 +11,6 @@ import '../../services/audio_page_theme.dart';
 import '../../services/playback_format.dart';
 import '../../services/poster_cache.dart';
 import '../home/home_design.dart';
-import 'audio_subtitle_scroller.dart';
 import 'audio_tone_chip.dart';
 
 /// Listening page header.
@@ -1294,101 +1293,11 @@ class _ReadAlongBody extends StatelessWidget {
   }
 }
 
-/// `bio.xml` 的 `fs5`/`fs6`：封面下方的内联字幕。
-///
-/// 官方这里是 `AudioPlaySubtitleView`（`header/m0`），取证结论：
-///
-/// * **高度按字号取档再减 2dp**（`m0.M()` 的 `0x30/0x34/0x3a/0x42/0x4a/0x50`
-///   → 48/52/58/66/74/80，对应 14/16/18/21/24/27sp，最后 `updateHeight(h-2)`），
-///   默认 16sp ⇒ **50dp**；
-/// * `b2` 先按行容量切分并分配时间，每个条目上下各 3dp；
-/// * `m0.h0` 在主题更新后将普通行设为主文字色的 40%，当前行为不透明主色；
-/// * 仅边缘非当前行使用渐隐画笔，不给整个字幕槽套透明遮罩；
-/// * 槽位**常驻**：`onCreate` 就 `visible`，加载中/失败用 `setStatusText`
-///   显示文案，只有 `NOT_SUPPORT` 才 `gone`；
-/// * 不可拖动（`setScrollingSeekEnable(false)`），只有自动换句动画。
-class AudioInlineSubtitle extends StatelessWidget {
-  final SubtitleTrack track;
-  final Duration position;
-  final Duration duration;
-  final VoidCallback onTap;
-
-  /// 是否支持字幕。官方 `NOT_SUPPORT` 时整块 `gone`，其余状态保留槽位。
-  final bool supported;
-
-  /// 字号，官方默认 16sp 且跟随用户设置。
-  final double fontSize;
-
-  const AudioInlineSubtitle({
-    super.key,
-    required this.track,
-    required this.position,
-    required this.onTap,
-    this.duration = Duration.zero,
-    this.supported = true,
-    this.fontSize = 16,
-  });
-
-  /// 官方高度表档位：14/16/18/21/24/27sp → 48/52/58/66/74/80，再减 2dp。
-  static const List<double> _fontSteps = [14, 16, 18, 21, 24, 27];
-  static const List<double> _heightSteps = [48, 52, 58, 66, 74, 80];
-
-  static double officialHeightFor(double fontSize) {
-    var best = 0;
-    for (var i = 1; i < _fontSteps.length; i++) {
-      if ((_fontSteps[i] - fontSize).abs() <
-          (_fontSteps[best] - fontSize).abs()) {
-        best = i;
-      }
-    }
-    return _heightSteps[best] - 2;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // NOT_SUPPORT：官方 `UIKt.gone(view)`。
-    if (!supported && track.isEmpty) return const SizedBox.shrink();
-    final height =
-        officialHeightFor(fontSize) *
-        MediaQuery.textScalerOf(context).scale(fontSize) /
-        fontSize;
-    return Padding(
-      // `fs6`：左右 20dp、底部 24dp
-      //（`V675AudioCompress.uiCompress` 为真时官方把它改成 20dp）。
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-      child: HomePressable(
-        // 与音色卡的「边听边读」入口区分开：两者可能同时存在，共用一个 key
-        // 会让按 key 取控件的地方歧义。
-        key: const Key('audio_inline_subtitle'),
-        // 只报角色，不把整段正文塞进无障碍标签——那会让读屏一次念完整章。
-        semanticLabel: '边听边读',
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: SizedBox(
-          height: height,
-          width: double.infinity,
-          child: AudioSubtitleScroller(
-            track: track,
-            position: position,
-            duration: duration,
-            inline: true,
-            viewportHeight: height,
-            fontSize: fontSize,
-            statusText: '本章暂无同步字幕',
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// `layout/hy.xml`: the `智能朗读 │ 真人讲书` header switch. Only meaningful
-/// when the book really offers both families, so the page decides when to show
-/// it.
+/// Stable mode header; unsupported or loading choices stay disabled.
 class AudioModeSwitch extends StatelessWidget {
   final bool realSelected;
-  final VoidCallback onSelectTts;
-  final VoidCallback onSelectNarrator;
+  final VoidCallback? onSelectTts;
+  final VoidCallback? onSelectNarrator;
 
   const AudioModeSwitch({
     super.key,
@@ -1434,21 +1343,35 @@ class AudioModeSwitch extends StatelessWidget {
     required String label,
     required bool selected,
     required AudioPageTheme theme,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
-    return HomePressable(
-      key: key,
-      semanticLabel: label,
+    return Semantics(
+      label: label,
+      selected: selected,
+      enabled: onTap != null,
+      button: true,
+      excludeSemantics: true,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? theme.ink : theme.muted,
-            fontSize: 16,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+      child: IgnorePointer(
+        ignoring: onTap == null,
+        child: HomePressable(
+          key: key,
+          onTap: onTap ?? () {},
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected
+                    ? theme.ink
+                    : onTap == null
+                    ? theme.muted.withValues(alpha: 0.45)
+                    : theme.muted,
+                fontSize: 16,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
           ),
         ),
       ),
@@ -1456,62 +1379,70 @@ class AudioModeSwitch extends StatelessWidget {
   }
 }
 
-/// Compact replacement for the voice card in 真人讲书 mode.
-///
-/// The official page hides the 智能朗读 tone card for a recording
-/// (`bj1.xml` `a5h` is `gone`); narrators are switched elsewhere. One row is
-/// enough here and still opens the voice sheet that carries every version.
-class AudioRealVersionRow extends StatelessWidget {
-  /// Upstream narrator label, already in `主播：…` form.
-  final String narrator;
+/// Both voice families share a compact entry into the voice settings sheet.
+class AudioVoiceRow extends StatelessWidget {
+  final String modeLabel;
+  final String voiceLabel;
   final VoidCallback? onTap;
 
-  const AudioRealVersionRow({super.key, this.narrator = '', this.onTap});
+  const AudioVoiceRow({
+    super.key,
+    required this.modeLabel,
+    required this.voiceLabel,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = AudioPageThemeScope.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      child: HomePressable(
-        key: const Key('audio-voice'),
-        semanticLabel: '选择音色',
-        onTap: onTap ?? () {},
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          height: 54,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: theme.card,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Text(
-                '真人讲书',
-                style: TextStyle(
-                  color: theme.accent,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  narrator.isEmpty ? '暂无可选音色' : narrator,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+      child: Semantics(
+        label: '选择音色',
+        enabled: onTap != null,
+        button: true,
+        excludeSemantics: true,
+        onTap: onTap,
+        child: HomePressable(
+          key: const Key('audio-voice'),
+          semanticLabel: '选择音色',
+          onTap: onTap ?? () {},
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 54),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: theme.card,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  modeLabel,
                   style: TextStyle(
-                    color: narrator.isEmpty ? theme.muted : theme.ink,
+                    color: theme.accent,
                     fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-              Text('换版本', style: TextStyle(color: theme.muted, fontSize: 12)),
-              const SizedBox(width: 2),
-              Icon(LucideIcons.chevron_right, size: 14, color: theme.muted),
-            ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    voiceLabel.isEmpty ? '暂无可选音色' : voiceLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: voiceLabel.isEmpty ? theme.muted : theme.ink,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Text('声音', style: TextStyle(color: theme.muted, fontSize: 12)),
+                const SizedBox(width: 2),
+                Icon(LucideIcons.chevron_right, size: 14, color: theme.muted),
+              ],
+            ),
           ),
         ),
       ),
@@ -1519,9 +1450,7 @@ class AudioRealVersionRow extends StatelessWidget {
   }
 }
 
-/// Back side of the 真人讲书 cover card: the official `layout/bhi.xml`
-/// (`layout_audio_book_detail_info_0`) — thumbnail, title, author, meta row,
-/// expandable 简介 and one related work.
+/// Book details sheet: thumbnail, title, author, summary and a related work.
 class AudioIntroCard extends StatefulWidget {
   final String cover;
   final String title;

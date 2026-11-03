@@ -480,13 +480,11 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     return session != null && !session._closed && engine == ListenEngine.system;
   }
 
-  /// 接续目标书：系统朗读优先，其次音频会话。null 就是没在听。
-  String? get _switchBookId {
+  /// Use the same audio/novel identity mapping as the reader's other controls.
+  bool _switchBookMatches(String bookId) {
     final tts = _tts;
-    if (tts != null && !tts.closed) return tts.book.bookId;
-    final session = _session;
-    if (session != null && !session._closed) return session._bookId;
-    return null;
+    if (tts != null && !tts.closed) return tts.book.bookId == bookId;
+    return _sessionBookMatches(bookId);
   }
 
   /// 点封面：回到正在朗读的那本书的书页。
