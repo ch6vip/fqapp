@@ -69,6 +69,15 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
 2. **请求**：UI 页面 → `ApiClient` → `BackendTransport`（默认 `RustBackendTransport`，经 flutter_rust_bridge 直调 Rust 分发器；Web/测试用 loopback HTTP）→ 同一 Rust 分发器完成签名（Argus551）、设备池管理、请求上游、解密内容 → 返回归一化 JSON。
 3. **存储**：历史和阅读时长走 `LibraryStore`（Hive）。
 
+### 小说离线缓存
+
+`ChapterCacheStore` 把书籍目录与章节正文拆成两个加密 Hive 箱。书架和离线缓存列表只读较小的目录箱，正文箱只在阅读器实际读取章节时打开，避免冷启动扫描数百 MB 正文导致界面无响应。
+
+- 正文保留在 `chapter_cache_v1_enc`；正常的书架/离线列表查询不打开正文箱。
+- `chapter_cache_catalog_v1_enc` 保存 `book:<bookId>` 目录、缓存章节 ID、章节数、字节数、访问时间和下载标记；列表与容量统计不再扫描正文箱。
+- 自动淘汰在正文箱已经打开时执行，并按目录中的访问时间和下载标记选择最久未读的未下载章节。
+- 首次升级会从旧版合并箱迁移目录和索引；迁移使用 `LazyBox` 逐条读取，正文值不会同时驻留内存，完成后关闭旧箱。
+
 ---
 
 ## 项目结构
@@ -656,6 +665,7 @@ App 通过 `ApiClient` 调用后端 **`/api/v1/*` 业务路由**（Rust 核心 `
 
 ### 漫画（`comic_reader_page.dart`）
 - 按接口顺序竖向阅读图片，支持章节目录和上下章
+- 请求为 `/api/v1/manga/<itemId>?book_id=<bookId>`，阅读器传入已知书籍 ID，避免降级再次依赖失败的主接口。未提供 `book_id` 的调用仍从章节元数据解析；主路径和 `full` 降级都按章节取图，失败时返回错误，不再用书籍级 `book_detail` 图片代替目标章节。
 - 图片按需加载并限制解码尺寸；单张失败可重试，点图可放大查看
 - 用“图片序号 + 图片内位置”记录进度，图片加载改变高度后仍保持阅读位置
 - 空章、章节请求失败和未显示成功的图片不会覆盖已有阅读进度
