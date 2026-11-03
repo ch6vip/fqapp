@@ -24,9 +24,8 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
             onSwitch: () => _openListening(fromPage: true),
             child: ReaderListenCapsuleHost(
               monochrome: preset.isEink,
-              // 胶囊封面在这里点下去就是「回书页」：人已经在书页上，收起
-              // 菜单露出正文，而不是推到系统朗读那个控制页。
-              onOpenBook: () => _setControlsVisible(false),
+              // 只在同一本书里收起菜单；借用别书胶囊时保留回到朗读书籍的跳转。
+              onOpenBook: currentBook ? () => _setControlsVisible(false) : null,
             ),
           ),
           if (video)
