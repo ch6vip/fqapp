@@ -29,6 +29,7 @@ class AudioFloatingPlayer extends StatefulWidget {
     this.canMore = true,
     this.inReaderMenu = false,
     this.monochrome = false,
+    this.keyPrefix = 'audio-floating',
   });
 
   final String title;
@@ -58,6 +59,10 @@ class AudioFloatingPlayer extends StatefulWidget {
   final bool canMore;
   final bool inReaderMenu;
   final bool monochrome;
+
+  /// 前缀给按钮的 key。悬浮胶囊与阅读菜单内那颗是同一个控件，同时存在时
+  /// key 必须能区分，否则自动化只能靠出现顺序猜。
+  final String keyPrefix;
 
   @override
   State<AudioFloatingPlayer> createState() => _AudioFloatingPlayerState();
@@ -273,7 +278,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
         children: [
           const SizedBox(width: 4),
           _button(
-            key: const ValueKey('audio-floating-open'),
+            key: ValueKey("${widget.keyPrefix}-open"),
             label: '\u6253\u5f00\u542c\u4e66\uff1a${widget.title}',
             width: 42,
             onTap: widget.onOpen,
@@ -281,7 +286,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           ),
           SizedBox(width: more == null ? 14 : 2),
           _button(
-            key: const ValueKey('audio-floating-toggle'),
+            key: ValueKey("${widget.keyPrefix}-toggle"),
             label: widget.loading
                 ? '\u6b63\u5728\u52a0\u8f7d'
                 : widget.playing
@@ -333,7 +338,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           if (more != null) ...[
             const SizedBox(width: 2),
             _button(
-              key: const ValueKey('audio-floating-more'),
+              key: ValueKey("${widget.keyPrefix}-more"),
               label: '更多选项',
               width: 26,
               onTap: widget.canMore ? more : null,
@@ -349,7 +354,7 @@ class _AudioFloatingPlayerState extends State<AudioFloatingPlayer>
           ] else
             const SizedBox(width: 10),
           _button(
-            key: const ValueKey('audio-floating-close'),
+            key: ValueKey("${widget.keyPrefix}-close"),
             label: '\u5173\u95ed\u64ad\u653e',
             width: 26,
             onTap: _close,
