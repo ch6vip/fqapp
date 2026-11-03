@@ -429,22 +429,37 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     await session?.close();
   }
 
-  void _openTts(SystemTtsPlayback session) {
-    if (session.closed ||
-        !identical(_tts, session) ||
-        identical(_ttsPage, session)) {
+  /// 点封面：回到正在朗读的那本书的书页。
+  ///
+  /// 系统朗读没有自己的播放页——朗读进度本来就挂在正文上（高亮、跟随都在
+  /// [ReaderPage] 里），所以封面把人送回书页，定位到正在读的章节，而不是
+  /// 另开一个控制页把书页盖住。
+  ///
+  /// 阅读页菜单里的那颗胶囊已经站在书页上了（[onOpenBook] 传进来），此时
+  /// 收起菜单就是「回到书页」，不再往上叠一层。
+  void _openTts(SystemTtsPlayback session, {VoidCallback? onOpenBook}) {
+    if (session.closed || !identical(_tts, session)) return;
+    if (onOpenBook != null) {
+      onOpenBook();
       return;
     }
+    if (identical(_ttsPage, session)) return;
     final navigator = widget.navigatorKey.currentState;
     if (navigator == null) return;
+    final book = session.book;
     _ttsPage = session;
     unawaited(
       navigator
           .push<void>(
             MaterialPageRoute<void>(
-              builder: (_) => SystemTtsPlaybackPage(
-                session: session,
-                onClose: () => unawaited(stopTts(session)),
+              builder: (_) => ReaderPage(
+                bookId: book.bookId,
+                title: book.title,
+                cover: book.coverUrl,
+                chapters: book.chapters,
+                startIndex: session.index,
+                localOnly: book.localOnly,
+                chapterLoader: book.textLoader,
               ),
             ),
           )

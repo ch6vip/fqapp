@@ -43,10 +43,16 @@ abstract final class ReaderAudioBridge {
   static Widget buildMenuPlayer(
     BuildContext context, {
     required bool monochrome,
+    VoidCallback? onOpenBook,
   }) =>
       _owner(
         context,
-      )?._buildCapsule(context, inReaderMenu: true, monochrome: monochrome) ??
+      )?._buildCapsule(
+        context,
+        inReaderMenu: true,
+        monochrome: monochrome,
+        onOpenBook: onOpenBook,
+      ) ??
       const SizedBox.shrink();
 
   static _AudioPlaybackScopeState? _owner(BuildContext context) =>
