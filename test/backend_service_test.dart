@@ -50,35 +50,41 @@ void main() {
     }
   });
 
-  test('concurrent starts run one initialization and share the result', () async {
-    final transport = _FakeRustTransport();
-    final backend = createBackend(transport: transport);
+  test(
+    'concurrent starts run one initialization and share the result',
+    () async {
+      final transport = _FakeRustTransport();
+      final backend = createBackend(transport: transport);
 
-    final first = backend.start();
-    final second = backend.start();
-    expect(identical(first, second), isTrue);
-    await Future.wait([first, second]);
+      final first = backend.start();
+      final second = backend.start();
+      expect(identical(first, second), isTrue);
+      await Future.wait([first, second]);
 
-    expect(transport.initCalls, 1);
-    expect(backend.isRunning, isTrue);
-    await backend.stop();
-    expect(transport.stopCalls, 1);
-    expect(backend.isRunning, isFalse);
-  });
+      expect(transport.initCalls, 1);
+      expect(backend.isRunning, isTrue);
+      await backend.stop();
+      expect(transport.stopCalls, 1);
+      expect(backend.isRunning, isFalse);
+    },
+  );
 
-  test('a failed core initialization surfaces and leaves nothing running', () async {
-    final transport = _FakeRustTransport(initResult: 'failed: listen busy');
-    final backend = createBackend(transport: transport);
+  test(
+    'a failed core initialization surfaces and leaves nothing running',
+    () async {
+      final transport = _FakeRustTransport(initResult: 'failed: listen busy');
+      final backend = createBackend(transport: transport);
 
-    await expectLater(backend.start(), throwsStateError);
-    expect(backend.isRunning, isFalse);
-    // A failed start performs its own cleanup so a retry is not blocked.
-    transport.initResult = 'running';
-    await backend.start();
-    expect(backend.isRunning, isTrue);
-    expect(transport.initCalls, 2);
-    await backend.stop();
-  });
+      await expectLater(backend.start(), throwsStateError);
+      expect(backend.isRunning, isFalse);
+      // A failed start performs its own cleanup so a retry is not blocked.
+      transport.initResult = 'running';
+      await backend.start();
+      expect(backend.isRunning, isTrue);
+      expect(transport.initCalls, 2);
+      await backend.stop();
+    },
+  );
 
   test('startup times out when the health endpoint never turns 200', () async {
     final transport = _FakeRustTransport(healthy: false);
@@ -95,36 +101,38 @@ void main() {
     expect(transport.healthChecks, greaterThan(0));
   });
 
-  test('a hung core initialization fails by the startup timeout and retries',
-      () async {
-    final transport = _FakeRustTransport(blockInit: true);
-    final backend = createBackend(
-      transport: transport,
-      timeout: const Duration(milliseconds: 200),
-    );
+  test(
+    'a hung core initialization fails by the startup timeout and retries',
+    () async {
+      final transport = _FakeRustTransport(blockInit: true);
+      final backend = createBackend(
+        transport: transport,
+        timeout: const Duration(milliseconds: 200),
+      );
 
-    // rustTransport.start() itself has no deadline of its own: a native init
-    // that never returns must still fail the launch instead of spinning.
-    await expectLater(
-      backend.start().timeout(const Duration(seconds: 3)),
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.message.toString(),
-          'message',
-          contains('timeout'),
+      // rustTransport.start() itself has no deadline of its own: a native init
+      // that never returns must still fail the launch instead of spinning.
+      await expectLater(
+        backend.start().timeout(const Duration(seconds: 3)),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message.toString(),
+            'message',
+            contains('timeout'),
+          ),
         ),
-      ),
-    );
-    expect(backend.isRunning, isFalse);
-    expect(transport.initCalls, 1);
+      );
+      expect(backend.isRunning, isFalse);
+      expect(transport.initCalls, 1);
 
-    // The timed-out attempt must not wedge startup: the next one can succeed.
-    transport.allowInit.complete();
-    await backend.start();
-    expect(backend.isRunning, isTrue);
-    expect(transport.initCalls, 2);
-    await backend.stop();
-  });
+      // The timed-out attempt must not wedge startup: the next one can succeed.
+      transport.allowInit.complete();
+      await backend.start();
+      expect(backend.isRunning, isTrue);
+      expect(transport.initCalls, 2);
+      await backend.stop();
+    },
+  );
 
   test('stop during deployment waits and shuts the core down', () async {
     final assets = _BackendAssets(blockFirstLoad: true);
@@ -170,31 +178,40 @@ void main() {
     expect(backend.isRunning, isFalse);
   });
 
-  test('deploys nested runtime assets and keeps the registered device pool',
-      () async {
-    final transport = _FakeRustTransport();
-    final backend = createBackend(transport: transport);
-    await backend.start();
+  test(
+    'refreshes nested filters and preserves the device pool and retired files',
+    () async {
+      final transport = _FakeRustTransport();
+      final backend = createBackend(transport: transport);
+      await backend.start();
 
-    for (final path in _BackendAssets.runtimeAssets) {
-      final file = File(
-        '${directory.path}/backend/${path.substring('assets/'.length)}',
-      );
-      expect(await file.readAsString(), '{}', reason: path);
-    }
+      for (final path in _BackendAssets.runtimeAssets) {
+        final file = File(
+          '${directory.path}/backend/${path.substring('assets/'.length)}',
+        );
+        expect(await file.readAsString(), '{}', reason: path);
+      }
 
-    // The pool holds real device credentials: a restart must not overwrite it.
-    final pool = File('${directory.path}/backend/config/device_pool.json');
-    await pool.writeAsString('registered-device');
-    final pluginPage = File('${directory.path}/backend/plugins/player.html');
-    await pluginPage.writeAsString('old plugin page');
-    await backend.stop();
+      final pluginPage = File('${directory.path}/backend/plugins/player.html');
+      expect(await pluginPage.exists(), isFalse);
+      final filter = File('${directory.path}/backend/filters/nested/book.js');
+      await filter.writeAsString('outdated filter');
 
-    await backend.start();
-    expect(await pool.readAsString(), 'registered-device');
-    expect(await pluginPage.readAsString(), '{}');
-    await backend.stop();
-  });
+      // Retired files from an old installation are neither deployed nor deleted.
+      await pluginPage.parent.create(recursive: true);
+      await pluginPage.writeAsString('old plugin page');
+      // The pool holds real device credentials: a restart must not overwrite it.
+      final pool = File('${directory.path}/backend/config/device_pool.json');
+      await pool.writeAsString('registered-device');
+      await backend.stop();
+
+      await backend.start();
+      expect(await pool.readAsString(), 'registered-device');
+      expect(await filter.readAsString(), '{}');
+      expect(await pluginPage.readAsString(), 'old plugin page');
+      await backend.stop();
+    },
+  );
 
   test('the core is initialized with the deployed runtime paths', () async {
     final transport = _FakeRustTransport();
@@ -243,6 +260,7 @@ class _FakeRustTransport extends RustBackendTransport {
   String initResult;
   bool healthy;
   final bool blockStop;
+
   /// Whether [start] holds until [allowInit] completes, standing in for a
   /// native init that hangs.
   final bool blockInit;
@@ -317,13 +335,14 @@ class _BackendAssets extends CachingAssetBundle {
   _BackendAssets({this.blockFirstLoad = false, this.configPort = 18921});
 
   final bool blockFirstLoad;
+
   /// Port written into the deployed `config.json`; null omits the key.
   final int? configPort;
   final loadEntered = Completer<void>();
   final allowLoad = Completer<void>();
   static const runtimeAssets = [
     'assets/filters/book.js',
-    'assets/plugins/player.html',
+    'assets/filters/nested/book.js',
   ];
 
   @override

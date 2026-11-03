@@ -19,20 +19,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/controlled_player.dart';
 
-/// 真人讲书页头对齐官方 7.0.9.32 的行为（本轮按反编译重新核对）：
-///
-///  * `d2.smali` + `TTSPlayHeaderFragment.smali`：智能朗读的封面卡
-///    `0.72 × 屏宽`，可见封面是**正方形**（`ahg` 高 = `ah7` − 15dp − 5dp）；
-///  * `bjo.xml` + 样稿：真人讲书页头改成 72dp 书籍行（48×64 封面、章节名
-///    16sp w600、书名 14sp muted、右侧 ⇋ 开简介卡），不再显示大封面；
-///  * `bio.xml` 页脚只有两行：集标题 `b1h` + 副行 `bj2`；书名 `b1g` 官方是
-///    `visibility="gone"`，所以不存在旧的「三段页脚 / 真人讲书・第 N 集」；
-///  * 副行点一下翻到简介面（`bhi.xml`）再翻回；真人模式改由 ⇋ 弹层展示；
-///  * 页头内嵌逐行字幕（`fs6`），无字幕时保留状态槽位；
-///  * `hy.xml` 的智能朗读 │ 真人讲书 分段放在页头中央；
-///  * `bif.xml` 图标行首项显示当前倍速（截图里的 `1.2x`）；
-///  * `bjg.xml` 进度行两端是 `-15 s` / `+15 s` 文字，播放头挂时间药丸；
-///  * `bin.xml` 控制行右侧是悬浮圆钮。
+/// Shared mobile listening layout introduced in #261: compact book row,
+/// subtitle strip, transport controls and a voice entry for both voice families.
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -45,8 +33,10 @@ void main() {
     await _mount(tester, _RealSession());
     final row = find.byType(AudioRealBookRow);
     expect(row, findsOneWidget);
-    // 真人模式不再渲染 0.72 屏宽的大封面。
-    expect(find.byType(AudioFlipCover), findsNothing);
+    expect(
+      find.descendant(of: row, matching: find.byType(AudioCoverImage)),
+      findsOneWidget,
+    );
     expect(tester.getSize(row).height, 72);
 
     final cover = find.byKey(const Key('audio_real_book_cover'));
@@ -78,13 +68,21 @@ void main() {
     expect(book.style?.color, theme.muted);
   });
 
-  testWidgets('intelligent reading keeps the large cover, not the book row', (
-    tester,
-  ) async {
-    await _mount(tester, _RealSession(genreType: 0));
-    expect(find.byType(AudioFlipCover), findsOneWidget);
-    expect(find.byType(AudioRealBookRow), findsNothing);
-  });
+  testWidgets(
+    'intelligent reading shares the compact book row and subtitle slot',
+    (tester) async {
+      await _mount(tester, _RealSession(genreType: 0));
+      expect(find.byType(AudioRealBookRow), findsOneWidget);
+      expect(
+        tester.getSize(find.byKey(const Key('audio_real_book_cover'))),
+        const Size(48, 64),
+      );
+      expect(
+        find.byKey(const Key('audio_listening_transcript')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('the swap button opens the intro card sheet', (tester) async {
     await _mount(tester, _RealSession());
@@ -131,8 +129,7 @@ void main() {
         find.byKey(const Key('audio_real_subtitle_current')),
         findsNothing,
       );
-      // 官方槽位常驻：换到无字幕轨的章节后，`setStatusText` 接替字幕内容，
-      // 只有 NOT_SUPPORT 才整块 gone。
+      // A chapter without subtitles keeps the shared status slot.
       expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
       expect(
         find.byKey(const Key('audio_real_subtitle_status')),
@@ -320,29 +317,47 @@ void main() {
     expect(tts.style?.color, theme.muted);
   });
 
-  testWidgets('the 智能朗读/真人讲书 switch needs both voice families', (tester) async {
-    await _mount(tester, _RealSession());
-    expect(find.byKey(const Key('audio_mode_tts')), findsOneWidget);
-    expect(find.byKey(const Key('audio_mode_narrator')), findsOneWidget);
-    await _unmount(tester);
+  testWidgets(
+    'the mode switch keeps unavailable voice families visible but disabled',
+    (tester) async {
+      await _mount(tester, _RealSession());
+      expect(find.byKey(const Key('audio_mode_tts')), findsOneWidget);
+      expect(find.byKey(const Key('audio_mode_narrator')), findsOneWidget);
+      await _unmount(tester);
 
-    await _mount(tester, _RealSession(ttsTones: const []));
-    expect(find.byKey(const Key('audio_mode_tts')), findsNothing);
-    expect(find.byKey(const Key('audio_mode_narrator')), findsNothing);
-    // 只有一类声音时退回单标题。
-    expect(find.text('听书'), findsOneWidget);
-  });
+      await _mount(tester, _RealSession(ttsTones: const []));
+      expect(find.byKey(const Key('audio_mode_tts')), findsOneWidget);
+      expect(find.byKey(const Key('audio_mode_narrator')), findsOneWidget);
+      final mode = tester.widget<AudioModeSwitch>(find.byType(AudioModeSwitch));
+      expect(mode.onSelectTts, isNull);
+      expect(mode.onSelectNarrator, isNotNull);
+      await tester.tap(find.byKey(const Key('audio_mode_tts')));
+      await _flush(tester);
+      expect(
+        tester
+            .widget<AudioModeSwitch>(find.byType(AudioModeSwitch))
+            .realSelected,
+        isTrue,
+      );
+    },
+  );
 
   testWidgets('the narrator row replaces the voice card', (tester) async {
     await _mount(tester, _RealSession());
-    // 音色卡的双卡结构不再出现，只剩一行版本入口。真人模式的「边听边读」
-    // 改成独立卡片，且没有时间轴映射到原著章节时不渲染（见
-    // test/audio_real_listen_along_test.dart）。
+    // Read-along keeps its place even when no chapter mapping is available.
     expect(find.byType(AudioToneSection), findsNothing);
     expect(find.byKey(const Key('audio_read_along')), findsNothing);
-    expect(find.byKey(const Key('audio_real_read_along')), findsNothing);
+    expect(find.byKey(const Key('audio_real_read_along')), findsOneWidget);
+    expect(
+      tester
+          .widget<AudioRealListenAlong>(find.byType(AudioRealListenAlong))
+          .onTap,
+      isNull,
+    );
+    expect(find.text('暂无原著章节映射'), findsOneWidget);
     expect(find.text('主播：老恒'), findsOneWidget);
-    expect(find.text('换版本'), findsOneWidget);
+    expect(find.byType(AudioVoiceRow), findsOneWidget);
+    expect(find.text('声音'), findsOneWidget);
     // S2：换版本行外边距收窄到 (12, 10, 12, 0)。
     expect(tester.getRect(find.byKey(const ValueKey('audio-voice'))).left, 12);
 

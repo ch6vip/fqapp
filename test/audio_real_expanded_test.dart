@@ -22,7 +22,7 @@ import 'support/controlled_player.dart';
 /// 展开态全文（规格 S6）：
 ///
 ///  * 「展开」进入页内全文，不是弹层；
-///  * 书籍行保留、⇋ 隐藏，字幕区/操作行/换版本行收起；
+///  * 书籍行保留、⇋ 隐藏，字幕区/操作行/音色行收起；
 ///  * 进度行与控制行保留，控制行只留图标（bare）；
 ///  * 当前词用 accent 10% 底色高亮，偏移来自 S5 的段落时间点；
 ///  * 字号、行距跟随阅读器排版设置，取不到时 20sp / 2.1。
@@ -32,15 +32,15 @@ void main() {
     AudioPreferences.instance.resetForTest();
   });
 
-  testWidgets('展开进入页内全文，并收起字幕、操作行与换版本行', (tester) async {
+  testWidgets('展开进入页内全文，并收起字幕、操作行与音色行', (tester) async {
     final session = _ExpandedSession();
     await _mount(tester, session);
 
-    // 默认态：字幕、操作行、⇋、换版本行都在。
+    // 默认态：字幕、操作行、⇋、音色行都在。
     expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
     expect(find.byType(AudioIconRow), findsOneWidget);
     expect(find.byKey(const Key('audio_real_swap')), findsOneWidget);
-    expect(find.text('换版本'), findsOneWidget);
+    expect(find.byType(AudioVoiceRow), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('audio_real_subtitle_expand')));
     await tester.pumpAndSettle();
@@ -48,11 +48,10 @@ void main() {
     // 书籍行保留，⇋ 隐藏。
     expect(find.byType(AudioRealBookRow), findsOneWidget);
     expect(find.byKey(const Key('audio_real_swap')), findsNothing);
-    // 字幕、操作行、换版本行收起。
+    // 字幕、操作行、音色行收起。
     expect(find.byKey(const Key('audio_real_subtitle')), findsNothing);
     expect(find.byType(AudioIconRow), findsNothing);
-    expect(find.text('换版本'), findsNothing);
-    expect(find.byType(AudioRealVersionRow), findsNothing);
+    expect(find.byType(AudioVoiceRow), findsNothing);
     // 进度行与控制行保留，控制行只留图标。
     expect(find.byType(AudioTimeSeekRow), findsOneWidget);
     final transport = tester.widget<AudioTransportRow>(
@@ -78,7 +77,7 @@ void main() {
     expect(find.byKey(const Key('audio_real_subtitle')), findsOneWidget);
     expect(find.byType(AudioIconRow), findsOneWidget);
     expect(find.byKey(const Key('audio_real_swap')), findsOneWidget);
-    expect(find.text('换版本'), findsOneWidget);
+    expect(find.byType(AudioVoiceRow), findsOneWidget);
   });
 
   testWidgets('当前词按时间点高亮，并随播放移动到下一段', (tester) async {
