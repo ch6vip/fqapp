@@ -85,7 +85,11 @@ extension _ReaderPageProgress on _ReaderPageState {
     final narration = _narrationLayoutRange(layout);
     _narrationRange = _preferences.narrationHighlight ? narration : null;
     _layoutMode = _preferences.pageMode;
-    _textOffset = restored.textOffset;
+    // Late paragraph bubbles can add pages. Keep a backward chapter entry
+    // anchored to the text end, not the first layout's last-page start.
+    _textOffset = initialRestore && _requestedStartAtEnd && _paged
+        ? layout.textLength
+        : restored.textOffset;
     _pageIndex = layout.pageForOffset(_textOffset);
     _needsRestore = false;
     _progressReady = false;

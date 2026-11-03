@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -41,7 +40,6 @@ class TabSwipeArea extends StatefulWidget {
     required this.child,
     this.enabled = true,
     this.previewBuilder,
-    this.isolateChild = true,
   });
 
   /// 当前标签下标，由页面自己的状态驱动（页面是唯一事实来源）。
@@ -69,16 +67,6 @@ class TabSwipeArea extends StatefulWidget {
   ///
   /// 只会为「当前这次拖动」调用一次，不要在这里做重活。
   final Widget Function(int targetIndex)? previewBuilder;
-
-  /// 是否给页面内容套一层重绘边界。
-  ///
-  /// 默认开：位移只是把录好的图挪个位置，跟手和迎入时整页绘制指令不必每帧
-  /// 重放（短剧页是视频纹理 + 弹幕 + 一圈渐变）。
-  ///
-  /// 页面里有 [SwipeStationary]（首页把搜索行/分类条放在滚动视口里）时必须
-  /// 关：边界的栅格只认自己的 bounds，反向位移会把顶栏推到边界之外，超出
-  /// 部分直接不画，真机上就是一块黑面板压在顶栏上。
-  final bool isolateChild;
 
   /// 位移超过屏宽的这个比例就认这次切换（不甩也能滑过去）。
   static const double commitFraction = 0.18;
@@ -410,9 +398,7 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         if (width.isFinite && width > 0) _width = width;
-        // 裁剪放在 Transform 外面：位移会把内容送出滑动区，而滚动组件自己
-        // 可能关掉裁剪（首页要让钉住的顶栏画到视口外，见 SwipeStationary 的
-        // 注释），这里兜住滑动区边缘。
+        // Clip after translation so outgoing content stays in the swipe area.
         return ClipRect(
           child: Stack(
             fit: StackFit.expand,
@@ -449,16 +435,8 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
                     : const <Type, GestureRecognizerFactory>{},
                 child: ValueListenableBuilder<double>(
                   valueListenable: _offset,
-                  // child 传进来就不再随位移重建，只有那层 Transform 会重建。
-                  //
-                  // 重绘边界默认开着省重录；但页面里有反向位移（SwipeStationary）
-                  // 时必须关掉，否则钉住的顶栏会被边界栅格裁掉，见 [isolateChild]。
-                  child: TabSwipeOffset(
-                    offset: _offset,
-                    child: widget.isolateChild
-                        ? RepaintBoundary(child: widget.child)
-                        : widget.child,
-                  ),
+                  // Keep painting and rebuilds independent of translation.
+                  child: RepaintBoundary(child: widget.child),
                   builder: (context, offset, child) => Transform.translate(
                     offset: Offset(offset, 0),
                     child: child,
@@ -514,61 +492,4 @@ class _IncomingGapClipper extends CustomClipper<Rect> {
 
   @override
   bool shouldReclip(_IncomingGapClipper oldClipper) => oldClipper.dx != dx;
-}
-
-/// 把 [TabSwipeArea] 当前的位移告诉子树。
-///
-/// 只传一个 `ValueListenable`，不在这里监听：真正要用的是 [SwipeStationary]，
-/// 它自己只重建「一层 Transform」，不会让整棵子树跟着每帧重建。
-class TabSwipeOffset extends InheritedWidget {
-  const TabSwipeOffset({super.key, required this.offset, required super.child});
-
-  final ValueListenable<double> offset;
-
-  static ValueListenable<double>? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<TabSwipeOffset>()?.offset;
-
-  @override
-  bool updateShouldNotify(TabSwipeOffset oldWidget) =>
-      offset != oldWidget.offset;
-}
-
-/// 横滑切换时待在原地不跟着走的子树（首页的搜索行、分类条）。
-///
-/// 首页把搜索行和分类条都放在了滚动视图里（搜索行会随滚动收起，分类条吸顶），
-/// 而滚动视图整体在 [TabSwipeArea] 里——切分类时它们会连内容一起横移 68% 屏
-/// 宽再滑回来，看上去就是「整个页面被换掉了」。短剧页没有这个问题：它的顶栏
-/// 在滑动区外面。这里给顶栏套一层反向位移，把它钉在屏幕上，只让内容跟手。
-///
-/// 不在 [TabSwipeArea] 里（比如短剧页自己的顶栏）时原样返回，不引入额外开销。
-///
-/// **宿主滚动视图必须把裁剪交给 [TabSwipeArea]**：反向位移会把顶栏画到滚动
-/// 视口之外，而 `Viewport` 默认 `Clip.hardEdge` 只认自己的 bounds，超出的
-/// 右半截搜索行和末位标签会被直接裁掉，露出背景色（深色主题下就是一块黑
-/// 面板压在顶栏上）。首页因此用 `clipBehavior: Clip.none` 建 `CustomScrollView`，
-/// 由 [TabSwipeArea] 外层那圈 `ClipRect` 统一裁到滑动区边缘。
-class SwipeStationary extends StatelessWidget {
-  const SwipeStationary({super.key, required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final offset = TabSwipeOffset.maybeOf(context);
-    if (offset == null) return child;
-    return ValueListenableBuilder<double>(
-      valueListenable: offset,
-      // 位移为 0 时也留着这层 Transform：写成 `dx == 0 ? child : Transform...`
-      // 会让这个位置的 widget 类型在每次起手/收尾时来回切换，RenderObject 被
-      // 插入再删除。每帧只有这层 Transform 重建，子树不动。
-      child: child,
-      // 反向位移外面**不能**套重绘边界：边界的栅格只有它自己 size 那么大，
-      // 反向位移把内容推出这块范围之外就直接不画。真机上的表现是搜索行右半截、
-      // 「分类」按钮、末位标签一起消失，露出黑色画布，像一块黑面板压在顶栏上
-      // （2026-11-02 一加 Ace 3 Pro 实拍）。滚动视口自己的裁剪同理，见类文档。
-      // 代价是横滑期间整页那一层要重录——那才是该省的地方，但不能拿裁掉顶栏来换。
-      builder: (context, dx, child) =>
-          Transform.translate(offset: Offset(-dx, 0), child: child),
-    );
-  }
 }
