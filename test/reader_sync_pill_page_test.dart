@@ -6,6 +6,7 @@ import 'package:fqapp/models/audio_extra.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/reader_device.dart';
@@ -154,6 +155,47 @@ void main() {
       // 本页第一段带 <span start_time="4200">。
       expect(started!.startPosition, const Duration(milliseconds: 4200));
       expect(started!.initialToneId, 'narrator-7');
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('从本页听 follows the default engine, not the works audio', (
+      tester,
+    ) async {
+      // 默认引擎选成系统朗读：这个入口就不能再走作品音频。
+      AudioPreferences.instance.listenEngine.value = ListenEngine.system;
+      addTearDown(
+        () => AudioPreferences.instance.listenEngine.value = ListenEngine.smart,
+      );
+      await _mountOnline(tester);
+      ListeningSession.instance.update(
+        bookId: 'reader-test',
+        chapterId: 'c1',
+        chapterTitle: '第一章',
+        position: Duration.zero,
+        duration: const Duration(seconds: 60),
+        playing: false,
+        toneId: 'narrator-7',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
+
+      AudioPage? started;
+      AudioPlaybackScope.startListeningOverride = (context, request) async {
+        started = request;
+        return true;
+      };
+      addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
+
+      await tester.tap(
+        find.byKey(const ValueKey('reader_sync_listen_from_here')),
+      );
+      await tester.pumpAndSettle();
+
+      // 作品音频那条路一次都没被走；也没有跳听书页（系统朗读在阅读页里念）。
+      expect(started, isNull, reason: '默认引擎是系统朗读时不该起作品音频');
+      expect(find.byType(AudioPage), findsNothing);
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());

@@ -1,6 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 听书入口默认走哪条链路。
+///
+/// - [smart] 智能朗读：作品音频，服务端合成，音色取自 `tts_tones`；
+/// - [system] 系统朗读：手机已装的 TTS 引擎，不联网。
+///
+/// 只决定「按下听书时开哪个播放器」，播放中在音色面板里选真人讲书 /
+/// 智能朗读不受它影响。
+enum ListenEngine { smart, system }
+
 /// 听书相关配置与持久化偏好设置。
 class AudioPreferences {
   AudioPreferences._();
@@ -9,6 +18,9 @@ class AudioPreferences {
 
   static const _backgroundPlaybackKey = 'audio_background_playback_enabled';
   static const _rateEngineKey = 'audio_rate_engine';
+
+  /// 听书入口的默认引擎（[ListenEngine]）。
+  static const _listenEngineKey = 'audio_listen_engine';
 
   /// 倍速锁定：锁定后点倍速项不再弹面板（官方 `a4g`「已经锁定2x倍速」）。
   static const _rateLockedKey = 'audio_rate_locked';
@@ -24,6 +36,14 @@ class AudioPreferences {
   /// 开启：切到后台或锁屏时继续播放，由 Android 前台保活服务常驻通知栏与提供控制卡片；
   /// 关闭：切到后台或锁屏时自动暂停播放并移除前台通知。
   final ValueNotifier<bool> backgroundPlayback = ValueNotifier<bool>(true);
+
+  /// 听书入口的默认引擎，默认智能朗读。
+  ///
+  /// 不默认系统朗读：它依赖手机已装的 TTS 引擎，部分设备一个都没有，
+  /// 拿它当默认会让「点听书没反应」变成常态。
+  final ValueNotifier<ListenEngine> listenEngine = ValueNotifier<ListenEngine>(
+    ListenEngine.smart,
+  );
 
   /// 听书倍速的变速实现（issue #129 / #170）。
   ///
@@ -57,6 +77,9 @@ class AudioPreferences {
       rateEngine.value = AudioRateEngine.fromName(sp.getString(_rateEngineKey));
       rateLocked = sp.getBool(_rateLockedKey) ?? false;
       sleepAtChapterEnd = sp.getBool(_sleepAtChapterEndKey) ?? false;
+      listenEngine.value = sp.getString(_listenEngineKey) == 'system'
+          ? ListenEngine.system
+          : ListenEngine.smart;
     } catch (_) {
       // 异常时退回默认值（后台播放开、系统变速、未锁定、分钟档）
     }
@@ -70,6 +93,7 @@ class AudioPreferences {
     rateEngine.value = AudioRateEngine.builtIn;
     rateLocked = false;
     sleepAtChapterEnd = false;
+    listenEngine.value = ListenEngine.smart;
     _skipIntro.clear();
     _skipOutro.clear();
     _skipLoaded.clear();
@@ -142,6 +166,16 @@ class AudioPreferences {
     try {
       final sp = await SharedPreferences.getInstance();
       await sp.setBool(_backgroundPlaybackKey, value);
+    } catch (_) {
+      // 忽略持久化失败
+    }
+  }
+
+  Future<void> setListenEngine(ListenEngine engine) async {
+    listenEngine.value = engine;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(_listenEngineKey, engine.name);
     } catch (_) {
       // 忽略持久化失败
     }

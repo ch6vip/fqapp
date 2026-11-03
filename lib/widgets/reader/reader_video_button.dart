@@ -197,8 +197,10 @@ class _ReaderVideoButtonState extends State<ReaderVideoButton>
                 ? Duration.zero
                 : const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
-            width: expanded ? 232 : 56,
-            height: 56,
+            // 展开宽度按直径等比缩（232 × 42/56 ≈ 174），否则 42 高的
+            // 胶囊里塞 232 宽会变成一条细长条。
+            width: expanded ? 174 : kReaderActionSize,
+            height: kReaderActionSize,
             child: _content(preset, asset, expanded),
           ),
         ),
@@ -213,43 +215,44 @@ class _ReaderVideoButtonState extends State<ReaderVideoButton>
         children: [
           if (expanded)
             const Positioned(
-              left: 19,
-              right: 63,
+              left: 14,
+              right: 47,
               child: Text(
                 '播放本书改编剧',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: Colors.white, fontSize: 14),
+                style: TextStyle(color: Colors.white, fontSize: 13),
               ),
             ),
           if (widget.cover.isNotEmpty) _cover(expanded),
           if (expanded)
             const Positioned(
-              right: 19,
-              child: Icon(Icons.play_arrow, color: Colors.white, size: 18),
+              right: 14,
+              child: Icon(Icons.play_arrow, color: Colors.white, size: 14),
             ),
           if (!expanded)
             ExcludeSemantics(
               child: preset.isEink
                   ? const SizedBox.square(
-                      dimension: 56,
+                      dimension: kReaderActionSize,
                       child: Center(
-                        child: Text('看', style: TextStyle(fontSize: 32)),
+                        // 与「听」同一个上界：42 圆里字号 ≤ 42/√2 ≈ 29。
+                        child: Text('看', style: TextStyle(fontSize: 28)),
                       ),
                     )
                   : Image.asset(
                       'assets/images/reader/$asset.webp',
-                      width: 56,
-                      height: 56,
+                      width: kReaderActionSize,
+                      height: kReaderActionSize,
                     ),
             ),
           if (widget.loading)
             Positioned(
-              right: 18,
+              right: 13,
               child: SizedBox.square(
-                dimension: 20,
+                dimension: 16,
                 child: _reducedMotion || preset.isEink
-                    ? const Icon(Icons.hourglass_empty, size: 20)
+                    ? const Icon(Icons.hourglass_empty, size: 16)
                     : const CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
@@ -257,9 +260,10 @@ class _ReaderVideoButtonState extends State<ReaderVideoButton>
       );
 
   Widget _cover(bool expanded) => Positioned(
-    right: 7,
-    width: 42,
-    height: 42,
+    // 圆形封面同样按 42/56 缩到 32，播放三角压在它正中。
+    right: 5,
+    width: 32,
+    height: 32,
     child: ExcludeSemantics(
       child: Opacity(
         opacity: expanded ? 1 : 0,
