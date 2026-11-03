@@ -306,6 +306,7 @@ void main() {
     );
     final tts = tabText('audio_mode_tts');
     final narrator = tabText('audio_mode_narrator');
+    final mode = tester.widget<AudioModeSwitch>(find.byType(AudioModeSwitch));
     expect(tts.data, '智能朗读');
     expect(narrator.data, '真人讲书');
     expect(tts.style?.fontSize, 16);
@@ -314,7 +315,12 @@ void main() {
     expect(narrator.style?.fontWeight, FontWeight.w700);
     expect(narrator.style?.color, theme.ink);
     expect(tts.style?.fontWeight, FontWeight.w500);
-    expect(tts.style?.color, theme.muted);
+    expect(
+      tts.style?.color,
+      mode.onSelectTts == null
+          ? theme.muted.withValues(alpha: 0.45)
+          : theme.muted,
+    );
   });
 
   testWidgets(
@@ -331,7 +337,10 @@ void main() {
       final mode = tester.widget<AudioModeSwitch>(find.byType(AudioModeSwitch));
       expect(mode.onSelectTts, isNull);
       expect(mode.onSelectNarrator, isNotNull);
-      await tester.tap(find.byKey(const Key('audio_mode_tts')));
+      await tester.tap(
+        find.byKey(const Key('audio_mode_tts')),
+        warnIfMissed: false,
+      );
       await _flush(tester);
       expect(
         tester

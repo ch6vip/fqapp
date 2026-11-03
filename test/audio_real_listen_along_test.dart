@@ -12,6 +12,7 @@ import 'package:fqapp/services/audio_page_theme.dart';
 import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
+import 'package:fqapp/widgets/audio/audio_real_sections.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -20,7 +21,7 @@ import 'support/controlled_player.dart';
 /// 边听边读与会话别名（规格 S7）：
 ///
 ///  * 真人讲书页多一张 40dp 的「边听边读」卡，右边显示时间轴映射到的
-///    原著章节；映射不到（无时间轴 / 无关联原著）时整行隐藏；
+///    原著章节；映射不到（无时间轴 / 无关联原著）时保留禁用入口；
 ///  * 点开的是关联原著的阅读页，定位到 `novel_item_id` 对应的章节；
 ///  * 会话按音频（专辑）id 发布，阅读页按原著 id 打开；两个 id 通过
 ///    [ListeningSession] 的别名互相匹配，高亮/跟随/迷你栏才不会断。
@@ -44,7 +45,7 @@ const _timeTrack = AudioTimeTrack(
   novelChapterTitle: '第1章 下山那天',
 );
 
-/// 时间点齐全但没有原著章节 id：卡片必须隐藏。
+/// 时间点齐全但没有原著章节 id：卡片保留为禁用状态。
 const _trackWithoutNovel = AudioTimeTrack([
   AudioSyncPoint(
     startTime: 0,
@@ -103,20 +104,32 @@ void main() {
     expect(tester.widget<Icon>(arrow).color, theme.muted);
   });
 
-  testWidgets('the read-along card hides without a novel mapping', (
+  testWidgets('the read-along card stays disabled without a novel mapping', (
     tester,
   ) async {
+    void expectDisabledCard() {
+      final card = find.byKey(const Key('audio_real_read_along'));
+      expect(card, findsOneWidget);
+      expect(
+        tester
+            .widget<AudioRealListenAlong>(find.byType(AudioRealListenAlong))
+            .onTap,
+        isNull,
+      );
+      expect(find.text('暂无原著章节映射'), findsOneWidget);
+    }
+
     await _mount(tester, _ListenAlongSession(timeTrack: AudioTimeTrack.empty));
-    expect(find.byKey(const Key('audio_real_read_along')), findsNothing);
+    expectDisabledCard();
     await _unmount(tester);
 
     await _mount(tester, _ListenAlongSession(timeTrack: _trackWithoutNovel));
-    expect(find.byKey(const Key('audio_real_read_along')), findsNothing);
+    expectDisabledCard();
     await _unmount(tester);
 
-    // 有时间轴，但这张录音没有关联原著：没有可打开的阅读页，入口同样隐藏。
+    // 有时间轴，但这张录音没有关联原著：入口保留，但不能打开阅读页。
     await _mount(tester, _ListenAlongSession(withNovel: false));
-    expect(find.byKey(const Key('audio_real_read_along')), findsNothing);
+    expectDisabledCard();
   });
 
   testWidgets('the card opens the novel reader on the mapped chapter', (

@@ -12,6 +12,7 @@ extension _AudioListeningLayout on _AudioPageState {
     required RelatedWork? related,
   }) {
     return Scaffold(
+      key: ValueKey('audio_session_${c._bookId}'),
       backgroundColor: theme.canvas,
       body: SafeArea(
         child: Column(
@@ -235,7 +236,7 @@ extension _AudioListeningLayout on _AudioPageState {
                 : snapshot.novelChapterTitle.isNotEmpty
                 ? snapshot.novelChapterTitle
                 : snapshot.chapterTitle,
-            onTap: !available || c._switchingVersion
+            onTap: c._switchingVersion || (realAudio && !available)
                 ? null
                 : realAudio
                 ? () => _openReadAlongCard(snapshot)
