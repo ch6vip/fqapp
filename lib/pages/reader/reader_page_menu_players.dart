@@ -17,11 +17,17 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
       return Stack(
         alignment: Alignment.bottomLeft,
         children: [
-          ReaderListenCapsuleHost(
-            monochrome: preset.isEink,
-            // 胶囊封面在这里点下去就是「回书页」：人已经在书页上，收起
-            // 菜单露出正文，而不是推到系统朗读那个控制页。
-            onOpenBook: () => _setControlsVisible(false),
+          ReaderEngineSwitch(
+            bookId: widget.bookId,
+            // 换引擎接续走阅读页自己的起播逻辑：偏好已在面板里写好，这里
+            // 只管按它起播。起点仍是当前页第一段，跟随与高亮留在书页上。
+            onSwitch: () => unawaited(_openListening(fromPage: true)),
+            child: ReaderListenCapsuleHost(
+              monochrome: preset.isEink,
+              // 胶囊封面在这里点下去就是「回书页」：人已经在书页上，收起
+              // 菜单露出正文，而不是推到系统朗读那个控制页。
+              onOpenBook: () => _setControlsVisible(false),
+            ),
           ),
           if (video)
             // 87 = 听书钮的下边距 20 + 直径 42 + 两颗钮之间 11 的间隙；两颗

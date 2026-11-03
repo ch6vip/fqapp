@@ -429,6 +429,62 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
     await session?.close();
   }
 
+  /// 暂停态换引擎后的接续：按刚写进偏好的引擎把这本书接起来。
+  ///
+  /// 只做 scope 本地能做的部分——系统朗读在播时切智能朗读（关掉 TTS、
+  /// 按同一本书起作品音频，后台接续不推页面），同引擎就是恢复播放。作品
+  /// 音频切系统朗读需要正文，只有阅读页构造得出 [SystemTtsBook]，那一半
+  /// 由 [ReaderAudioBridge.resumeWithEngine] 先问阅读页注册的接续通道，
+  /// 问不到才落到这里返回 false，调用方拿它决定提示语。
+  Future<bool> resumeWithEngine(ListenEngine engine) async {
+    final tts = _tts;
+    if (tts != null && !tts.closed) {
+      if (engine == ListenEngine.system) {
+        await tts.resume();
+        return true;
+      }
+      final book = tts.book;
+      await _closeTts();
+      if (!mounted) return false;
+      return ReaderAudioBridge.startListeningInBackground(
+        context,
+        AudioPage(
+          bookId: book.bookId,
+          title: book.title,
+          cover: book.coverUrl,
+          chapters: book.chapters,
+          startIndex: book.startIndex,
+        ),
+      );
+    }
+    final session = _session;
+    if (session != null && !session._closed && session._ready) {
+      // 缓冲中不给 toggle（与胶囊的 canToggle 同一条规矩）。
+      if (engine == ListenEngine.system) return false;
+      await session._togglePlayback();
+      return true;
+    }
+    return false;
+  }
+
+  /// 这次换引擎是否必须经过阅读页：音频 → 系统朗读要正文，scope 给不出；
+  /// 系统朗读切智能朗读也优先走阅读页，起点（当前页）与跟随都留在书页。
+  bool _switchNeedsReader(ListenEngine engine) {
+    final tts = _tts;
+    if (tts != null && !tts.closed) return engine == ListenEngine.smart;
+    final session = _session;
+    return session != null && !session._closed && engine == ListenEngine.system;
+  }
+
+  /// 接续目标书：系统朗读优先，其次音频会话。null 就是没在听。
+  String? get _switchBookId {
+    final tts = _tts;
+    if (tts != null && !tts.closed) return tts.book.bookId;
+    final session = _session;
+    if (session != null && !session._closed) return session._bookId;
+    return null;
+  }
+
   /// 点封面：回到正在朗读的那本书的书页。
   ///
   /// 系统朗读没有自己的播放页——朗读进度本来就挂在正文上（高亮、跟随都在

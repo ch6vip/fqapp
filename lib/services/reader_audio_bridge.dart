@@ -79,6 +79,30 @@ abstract final class ReaderAudioBridge {
     }
   }
 
+  /// 暂停态换引擎后的接续（胶囊「选择播放引擎」选完调用）。
+  ///
+  /// 跨引擎先问阅读页：菜单里那颗胶囊的祖先链上挂着 [ReaderEngineSwitch]
+  /// （阅读页注册），由阅读页按新偏好从当前页起播，高亮与跟随都留在书页
+  /// 上。阅读页不在场时退回 scope 本地能做的部分——系统朗读切智能朗读
+  /// 信息齐全；音频切系统朗读缺正文，只能返回 false 让调用方提示用户回
+  /// 书页。同引擎永远走 scope：那就是恢复播放。
+  static Future<bool> resumeWithEngine(
+    BuildContext context,
+    ListenEngine engine,
+  ) async {
+    final owner = _owner(context);
+    if (owner == null) return false;
+    if (owner._switchNeedsReader(engine)) {
+      final switcher = ReaderEngineSwitch.maybeOf(context);
+      final bookId = owner._switchBookId;
+      if (switcher != null && bookId != null && bookId == switcher.bookId) {
+        await switcher.onSwitch();
+        return true;
+      }
+    }
+    return owner.resumeWithEngine(engine);
+  }
+
   /// 段落锚点跳转（双击跳读用）：与「从本页播放」同一套寻址。
   static bool jumpToParagraph(
     BuildContext context,
