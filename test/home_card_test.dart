@@ -460,7 +460,9 @@ void main() {
 
       final subtitle = tester.widget<Text>(find.text('云中客 · 连载中'));
       expect(subtitle.maxLines, 1);
-      expect(subtitle.style!.fontSize, 12.5);
+      // e615e2b 给档案控件减重：标题 19→17、信息行 12.5→12、行高 1.3→1.4。
+      expect(subtitle.style!.fontSize, 12);
+      expect(subtitle.style!.height, 1.4);
       // 信息行换成「作者 · 状态」，榜首标签和评分不再重复堆在这里。
       expect(find.text('多人二刷'), findsNothing);
     });
