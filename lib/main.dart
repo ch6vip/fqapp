@@ -704,6 +704,8 @@ class _RootShellState extends State<RootShell> {
                   systemNavigationBarIconBrightness: lightSystemIcons
                       ? Brightness.light
                       : Brightness.dark,
+                  // Edge-to-edge 下让页面底色透出，避免系统再叠一层对比度底衬。
+                  systemNavigationBarContrastEnforced: false,
                 ),
         child: LazyIndexedStack(
           index: _index,
