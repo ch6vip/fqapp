@@ -286,7 +286,7 @@ void main() {
   testWidgets('the split top bar stays dark under a light theme', (
     tester,
   ) async {
-    // 状态栏那条与视频同色：浅色主题的画布是 #F6F6F6，压在黑视频上会
+    // 状态栏那条与视频同色：浅色主题的画布是 #F4F3EF，压在黑视频上会
     // 露出一条白边；B 站播放页顶部是深底白图标。只改这一条，面板仍是
     // 浅色画布，所以图标必须跟着转白。
     final player = FakeNativePlayer(width: 1080, height: 1920);

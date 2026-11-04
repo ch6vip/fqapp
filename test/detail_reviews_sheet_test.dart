@@ -288,13 +288,13 @@ void main() {
     await tester.tap(find.text('打开分页书评'));
     await tester.pumpAndSettle();
     expect(find.text('加载更多'), findsOneWidget);
-    expect(find.text('已显示全部内容'), findsNothing);
+    expect(find.text('已经到底了'), findsNothing);
 
     await tester.tap(find.text('加载更多'));
     await tester.pumpAndSettle();
 
     expect(find.text('第二条书评'), findsOneWidget);
     expect(find.byType(HomeStreamFooter), findsOneWidget);
-    expect(find.text('已显示全部内容'), findsOneWidget);
+    expect(find.text('已经到底了'), findsOneWidget);
   });
 }

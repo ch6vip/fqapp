@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -8,6 +6,7 @@ import '../../models/media_item.dart';
 import '../../services/poster_cache.dart';
 import '../cover_tag_chip.dart';
 import '../media_card.dart' show mediaLengthLabel;
+import 'home_archive.dart';
 import 'home_design.dart';
 
 String homeKindLabel(String kind) => switch (kind) {
@@ -56,41 +55,61 @@ class StoryCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fallback = CustomPaint(
-      painter: _CoverArtwork(item.kind),
-      child: Center(
-        child: Icon(
-          homeKindIcon(item.kind),
-          color: Colors.white.withValues(alpha: 0.32),
-          size: 38,
-        ),
+    final palette = HomePalette.of(context);
+    final fallback = CustomPaint(painter: _CoverArtwork(item));
+    final Widget art;
+    if (item.cover.isEmpty) {
+      art = fallback;
+    } else {
+      art = CachedNetworkImage(
+        cacheManager: PosterCache.instance,
+        imageUrl: item.cover,
+        fit: fit,
+        alignment: alignment,
+        memCacheWidth: cacheWidth.clamp(1, 1200),
+        fadeInDuration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 220),
+        placeholder: (_, _) => fallback,
+        errorWidget: (_, _, _) => fallback,
+      );
+    }
+    if (!palette.eink) return art;
+    // 墨水屏：封面转灰阶，再压一圈 1dp 黑线（官方墨水屏模式的口径）。
+    return ColorFiltered(
+      colorFilter: einkCoverFilter,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          art,
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.black, width: 1),
+              ),
+            ),
+          ),
+        ],
       ),
-    );
-    if (item.cover.isEmpty) return fallback;
-    return CachedNetworkImage(
-      cacheManager: PosterCache.instance,
-      imageUrl: item.cover,
-      fit: fit,
-      alignment: alignment,
-      memCacheWidth: cacheWidth.clamp(1, 1200),
-      fadeInDuration: MediaQuery.disableAnimationsOf(context)
-          ? Duration.zero
-          : const Duration(milliseconds: 220),
-      placeholder: (_, _) => fallback,
-      errorWidget: (_, _, _) => fallback,
     );
   }
 }
 
-/// An original geometric cover is useful even when an upstream image fails.
+/// 没有封面图时的档案兜底：按媒介取色的渐变 + 竖排衬线书名。
+///
+/// 旧版是「几何圆环 + 线条图标」，和档案版式的细线、编号不成体系；新版照
+/// 搬 mockup 的封面块——书名竖排在左上，底部压一道暗角收边。墨水屏不在这
+/// 里另画一套：外层 [einkCoverFilter] 统一转灰度，和 mockup 的
+/// `filter: grayscale(1)` 同一口径。
 class _CoverArtwork extends CustomPainter {
-  final String kind;
+  _CoverArtwork(this.item);
 
-  const _CoverArtwork(this.kind);
+  final MediaItem item;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final colors = switch (kind) {
+    final rect = Offset.zero & size;
+    final colors = switch (item.kind) {
       'video' => [const Color(0xFF734740), const Color(0xFF242428)],
       'manju' => [const Color(0xFF8B557E), const Color(0xFF35283D)],
       'manga' => [const Color(0xFF6F6887), const Color(0xFF343349)],
@@ -98,37 +117,58 @@ class _CoverArtwork extends CustomPainter {
       _ => [const Color(0xFF6A7964), const Color(0xFF293C35)],
     };
     canvas.drawRect(
-      Offset.zero & size,
+      rect,
       Paint()
         ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          // mockup 的渐变角度是 160deg（略偏右下），不是对角 135deg。
+          begin: const Alignment(-0.34, -0.94),
+          end: const Alignment(0.34, 0.94),
           colors: colors,
-        ).createShader(Offset.zero & size),
+        ).createShader(rect),
     );
-    final line = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8
-      ..color = const Color(0xFFF2DFC3).withValues(alpha: 0.22);
-    final center = Offset(size.width * 0.92, size.height * 0.30);
-    for (var i = 0; i < 6; i++) {
-      canvas.drawCircle(center, size.width * (0.27 + i * 0.14), line);
+
+    // 竖排书名：左上起排，最多露出封面的 74%，超出的字截断。
+    final titleSize = (size.width * 0.13).clamp(12.0, 22.0);
+    final style = homeSerifStyle(
+      size: titleSize,
+      color: const Color(0xEBFFFFFF),
+      height: 1.2,
+    ).copyWith(letterSpacing: titleSize * 0.12);
+    final left = size.width * 0.11;
+    final top = size.height * 0.09;
+    final limit = top + size.height * 0.74;
+    var y = top;
+    for (final char in item.title.characters.take(8)) {
+      if (y + titleSize * 1.2 > limit) break;
+      final glyph = TextPainter(
+        text: TextSpan(text: char, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      glyph.paint(canvas, Offset(left, y));
+      y += titleSize * 1.2;
     }
-    canvas.save();
-    canvas.translate(size.width * 0.17, size.height * 0.74);
-    canvas.rotate(-math.pi / 5);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, size.width * 1.1, size.height * 0.13),
-        const Radius.circular(4),
-      ),
-      Paint()..color = const Color(0xFFE2C99A).withValues(alpha: 0.13),
+
+    final scrim = Rect.fromLTWH(
+      0,
+      size.height * 0.78,
+      size.width,
+      size.height * 0.22,
     );
-    canvas.restore();
+    canvas.drawRect(
+      scrim,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x00000000), Color(0x2E000000)],
+        ).createShader(scrim),
+    );
   }
 
   @override
-  bool shouldRepaint(_CoverArtwork oldDelegate) => oldDelegate.kind != kind;
+  bool shouldRepaint(_CoverArtwork oldDelegate) =>
+      oldDelegate.item.title != item.title ||
+      oldDelegate.item.kind != item.kind;
 }
 
 /// The one book card on the shelf.
@@ -136,7 +176,7 @@ class _CoverArtwork extends CustomPainter {
 /// 旧版是「白卡 + 阴影 + 评分角标 + 两行简介 + 彩色 chip 行」的模板卡，信息
 /// 密度高但每一层都在抢注意力。新版把封面直接铺在画布上、只留三行字：
 /// 书名、作者/评分/一句推荐理由。封面自己就是卡片，阴影和描边都不要——
-/// 画布是 #F6F6F6，封面的色块已经足够把它和背景分开。
+/// 画布是 #F4F3EF，封面的色块已经足够把它和背景分开。
 ///
 /// 简介不进网格：网格负责扫，主视觉负责读。
 class HomeMediaCard extends StatelessWidget {
@@ -151,12 +191,24 @@ class HomeMediaCard extends StatelessWidget {
   /// 搜索结果需要——长度是判断一本书能不能读下去的关键信息。
   final bool showLength;
 
+  /// 封面圆角。首页档案版式用 3dp；搜索结果等旧版式仍用 12dp。
+  final double radius;
+
+  /// 书名字号。首页 14.5，其他页面保持原来的 15。
+  final double titleSize;
+
+  /// 书名下面的一行等宽档案编号；null 时不占位。
+  final String? archiveCode;
+
   const HomeMediaCard({
     super.key,
     required this.item,
     required this.onTap,
     this.coverWidth,
     this.showLength = false,
+    this.radius = 12,
+    this.titleSize = 15,
+    this.archiveCode,
   });
 
   @override
@@ -165,11 +217,12 @@ class HomeMediaCard extends StatelessWidget {
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final scaler = MediaQuery.textScalerOf(context);
     final meta = _metaText(item, showLength: showLength);
+    final archiveCode = this.archiveCode;
     return _CardWidth(
       width: coverWidth,
       builder: (width) => HomePressable(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(radius),
         semanticLabel: item.title,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -178,7 +231,7 @@ class HomeMediaCard extends StatelessWidget {
               aspectRatio: 5 / 7,
               child: RepaintBoundary(
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(radius),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
@@ -235,27 +288,40 @@ class HomeMediaCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: scaler.scale(15) * 1.35 * 2,
+              height: scaler.scale(titleSize) * 1.35 * 2,
               child: Text(
                 item.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: titleSize,
                   height: 1.35,
                   fontWeight: FontWeight.w600,
                   color: palette.ink,
                 ),
               ),
             ),
+            if (archiveCode != null) ...[
+              const SizedBox(height: 5),
+              Text(
+                archiveCode,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: homeCodeStyle(
+                  palette,
+                  size: homeCardCodeSize,
+                  color: palette.muted,
+                ),
+              ),
+            ],
             if (meta.isNotEmpty) ...[
-              const SizedBox(height: 4),
+              SizedBox(height: archiveCode != null ? 2 : 4),
               Text(
                 meta,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: homeCardMetaSize,
                   height: 1.3,
                   color: palette.muted,
                 ),

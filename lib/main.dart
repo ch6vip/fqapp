@@ -1,4 +1,3 @@
-import 'services/api_client.dart';
 import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
@@ -558,7 +557,7 @@ class _RootShellState extends State<RootShell> {
           return LazyIndexedStack(
             index: index,
             children: [
-              HomePage(cueLoader: () => ApiClient.instance.searchCue()),
+              const HomePage(),
               const DramaPage(),
               LibraryPage(
                 onBrowse: () => desktopTab.value = 0,
@@ -695,6 +694,11 @@ class _RootShellState extends State<RootShell> {
                     ? SystemUiOverlayStyle.light
                     : SystemUiOverlayStyle.dark)
                 .copyWith(
+                  // 状态栏显式铺成画布色：透明状态栏在 Android 10+ 会被系统
+                  // 叠一层对比度黑纱，奶白画布会被压成灰带。短剧视频流仍透明。
+                  statusBarColor: dramaOnVideo
+                      ? Colors.transparent
+                      : palette.canvas,
                   systemNavigationBarColor: dramaOnVideo
                       ? Colors.black
                       : palette.canvas,
@@ -708,10 +712,7 @@ class _RootShellState extends State<RootShell> {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(
-              scrollController: _homeScroll,
-              cueLoader: () => ApiClient.instance.searchCue(),
-            ),
+            HomePage(scrollController: _homeScroll),
             // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
             // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
             if (supportsVideoPlayback)
