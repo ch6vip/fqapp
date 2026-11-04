@@ -187,5 +187,79 @@ void main() {
       expect(pager.bottom, lessThan(500));
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'large text in a short viewport still lets the pager scroll clear of the dock',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(400, 500));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  size: const Size(400, 500),
+                  textScaler: const TextScaler.linear(1.3),
+                  padding: const EdgeInsets.only(bottom: 72),
+                ),
+                child: Scaffold(
+                  body: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: SingleChildScrollView(
+                          key: const Key('p0_feed'),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const SizedBox(height: 220),
+                              HomeRankShelf(
+                                books: [book('r1', '榜书一'), book('r2', '榜书二')],
+                                onOpen: (_) {},
+                              ),
+                              const SizedBox(height: 800),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: SizedBox(key: const Key('p0_dock'), height: 72),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final dock = tester.getRect(find.byKey(const Key('p0_dock')));
+        var clear = false;
+        for (var i = 0; i < 6; i++) {
+          final next = tester.getRect(find.byKey(const Key('home_rank_next')));
+          if (next.bottom <= dock.top) {
+            clear = true;
+            break;
+          }
+          await tester.drag(
+            find.byKey(const Key('p0_feed')),
+            const Offset(0, -160),
+          );
+          await tester.pump();
+        }
+        // MuMu 实测：首屏与滚动中间态翻页器会落在悬浮 dock 区域内，继续
+        // 滚动即可脱离。这里钉住「滚动后可命中」，不要求首屏不重叠。
+        expect(clear, isTrue, reason: 'pager never scrolled clear of the dock');
+
+        await tester.tap(find.byKey(const Key('home_rank_next')));
+        await tester.pumpAndSettle();
+        expect(find.text('02 / 02'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }
