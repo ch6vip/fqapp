@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -13,6 +14,7 @@ import '../../services/poster_cache.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
 import 'home_media_card.dart';
+import 'home_rank_scroll_physics.dart';
 
 // 排行榜的立体书架。
 //
@@ -21,12 +23,10 @@ import 'home_media_card.dart';
 // CustomPainter 自绘（不为每本书建 widget），上面铺一层透明的横向滚动区
 // 负责手势和吸附；颜色、减少动效、墨水屏都走同一套几何。
 //
-// 几何与其 `archive_shelf_geometry.dart` 同口径：书脊宽、书间距、封面宽、
-// 书高都由区域宽度反推；抽出曲线 `exp(-2.2d²)` 与其 `archive_wave.dart`
-// 的连续波动同构。
+// 几何与抽出波形参考 mikufoxxx/Wenku8_Flutter 的 ebcd7f1（GPL-3.0）；
+// 这里保留有限排行榜，不复制上游循环书架的虚拟名次。
 
-/// 书架区域高度：比首屏一半略低，让书名和翻页器露在折线以上。
-const double homeRankShelfHeight = 330;
+const double _shelfMaxWidth = 520;
 
 class _ShelfGeometry {
   const _ShelfGeometry({
@@ -37,6 +37,7 @@ class _ShelfGeometry {
     required this.bodyHeight,
     required this.base,
     required this.anchor,
+    required this.height,
   });
 
   final double width;
@@ -44,25 +45,32 @@ class _ShelfGeometry {
   final double pitch;
   final double cover;
   final double bodyHeight;
+  final double height;
+
+  double get flatCover => (width * .29).clamp(96.0, 118.0);
+  double get flatHeight => math.max(240, bodyHeight + 48);
 
   /// 未被抽出时书脊的顶边 y。
   final double base;
 
-  /// 当前那本书脊停在的 x（视口宽度的 30%）。
+  /// 未抽出书脊的锚点；当前书抽出后，完整投影恰好居中。
   final double anchor;
 
-  factory _ShelfGeometry.of(double width, double height) {
+  factory _ShelfGeometry.of(double width) {
+    width = math.min(width, _shelfMaxWidth);
     final spine = (width * 0.043).clamp(14.0, 18.0);
-    final cover = (width * 0.29).clamp(96.0, 118.0);
-    final bodyHeight = math.min(196.0, height * 0.56);
+    final cover = (width * 0.32).clamp(100.0, 128.0);
+    final bodyHeight = (cover - 20) * 166 / 118 + 54;
+    final base = cover * 0.30 + bodyHeight * 0.60 + 12;
     return _ShelfGeometry(
       width: width,
       spine: spine,
       pitch: spine + 11,
       cover: cover,
       bodyHeight: bodyHeight,
-      base: height - bodyHeight - 48,
-      anchor: width * 0.30,
+      base: base,
+      anchor: (width - spine - cover * 0.66) / 2 + cover * 0.84 * 0.66,
+      height: base + bodyHeight + 60,
     );
   }
 
@@ -72,6 +80,23 @@ class _ShelfGeometry {
 
   double contentWidth(int count) =>
       math.max(width, (count - 1) * pitch + width);
+
+  (int, int) visibleRange(double focus, int count) => (
+    math.max(0, (focus - (anchor + spine + depthX) / pitch).floor()),
+    math.min(
+      count - 1,
+      (focus + (width - anchor + cover * 0.84 * 0.66) / pitch).ceil(),
+    ),
+  );
+
+  Path outline(_Pose pose) => Path()
+    ..moveTo(pose.x, pose.y)
+    ..lineTo(pose.x + depthX, pose.y + depthY)
+    ..lineTo(pose.x + spine + depthX, pose.y + depthY)
+    ..lineTo(pose.x + spine + depthX, pose.y + depthY + bodyHeight)
+    ..lineTo(pose.x + spine, pose.y + bodyHeight)
+    ..lineTo(pose.x, pose.y + bodyHeight)
+    ..close();
 }
 
 class _Pose {
@@ -83,7 +108,9 @@ class _Pose {
 
 _Pose _poseAt(int index, double focus, _ShelfGeometry g) {
   final d = index - focus;
-  final weight = math.exp(-2.2 * d * d);
+  const radius = 1.48;
+  final crest = d.abs() < radius ? math.cos(d / radius * math.pi / 2) : 0.0;
+  final weight = crest * crest;
   final rail = d.clamp(-7.0, 7.0);
   final pull = g.cover * 0.84 * weight * (1.24 - 0.24 * weight);
   final lift = weight * weight * (3 - 2 * weight);
@@ -94,7 +121,7 @@ _Pose _poseAt(int index, double focus, _ShelfGeometry g) {
         rail * 2.5 +
         rail * rail * 0.45 +
         pull * 0.30 -
-        g.bodyHeight * 0.32 * lift,
+        g.bodyHeight * 0.60 * lift,
   );
 }
 
@@ -106,7 +133,6 @@ class HomeRankShelf extends StatefulWidget {
     required this.onOpen,
     this.stepped = false,
     this.flat = false,
-    this.height = homeRankShelfHeight,
   });
 
   final List<MediaItem> books;
@@ -121,20 +147,26 @@ class HomeRankShelf extends StatefulWidget {
   /// 平面轨道；这里给测试和外部降级留一个人工开关。
   final bool flat;
 
-  final double height;
-
   /// 本进程是否已因帧耗时过高降级到平面轨道。
   ///
   /// 进程级而非页面级：书架在首屏和切换榜单时都会重建，一旦判定吃力就没
   /// 必要每处再重新试探。
   static bool degraded = false;
 
+  static double loadingHeight(BuildContext context, double width) {
+    final geometry = _ShelfGeometry.of(width);
+    final scaler = MediaQuery.textScalerOf(context);
+    return (degraded ? geometry.flatHeight : geometry.height) +
+        _InfoRow.heightFor(scaler) +
+        _Pager.heightFor(scaler);
+  }
+
   @override
   State<HomeRankShelf> createState() => _HomeRankShelfState();
 }
 
 class _HomeRankShelfState extends State<HomeRankShelf> {
-  final ScrollController _scroll = ScrollController();
+  final ScrollController _scroll = ScrollController(keepScrollOffset: false);
   final Map<String, ui.Image> _images = {};
   final Map<String, ImageStream> _streams = {};
   final Map<String, ImageStreamListener> _listeners = {};
@@ -143,13 +175,17 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
   _ShelfGeometry? _geometry;
   int _focus = 0;
   bool _scrollAlignmentPending = false;
+  int? _targetIndex;
+  int _scrollCommand = 0;
 
   /// 平面封面轨道（低性能后备）的滚动控制器。
   ///
   /// 不用 [PageView]：`padEnds: false` 时最后一页到不了左对齐位，翻页器
   /// 能显示 12/12、轨道却停在 09/12。ListView + 吸附物理能让每本书都停在
   /// 轨道起点，和立体书架的名次口径一致。
-  final ScrollController _flatScroll = ScrollController();
+  final ScrollController _flatScroll = ScrollController(
+    keepScrollOffset: false,
+  );
   double _flatPitch = 1;
   late bool _flat;
 
@@ -188,12 +224,12 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
       _switchToFlat();
     }
     if (!_sameBooks(oldWidget.books, widget.books)) {
-      if (_flat) {
-        // 换榜才回到第一本。父级用同一批书重建时（`flatten()` 每次返回
-        // 新 List）不能把用户正在看的名次冲掉。
-        _focus = 0;
-        _scrollAlignmentPending = true;
-      } else {
+      // 换榜才回到第一本；同一批书的父级重建不能冲掉当前名次。
+      _focus = 0;
+      _scrollAlignmentPending = true;
+      _targetIndex = null;
+      _scrollCommand++;
+      if (!_flat) {
         _releaseImages();
         _resolveImages();
       }
@@ -253,6 +289,8 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     setState(() {
       _flat = true;
       _scrollAlignmentPending = true;
+      _targetIndex = null;
+      _scrollCommand++;
     });
     // 降级后平面轨道自己加载封面，3D 解好的图和流监听不再需要。
     _releaseImages();
@@ -354,6 +392,8 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     final index = _focus.clamp(0, widget.books.length - 1);
     final pitch = _flat ? _flatPitch : geometry.pitch;
     final position = controller.position;
+    _targetIndex = null;
+    _scrollCommand++;
     _scrollAlignmentPending = false;
     controller.jumpTo(
       (index * pitch).clamp(position.minScrollExtent, position.maxScrollExtent),
@@ -368,97 +408,104 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     final books = widget.books;
     if (books.isEmpty) return const SizedBox.shrink();
     final index = _focus.clamp(0, books.length - 1);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final geometry = _ShelfGeometry.of(constraints.maxWidth, widget.height);
-        if (_geometry?.width != geometry.width) {
-          _scrollAlignmentPending = true;
-        }
-        _geometry = geometry;
-        if (_scrollAlignmentPending) {
-          // 换轨道或改宽度后，等新布局就绪再对齐，期间不让旧偏移改写焦点。
-          WidgetsBinding.instance.addPostFrameCallback(_alignScrollAfterLayout);
-        }
-        final scaler = MediaQuery.textScalerOf(
-          context,
-        ).clamp(minScaleFactor: 1, maxScaleFactor: 1.3);
-        if (_flat) {
-          return _buildFlat(context, palette, books, geometry);
-        }
-        final volumes = [
-          for (var i = 0; i < books.length; i++)
-            _Volume.build(
-              books[i],
-              i,
-              geometry,
-              palette,
-              scaler,
-              _images[_keyOf(books[i])],
-            ),
-        ];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: widget.height,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: (details) =>
-                    _handleTap(details.localPosition, geometry),
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: RepaintBoundary(
-                        child: CustomPaint(
-                          painter: _ShelfPainter(
-                            controller: _scroll,
-                            books: books,
-                            volumes: volumes,
-                            geometry: geometry,
-                            palette: palette,
-                            stepped: widget.stepped,
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: NotificationListener<ScrollEndNotification>(
-                        onNotification: (_) {
-                          if (widget.stepped) _snapTo(_focus, geometry);
-                          return false;
-                        },
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          controller: _scroll,
-                          physics: widget.stepped
-                              ? const ClampingScrollPhysics()
-                              : _SnapToPitchPhysics(pitch: geometry.pitch),
-                          child: SizedBox(
-                            width: geometry.contentWidth(books.length),
-                            height: widget.height,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+    return Center(
+      heightFactor: 1,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: _shelfMaxWidth),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final geometry = _ShelfGeometry.of(constraints.maxWidth);
+            if (_geometry?.width != geometry.width) {
+              _scrollAlignmentPending = true;
+            }
+            _geometry = geometry;
+            if (_scrollAlignmentPending) {
+              // 换轨道或改宽度后，等新布局就绪再对齐，期间不让旧偏移改写焦点。
+              WidgetsBinding.instance.addPostFrameCallback(
+                _alignScrollAfterLayout,
+              );
+            }
+            final scaler = MediaQuery.textScalerOf(
+              context,
+            ).clamp(minScaleFactor: 1, maxScaleFactor: 1.3);
+            if (_flat) {
+              return _buildFlat(context, palette, books, geometry);
+            }
+            final volumes = [
+              for (var i = 0; i < books.length; i++)
+                _Volume.build(
+                  books[i],
+                  i,
+                  geometry,
+                  palette,
+                  scaler,
+                  _images[_keyOf(books[i])],
                 ),
-              ),
-            ),
-            _InfoRow(
-              book: books[index],
-              index: index,
-              onOpen: () => widget.onOpen(books[index]),
-            ),
-            _Pager(
-              index: index,
-              count: books.length,
-              onPrevious: () => _step(-1, geometry),
-              onNext: () => _step(1, geometry),
-            ),
-          ],
-        );
-      },
+            ];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: geometry.height,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (details) =>
+                        _handleTap(details.localPosition, geometry),
+                    child: ClipRect(
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: RepaintBoundary(
+                              child: CustomPaint(
+                                painter: _ShelfPainter(
+                                  controller: _scroll,
+                                  books: books,
+                                  volumes: volumes,
+                                  geometry: geometry,
+                                  palette: palette,
+                                  stepped: widget.stepped,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned.fill(
+                            child: NotificationListener<ScrollNotification>(
+                              onNotification: _onScrollNotification,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                controller: _scroll,
+                                physics: widget.stepped
+                                    ? const ClampingScrollPhysics()
+                                    : HomeRankScrollPhysics(
+                                        pitchFor: (width) =>
+                                            _ShelfGeometry.of(width).pitch,
+                                      ),
+                                child: SizedBox(
+                                  width: geometry.contentWidth(books.length),
+                                  height: geometry.height,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                _InfoRow(book: books[index], onOpen: () => _open(index)),
+                _Pager(
+                  index: index,
+                  count: books.length,
+                  readLabel: _readLabel(books[index]),
+                  onPrevious: () => _step(-1),
+                  onNext: () => _step(1),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -475,7 +522,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     final index = _focus.clamp(0, books.length - 1);
     final innerWidth = math.max(1.0, geometry.width - 32);
     const gap = 12.0;
-    final pitch = geometry.cover + gap;
+    final pitch = geometry.flatCover + gap;
     _flatPitch = pitch;
     // 尾部补足「视口宽 - 一页宽」：最后一本也能停在左对齐位。少了这段，
     // 最大偏移只够把末本露出来，名次却到不了最后。
@@ -485,159 +532,158 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
-          height: widget.height,
-          child: ListView.builder(
-            key: const Key('home_rank_flat_rail'),
-            controller: _flatScroll,
-            scrollDirection: Axis.horizontal,
-            itemExtent: pitch,
-            physics: _SnapToPitchPhysics(pitch: pitch),
-            padding: EdgeInsets.only(left: 16, right: 16 + trailing),
-            itemCount: books.length,
-            itemBuilder: (context, i) {
-              final book = books[i];
-              return Center(
-                child: HomePressable(
-                  onTap: () => widget.onOpen(book),
-                  semanticLabel: '打开 ${book.title}',
-                  borderRadius: BorderRadius.circular(homeCoverRadius),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      HomeCode(
-                        'NO.${(i + 1).toString().padLeft(3, '0')}',
-                        size: 8,
-                        color: palette.ink,
-                      ),
-                      const SizedBox(height: 6),
-                      SizedBox(
-                        width: geometry.cover,
-                        child: AspectRatio(
-                          aspectRatio: 5 / 7,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(
-                              homeCoverRadius,
-                            ),
-                            child: StoryCover(
-                              item: book,
-                              cacheWidth:
-                                  (geometry.cover *
-                                          MediaQuery.devicePixelRatioOf(
-                                            context,
-                                          ))
-                                      .ceil(),
+          height: geometry.flatHeight,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _onScrollNotification,
+            child: ListView.builder(
+              key: const Key('home_rank_flat_rail'),
+              controller: _flatScroll,
+              scrollDirection: Axis.horizontal,
+              itemExtent: pitch,
+              physics: widget.stepped
+                  ? const ClampingScrollPhysics()
+                  : HomeRankScrollPhysics(
+                      pitchFor: (width) =>
+                          _ShelfGeometry.of(width).flatCover + gap,
+                    ),
+              padding: EdgeInsets.only(left: 16, right: 16 + trailing),
+              itemCount: books.length,
+              itemBuilder: (context, i) {
+                final book = books[i];
+                return Center(
+                  child: HomePressable(
+                    onTap: () => _open(i),
+                    semanticLabel: '打开 ${book.title}',
+                    borderRadius: BorderRadius.circular(homeCoverRadius),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        HomeCode(
+                          'NO.${(i + 1).toString().padLeft(3, '0')}',
+                          size: 8,
+                          color: palette.ink,
+                        ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: geometry.flatCover,
+                          child: AspectRatio(
+                            aspectRatio: 5 / 7,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(
+                                homeCoverRadius,
+                              ),
+                              child: StoryCover(
+                                item: book,
+                                cacheWidth:
+                                    (geometry.flatCover *
+                                            MediaQuery.devicePixelRatioOf(
+                                              context,
+                                            ))
+                                        .ceil(),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
-        _InfoRow(
-          book: books[index],
-          index: index,
-          onOpen: () => widget.onOpen(books[index]),
-        ),
+        _InfoRow(book: books[index], onOpen: () => _open(index)),
         _Pager(
           index: index,
           count: books.length,
-          onPrevious: () => _stepFlat(-1, books.length),
-          onNext: () => _stepFlat(1, books.length),
+          readLabel: _readLabel(books[index]),
+          onPrevious: () => _step(-1),
+          onNext: () => _step(1),
         ),
       ],
     );
   }
 
-  void _stepFlat(int delta, int count) {
-    final next = (_focus + delta).clamp(0, count - 1);
-    if (next == _focus) return;
-    if (!_flatScroll.hasClients) {
-      setState(() => _focus = next);
-      return;
-    }
-    // 焦点交给滚动监听跟着偏移走，避免动画前段又被旧偏移改回去。
-    final target = next * _flatPitch;
-    if (widget.stepped) {
-      _flatScroll.jumpTo(target);
-    } else {
-      _flatScroll.animateTo(
-        target,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
-    }
-  }
-
   void _handleTap(Offset position, _ShelfGeometry geometry) {
-    final focus = _scroll.hasClients ? _scroll.offset / geometry.pitch : 0.0;
-    for (var i = widget.books.length - 1; i >= 0; i--) {
+    if (!_scroll.hasClients || _scrollAlignmentPending) return;
+    final raw = _scroll.offset / geometry.pitch;
+    final focus = widget.stepped ? raw.roundToDouble() : raw;
+    final (first, last) = geometry.visibleRange(focus, widget.books.length);
+    // 从前往后命中整个实体，与 painter 的遮挡顺序一致，不能穿过前排点后排。
+    for (var i = last; i >= first; i--) {
       final pose = _poseAt(i, focus, geometry);
-      if ((position.dx - (pose.x + geometry.spine / 2)).abs() <=
-              geometry.pitch / 2 &&
-          position.dy >= pose.y &&
-          position.dy <= pose.y + geometry.bodyHeight) {
-        _snapTo(i, geometry);
+      if (geometry.outline(pose).contains(position)) {
+        if ((raw - i).abs() < .03 &&
+            !_scroll.position.isScrollingNotifier.value) {
+          _open(i);
+        } else {
+          unawaited(_centre(i));
+        }
         return;
       }
     }
   }
 
-  void _step(int delta, _ShelfGeometry geometry) =>
-      _snapTo(_focus + delta, geometry);
+  bool _onScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0 || _scrollAlignmentPending) return false;
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _targetIndex = null;
+      _scrollCommand++;
+    } else if (notification is ScrollEndNotification && widget.stepped) {
+      unawaited(_centre(_focus, animate: false));
+    }
+    return false;
+  }
 
-  void _snapTo(int index, _ShelfGeometry geometry, {bool animate = true}) {
+  void _step(int delta) => unawaited(_centre((_targetIndex ?? _focus) + delta));
+
+  void _open(int index) {
+    if (widget.books.isEmpty) return;
+    final next = index.clamp(0, widget.books.length - 1);
+    final book = widget.books[next];
+    unawaited(_centre(next, animate: false));
+    widget.onOpen(book);
+  }
+
+  Future<void> _centre(int index, {bool animate = true}) async {
     final count = widget.books.length;
-    if (count == 0 || !_scroll.hasClients) return;
-    final target = index.clamp(0, count - 1) * geometry.pitch;
-    if (!animate || widget.stepped) {
-      _scroll.jumpTo(target);
+    final geometry = _geometry;
+    if (count == 0 || geometry == null) return;
+    final next = index.clamp(0, count - 1);
+    final controller = _flat ? _flatScroll : _scroll;
+    final command = ++_scrollCommand;
+    _targetIndex = next;
+    if (!controller.hasClients || _scrollAlignmentPending) {
+      setState(() {
+        _focus = next;
+        _scrollAlignmentPending = true;
+      });
+      _targetIndex = null;
       return;
     }
-    _scroll.animateTo(
-      target,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
+    final target = (next * (_flat ? _flatPitch : geometry.pitch)).clamp(
+      controller.position.minScrollExtent,
+      controller.position.maxScrollExtent,
     );
-  }
-}
-
-/// 吸附到最近的一本书；松手后不回弹。
-class _SnapToPitchPhysics extends ScrollPhysics {
-  const _SnapToPitchPhysics({required this.pitch, super.parent});
-
-  final double pitch;
-
-  @override
-  _SnapToPitchPhysics applyTo(ScrollPhysics? ancestor) =>
-      _SnapToPitchPhysics(pitch: pitch, parent: buildParent(ancestor));
-
-  @override
-  Simulation? createBallisticSimulation(
-    ScrollMetrics position,
-    double velocity,
-  ) {
-    if (!position.hasContentDimensions) return null;
-    final target =
-        ((position.pixels + velocity * 0.12) / pitch).round() * pitch;
-    final clamped = target.clamp(
-      position.minScrollExtent,
-      position.maxScrollExtent,
-    );
-    if (velocity.abs() < 40 && (clamped - position.pixels).abs() < 0.5) {
-      return null;
+    if ((controller.offset - target).abs() < .01) {
+      _targetIndex = null;
+      if (!animate && controller.position.isScrollingNotifier.value) {
+        controller.jumpTo(target);
+      }
+      return;
     }
-    return ScrollSpringSimulation(
-      const SpringDescription(mass: 1, stiffness: 220, damping: 26),
-      position.pixels,
-      clamped,
-      velocity,
-      tolerance: const Tolerance(distance: 0.05, velocity: 0.5),
-    );
+    if (!animate || widget.stepped) {
+      controller.jumpTo(target);
+    } else {
+      await controller.animateTo(
+        target,
+        duration: const Duration(milliseconds: 320),
+        curve: const Cubic(.2, 1.06, .35, 1),
+      );
+    }
+    if (mounted && command == _scrollCommand) _targetIndex = null;
   }
 }
 
@@ -651,23 +697,19 @@ String _readLabel(MediaItem book) {
   return text.endsWith('在读') ? text : '$text人在读';
 }
 
-/// 当前这本书：编号行、书名、作者与状态。放在书架下面，滚动时跟着换。
+/// 整个信息区都是打开入口；预留两行标题，换书时不推动下面的内容。
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.book,
-    required this.index,
-    required this.onOpen,
-  });
+  const _InfoRow({required this.book, required this.onOpen});
 
   final MediaItem book;
-  final int index;
   final VoidCallback onOpen;
+
+  static double heightFor(TextScaler scaler) =>
+      16 + scaler.scale(17) * 1.35 * 2 + scaler.scale(12) * 1.4;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final serial = (index + 1).toString().padLeft(3, '0');
-    final count = _readLabel(book);
     final status = switch (book.creationStatus) {
       0 => '完结',
       1 => '连载中',
@@ -679,108 +721,124 @@ class _InfoRow extends StatelessWidget {
       if (status.isNotEmpty) status,
     ].join(' · ');
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 8, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: HomePressable(
+        onTap: onOpen,
+        semanticLabel: '打开 ${book.title}',
+        borderRadius: BorderRadius.circular(homePanelRadius),
+        child: SizedBox(
+          height: heightFor(MediaQuery.textScalerOf(context)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
               children: [
-                HomeCode(count.isEmpty ? 'NO.$serial' : 'NO.$serial / $count'),
-                const SizedBox(height: 5),
-                Text(
-                  book.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 19,
-                    height: 1.25,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        book.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 17,
+                          height: 1.35,
+                          fontWeight: FontWeight.w700,
+                          color: palette.ink,
+                        ),
+                      ),
+                      Text(
+                        meta,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          color: palette.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ExcludeSemantics(
+                  child: Icon(
+                    LucideIcons.arrow_up_right,
+                    size: 20,
                     color: palette.ink,
                   ),
                 ),
-                if (meta.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    meta,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      height: 1.3,
-                      color: palette.muted,
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
-          IconButton(
-            onPressed: onOpen,
-            tooltip: '打开 ${book.title}',
-            style: IconButton.styleFrom(
-              foregroundColor: palette.ink,
-              fixedSize: const Size.square(36),
-              minimumSize: const Size.square(36),
-              padding: EdgeInsets.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            icon: const Icon(LucideIcons.arrow_up_right, size: 19),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// 右端的翻页器：上一本 / 01 / 12 / 下一本。
+/// 名次与在读人数靠左，翻页动作靠右，不再占用单独的编号行。
 class _Pager extends StatelessWidget {
   const _Pager({
     required this.index,
     required this.count,
+    required this.readLabel,
     required this.onPrevious,
     required this.onNext,
   });
 
   final int index;
   final int count;
+  final String readLabel;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
+
+  static double heightFor(TextScaler scaler) =>
+      6 + math.max(36, scaler.scale(9) * 1.35);
 
   static String _pad(int value) => value.toString().padLeft(2, '0');
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 10, right: 10, bottom: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          _button(
-            key: const Key('home_rank_previous'),
-            icon: LucideIcons.chevron_left,
-            label: '上一本',
-            onTap: index > 0 ? onPrevious : null,
-            palette: palette,
-          ),
-          HomeCode(
-            '${_pad(index + 1)} / ${_pad(count)}',
-            size: 11,
-            color: palette.ink,
-            align: TextAlign.center,
-          ),
-          _button(
-            key: const Key('home_rank_next'),
-            icon: LucideIcons.chevron_right,
-            label: '下一本',
-            onTap: index < count - 1 ? onNext : null,
-            palette: palette,
-          ),
-        ],
+    final serial = (index + 1).toString().padLeft(3, '0');
+    return SizedBox(
+      height: heightFor(MediaQuery.textScalerOf(context)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 10, 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: HomeCode(
+                readLabel.isEmpty ? 'NO.$serial' : 'NO.$serial / $readLabel',
+              ),
+            ),
+            const SizedBox(width: 8),
+            _button(
+              key: const Key('home_rank_previous'),
+              icon: LucideIcons.chevron_left,
+              label: '上一本',
+              onTap: index > 0 ? onPrevious : null,
+              palette: palette,
+            ),
+            Semantics(
+              label: '第 ${index + 1} 本，共 $count 本',
+              excludeSemantics: true,
+              child: HomeCode(
+                '${_pad(index + 1)} / ${_pad(count)}',
+                color: palette.ink,
+                align: TextAlign.center,
+              ),
+            ),
+            _button(
+              key: const Key('home_rank_next'),
+              icon: LucideIcons.chevron_right,
+              label: '下一本',
+              onTap: index < count - 1 ? onNext : null,
+              palette: palette,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -799,12 +857,12 @@ class _Pager extends StatelessWidget {
       style: IconButton.styleFrom(
         foregroundColor: palette.ink,
         disabledForegroundColor: palette.muted.withValues(alpha: 0.35),
-        fixedSize: const Size.square(30),
-        minimumSize: const Size.square(30),
+        fixedSize: const Size.square(36),
+        minimumSize: const Size.square(36),
         padding: EdgeInsets.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      icon: Icon(icon, size: 16),
+      icon: Icon(icon, size: 15),
     );
   }
 }
@@ -846,8 +904,11 @@ class _Volume {
     ui.Image? image,
   ) {
     final code = homeCodeStyle(palette, size: 7);
-    final maxChars = math.max(3, ((g.bodyHeight - 64) / 10.5).floor());
     final titleSize = scaler.scale(9);
+    final maxChars = math.max(
+      3,
+      ((g.bodyHeight - 64) / (titleSize * 1.16)).floor(),
+    );
     final sideRank = (index + 1).toString().padLeft(3, '0');
     final sideRk = (index + 1).toString().padLeft(5, '0');
     return _Volume(
@@ -858,11 +919,11 @@ class _Volume {
       ),
       title: _text(
         item.title,
-        TextStyle(
-          fontSize: titleSize,
-          height: 1.16,
-          fontWeight: FontWeight.w600,
+        homeSerifStyle(
+          size: titleSize,
           color: palette.ink,
+          weight: FontWeight.w500,
+          height: 1.16,
         ),
         maxWidth: math.max(1, g.spine - 2),
         align: TextAlign.center,
@@ -944,11 +1005,7 @@ class _ShelfPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     _paintGrid(canvas, size);
     final focus = _focus();
-    final first = math.max(0, (focus - 4).floor());
-    final last = math.min(
-      books.length - 1,
-      (focus + (geometry.width - geometry.anchor) / geometry.pitch).ceil() + 1,
-    );
+    final (first, last) = geometry.visibleRange(focus, books.length);
     for (var i = first; i <= last; i++) {
       _paintVolume(canvas, i, focus);
     }
@@ -966,10 +1023,10 @@ class _ShelfPainter extends CustomPainter {
     final paint = Paint()
       ..color = color
       ..strokeWidth = 1;
-    for (var y = 8.0; y < size.height; y += 22) {
+    for (var y = 8.0; y < size.height; y += 44) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
-    for (var x = 0.0; x < size.width; x += 22) {
+    for (var x = 0.0; x < size.width; x += 44) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
   }
