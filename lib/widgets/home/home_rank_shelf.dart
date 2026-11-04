@@ -142,6 +142,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
   ImageConfiguration _config = ImageConfiguration.empty;
   _ShelfGeometry? _geometry;
   int _focus = 0;
+  bool _scrollAlignmentPending = false;
 
   /// 平面封面轨道（低性能后备）的滚动控制器。
   ///
@@ -184,17 +185,16 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
   void didUpdateWidget(covariant HomeRankShelf oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.flat && !_flat) {
-      // 立体书架已经解好的封面不再绘制，监听和图片一起放掉。
-      _releaseImages();
-      setState(() => _flat = true);
+      _switchToFlat();
     }
     if (!_sameBooks(oldWidget.books, widget.books)) {
       if (_flat) {
         // 换榜才回到第一本。父级用同一批书重建时（`flatten()` 每次返回
         // 新 List）不能把用户正在看的名次冲掉。
         _focus = 0;
-        if (_flatScroll.hasClients) _flatScroll.jumpTo(0);
+        _scrollAlignmentPending = true;
       } else {
+        _releaseImages();
         _resolveImages();
       }
     }
@@ -244,9 +244,18 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     final sorted = List<double>.of(_frameSamples)..sort();
     if (sorted[sorted.length ~/ 2] < _slowFrameMs) return;
     HomeRankShelf.degraded = true;
+    _switchToFlat();
+  }
+
+  void _switchToFlat() {
+    if (_flat) return;
+    _stopProbe();
+    setState(() {
+      _flat = true;
+      _scrollAlignmentPending = true;
+    });
     // 降级后平面轨道自己加载封面，3D 解好的图和流监听不再需要。
     _releaseImages();
-    if (mounted) setState(() => _flat = true);
   }
 
   /// 只为书架上的书解析封面；解析好的图交给 painter 直接画。
@@ -265,12 +274,18 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
       );
       final stream = provider.resolve(_config);
       final listener = ImageStreamListener((info, _) {
-        if (!mounted || !_streams.containsKey(key)) return;
+        if (!mounted || _flat || !identical(_streams[key], stream)) {
+          info.dispose();
+          return;
+        }
+        final previous = _images[key];
         setState(() => _images[key] = info.image);
+        previous?.dispose();
       }, onError: (_, _) {});
-      stream.addListener(listener);
+      // 缓存命中时 addListener 会同步回调，必须先登记订阅。
       _streams[key] = stream;
       _listeners[key] = listener;
+      stream.addListener(listener);
     }
   }
 
@@ -281,6 +296,9 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     }
     _streams.clear();
     _listeners.clear();
+    for (final image in _images.values) {
+      image.dispose();
+    }
     _images.clear();
   }
 
@@ -297,7 +315,12 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
 
   void _onScroll() {
     final geometry = _geometry;
-    if (geometry == null || !_scroll.hasClients) return;
+    if (_flat ||
+        _scrollAlignmentPending ||
+        geometry == null ||
+        !_scroll.hasClients) {
+      return;
+    }
     final next = (_scroll.offset / geometry.pitch)
         .round()
         .clamp(0, math.max(0, widget.books.length - 1))
@@ -306,12 +329,35 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
   }
 
   void _onFlatScroll() {
-    if (!_flatScroll.hasClients || _flatPitch <= 0) return;
+    if (!_flat ||
+        _scrollAlignmentPending ||
+        !_flatScroll.hasClients ||
+        _flatPitch <= 0) {
+      return;
+    }
     final next = (_flatScroll.offset / _flatPitch)
         .round()
         .clamp(0, math.max(0, widget.books.length - 1))
         .toInt();
     if (next != _focus) setState(() => _focus = next);
+  }
+
+  void _alignScrollAfterLayout(Duration _) {
+    if (!mounted || !_scrollAlignmentPending || widget.books.isEmpty) return;
+    final geometry = _geometry;
+    final controller = _flat ? _flatScroll : _scroll;
+    if (geometry == null ||
+        !controller.hasClients ||
+        !controller.position.hasContentDimensions) {
+      return;
+    }
+    final index = _focus.clamp(0, widget.books.length - 1);
+    final pitch = _flat ? _flatPitch : geometry.pitch;
+    final position = controller.position;
+    _scrollAlignmentPending = false;
+    controller.jumpTo(
+      (index * pitch).clamp(position.minScrollExtent, position.maxScrollExtent),
+    );
   }
 
   static String _keyOf(MediaItem item) => '${item.kind}:${item.id}';
@@ -326,19 +372,12 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
       builder: (context, constraints) {
         final geometry = _ShelfGeometry.of(constraints.maxWidth, widget.height);
         if (_geometry?.width != geometry.width) {
-          _geometry = geometry;
-          // 宽度变了，旧偏移不再对齐书脊：落到当前那一本。
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            if (_flat) {
-              _flatPitch = geometry.cover + 12;
-              if (_flatScroll.hasClients) {
-                _flatScroll.jumpTo(index * _flatPitch);
-              }
-            } else {
-              _snapTo(index, geometry, animate: false);
-            }
-          });
+          _scrollAlignmentPending = true;
+        }
+        _geometry = geometry;
+        if (_scrollAlignmentPending) {
+          // 换轨道或改宽度后，等新布局就绪再对齐，期间不让旧偏移改写焦点。
+          WidgetsBinding.instance.addPostFrameCallback(_alignScrollAfterLayout);
         }
         final scaler = MediaQuery.textScalerOf(
           context,
@@ -458,9 +497,10 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
             itemBuilder: (context, i) {
               final book = books[i];
               return Center(
-                child: GestureDetector(
+                child: HomePressable(
                   onTap: () => widget.onOpen(book),
-                  behavior: HitTestBehavior.opaque,
+                  semanticLabel: '打开 ${book.title}',
+                  borderRadius: BorderRadius.circular(homeCoverRadius),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -678,19 +718,17 @@ class _InfoRow extends StatelessWidget {
               ],
             ),
           ),
-          GestureDetector(
-            onTap: onOpen,
-            behavior: HitTestBehavior.opaque,
-            child: SizedBox(
-              width: 36,
-              height: 36,
-              child: Icon(
-                LucideIcons.arrow_up_right,
-                size: 19,
-                color: palette.ink,
-                semanticLabel: '打开 ${book.title}',
-              ),
+          IconButton(
+            onPressed: onOpen,
+            tooltip: '打开 ${book.title}',
+            style: IconButton.styleFrom(
+              foregroundColor: palette.ink,
+              fixedSize: const Size.square(36),
+              minimumSize: const Size.square(36),
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            icon: const Icon(LucideIcons.arrow_up_right, size: 19),
           ),
         ],
       ),
@@ -754,22 +792,19 @@ class _Pager extends StatelessWidget {
     required VoidCallback? onTap,
     required HomePalette palette,
   }) {
-    return GestureDetector(
+    return IconButton(
       key: key,
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 30,
-        height: 30,
-        child: Icon(
-          icon,
-          size: 16,
-          color: onTap == null
-              ? palette.muted.withValues(alpha: 0.35)
-              : palette.ink,
-          semanticLabel: label,
-        ),
+      onPressed: onTap,
+      tooltip: label,
+      style: IconButton.styleFrom(
+        foregroundColor: palette.ink,
+        disabledForegroundColor: palette.muted.withValues(alpha: 0.35),
+        fixedSize: const Size.square(30),
+        minimumSize: const Size.square(30),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
+      icon: Icon(icon, size: 16),
     );
   }
 }
