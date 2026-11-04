@@ -564,24 +564,20 @@ class _HomePageState extends ConsumerState<HomePage> {
     final scaler = MediaQuery.textScalerOf(context);
     final titleScale = scaler.scale(15);
     final metaScale = scaler.scale(11);
-    final cached = _gridSliver;
-    if (cached != null &&
-        identical(_gridItems, state.items) &&
-        _gridTabIndex == state.tabIndex &&
-        _gridWidth == gridWidth &&
-        _gridTitleScale == titleScale &&
-        _gridMetaScale == metaScale) {
-      return [
-        SliverToBoxAdapter(child: HomeSectionHeader(title: _gridTitle(state))),
-        cached,
-      ];
+    var sliver = _gridSliver;
+    if (sliver == null ||
+        !identical(_gridItems, state.items) ||
+        _gridTabIndex != state.tabIndex ||
+        _gridWidth != gridWidth ||
+        _gridTitleScale != titleScale ||
+        _gridMetaScale != metaScale) {
+      _gridItems = state.items;
+      _gridTabIndex = state.tabIndex;
+      _gridWidth = gridWidth;
+      _gridTitleScale = titleScale;
+      _gridMetaScale = metaScale;
+      sliver = _gridSliver = _gridBody(entries, gridWidth);
     }
-    _gridItems = state.items;
-    _gridTabIndex = state.tabIndex;
-    _gridWidth = gridWidth;
-    _gridTitleScale = titleScale;
-    _gridMetaScale = metaScale;
-    final sliver = _gridBody(entries, gridWidth);
     return [
       SliverToBoxAdapter(
         child: HomeSectionLabel(
@@ -589,7 +585,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           title: _gridTitle(state),
         ),
       ),
-      _gridSliver = sliver,
+      sliver,
     ];
   }
 
