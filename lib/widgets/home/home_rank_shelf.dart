@@ -38,6 +38,8 @@ class _ShelfGeometry {
     required this.base,
     required this.anchor,
     required this.height,
+    required this.scale,
+    required this.flatHeight,
   });
 
   final double width;
@@ -46,9 +48,13 @@ class _ShelfGeometry {
   final double cover;
   final double bodyHeight;
   final double height;
+  final double scale;
+  final double flatHeight;
 
   double get flatCover => (width * .29).clamp(96.0, 118.0);
-  double get flatHeight => math.max(240, bodyHeight + 48);
+  // Preserve book proportions in paint units; scrolling uses screen units.
+  double get paintWidth => width / scale;
+  double get paintPitch => pitch / scale;
 
   /// 未被抽出时书脊的顶边 y。
   final double base;
@@ -56,21 +62,34 @@ class _ShelfGeometry {
   /// 未抽出书脊的锚点；当前书抽出后，完整投影恰好居中。
   final double anchor;
 
-  factory _ShelfGeometry.of(double width) {
+  factory _ShelfGeometry.of(
+    double width, {
+    double maxHeight = double.infinity,
+    TextScaler textScaler = TextScaler.noScaling,
+  }) {
     width = math.min(width, _shelfMaxWidth);
     final spine = (width * 0.043).clamp(14.0, 18.0);
     final cover = (width * 0.32).clamp(100.0, 128.0);
     final bodyHeight = (cover - 20) * 166 / 118 + 54;
     final base = cover * 0.30 + bodyHeight * 0.60 + 12;
+    final naturalHeight = base + bodyHeight + 60;
+    final height = math.min(naturalHeight, math.max(200.0, maxHeight));
+    final scale = height / naturalHeight;
+    final flatCover = (width * .29).clamp(96.0, 118.0);
     return _ShelfGeometry(
       width: width,
       spine: spine,
-      pitch: spine + 11,
+      pitch: (spine + 11) * scale,
       cover: cover,
       bodyHeight: bodyHeight,
       base: base,
-      anchor: (width - spine - cover * 0.66) / 2 + cover * 0.84 * 0.66,
-      height: base + bodyHeight + 60,
+      anchor: (width / scale - spine - cover * 0.66) / 2 + cover * 0.84 * 0.66,
+      height: height,
+      scale: scale,
+      flatHeight: math.max(
+        flatCover * 1.4 + textScaler.scale(8) * 1.35 + 22,
+        math.min(math.max(240.0, bodyHeight + 48), height),
+      ),
     );
   }
 
@@ -82,10 +101,10 @@ class _ShelfGeometry {
       math.max(width, (count - 1) * pitch + width);
 
   (int, int) visibleRange(double focus, int count) => (
-    math.max(0, (focus - (anchor + spine + depthX) / pitch).floor()),
+    math.max(0, (focus - (anchor + spine + depthX) / paintPitch).floor()),
     math.min(
       count - 1,
-      (focus + (width - anchor + cover * 0.84 * 0.66) / pitch).ceil(),
+      (focus + (paintWidth - anchor + cover * 0.84 * 0.66) / paintPitch).ceil(),
     ),
   );
 
@@ -116,7 +135,7 @@ _Pose _poseAt(int index, double focus, _ShelfGeometry g) {
   final lift = weight * weight * (3 - 2 * weight);
   return _Pose(
     weight,
-    g.anchor + d * g.pitch - pull * 0.66,
+    g.anchor + d * g.paintPitch - pull * 0.66,
     g.base +
         rail * 2.5 +
         rail * rail * 0.45 +
@@ -153,8 +172,28 @@ class HomeRankShelf extends StatefulWidget {
   /// 必要每处再重新试探。
   static bool degraded = false;
 
+  static _ShelfGeometry _geometryFor(BuildContext context, double width) {
+    final media = MediaQuery.of(context);
+    final viewport = Scrollable.maybeOf(context, axis: Axis.vertical)?.position;
+    final viewportHeight = viewport != null && viewport.hasViewportDimension
+        ? viewport.viewportDimension
+        : media.size.height - media.padding.top;
+    // Reserve a quarter of the feed for its headings, plus the dock and the
+    // unscaled controls. Keep a readable rail on short or large-text screens.
+    final available =
+        (viewportHeight - media.padding.bottom) * .75 -
+        _InfoRow.heightFor(media.textScaler) -
+        _Pager.heightFor(media.textScaler) -
+        8;
+    return _ShelfGeometry.of(
+      width,
+      maxHeight: available,
+      textScaler: media.textScaler,
+    );
+  }
+
   static double loadingHeight(BuildContext context, double width) {
-    final geometry = _ShelfGeometry.of(width);
+    final geometry = _geometryFor(context, width);
     final scaler = MediaQuery.textScalerOf(context);
     return (degraded ? geometry.flatHeight : geometry.height) +
         _InfoRow.heightFor(scaler) +
@@ -414,8 +453,12 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
         constraints: const BoxConstraints(maxWidth: _shelfMaxWidth),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final geometry = _ShelfGeometry.of(constraints.maxWidth);
-            if (_geometry?.width != geometry.width) {
+            final geometry = HomeRankShelf._geometryFor(
+              context,
+              constraints.maxWidth,
+            );
+            if (_geometry?.width != geometry.width ||
+                _geometry?.pitch != geometry.pitch) {
               _scrollAlignmentPending = true;
             }
             _geometry = geometry;
@@ -478,8 +521,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
                                 physics: widget.stepped
                                     ? const ClampingScrollPhysics()
                                     : HomeRankScrollPhysics(
-                                        pitchFor: (width) =>
-                                            _ShelfGeometry.of(width).pitch,
+                                        pitchFor: (_) => _geometry!.pitch,
                                       ),
                                 child: SizedBox(
                                   width: geometry.contentWidth(books.length),
@@ -607,6 +649,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
 
   void _handleTap(Offset position, _ShelfGeometry geometry) {
     if (!_scroll.hasClients || _scrollAlignmentPending) return;
+    position = position / geometry.scale;
     final raw = _scroll.offset / geometry.pitch;
     final focus = widget.stepped ? raw.roundToDouble() : raw;
     final (first, last) = geometry.visibleRange(focus, widget.books.length);
@@ -1004,11 +1047,14 @@ class _ShelfPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     _paintGrid(canvas, size);
+    canvas.save();
+    canvas.scale(geometry.scale);
     final focus = _focus();
     final (first, last) = geometry.visibleRange(focus, books.length);
     for (var i = first; i <= last; i++) {
       _paintVolume(canvas, i, focus);
     }
+    canvas.restore();
   }
 
   double _focus() {
