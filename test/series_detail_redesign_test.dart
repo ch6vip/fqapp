@@ -26,16 +26,16 @@ void main() {
     final scaffold = tester.widget<Scaffold>(
       find.byKey(const ValueKey('series-detail-page')),
     );
-    expect(scaffold.backgroundColor, const Color(0xFFF6F6F6));
+    expect(scaffold.backgroundColor, const Color(0xFFF4F3EF));
     // 色带顶部 = 剧集主色 #F5E6C8 按 10% 混到画布，然后淡出到画布。
     final bandTop = Color.alphaBlend(
       const Color(0xFFF5E6C8).withValues(alpha: 0.10),
-      const Color(0xFFF6F6F6),
+      const Color(0xFFF4F3EF),
     );
     final gradientBox = tester.widget<DecoratedBox>(twoColorGradientFinder());
     final gradient =
         (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
-    expect(gradient.colors, [bandTop, const Color(0xFFF6F6F6)]);
+    expect(gradient.colors, [bandTop, const Color(0xFFF4F3EF)]);
     // 播放钮 = 品牌强调色。
     final button = tester.widget<FilledButton>(
       find.byKey(const ValueKey('series-detail-play-button')),
@@ -53,7 +53,7 @@ void main() {
       final scaffold = tester.widget<Scaffold>(
         find.byKey(const ValueKey('series-detail-page')),
       );
-      expect(scaffold.backgroundColor, const Color(0xFFF6F6F6));
+      expect(scaffold.backgroundColor, const Color(0xFFF4F3EF));
       expect(twoColorGradientFinder(), findsNothing);
     }
   });
@@ -82,17 +82,17 @@ void main() {
     final scaffold = tester.widget<Scaffold>(
       find.byKey(const ValueKey('series-detail-page')),
     );
-    expect(scaffold.backgroundColor, const Color(0xFF151517));
+    expect(scaffold.backgroundColor, const Color(0xFF191919));
     final bandTop = Color.alphaBlend(
       const Color(0xFF302010).withValues(alpha: 0.16),
-      const Color(0xFF151517),
+      const Color(0xFF191919),
     );
     // 仍是暗色，白字可读。
     expect(bandTop.computeLuminance(), lessThan(0.1));
     final gradientBox = tester.widget<DecoratedBox>(twoColorGradientFinder());
     final gradient =
         (gradientBox.decoration as BoxDecoration).gradient! as LinearGradient;
-    expect(gradient.colors, [bandTop, const Color(0xFF151517)]);
+    expect(gradient.colors, [bandTop, const Color(0xFF191919)]);
     // 版式稿深色的当前集：底 #3A2420、文字调亮到 #FF7A63。
     final currentTile = tester.widget<Material>(
       find.descendant(

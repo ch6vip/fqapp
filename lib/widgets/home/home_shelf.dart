@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'home_archive.dart';
 import 'home_design.dart';
 
 // The home shelf: one card language, one gutter, one rhythm.
@@ -50,14 +51,15 @@ const int homeShelfWideMinColumns = 6;
 
 /// Columns for the book grid.
 ///
-/// 手机 3 列（≥360dp 宽时）是「以书为主」的取舍：封面仍是主角，一屏能
-/// 扫到六本书；320dp 的小屏和大字号会退到 2 列，否则 15sp 的标题在 88dp
-/// 宽里只剩四五个字。平板沿用断点表；桌面（≥900dp）按 [homeShelfCardTarget]
-/// 反推并钳在 6–9 列，宽度增长最终体现在卡片变大上。
+/// 手机固定 3 列：[width] 是内容宽（屏宽减两侧 16dp 栏距），360dp 手机
+/// 的内容宽是 328dp，仍按 3 列排——mockup 的三列网格就是手机基准。只有
+/// 内容宽低于 324dp（320dp 小屏或大字号）才退 2 列，否则 14.5sp 的书名
+/// 在 88dp 的格子里只剩四五个字。平板沿用断点表；桌面（≥900dp）按
+/// [homeShelfCardTarget] 反推并钳在 6–9 列，宽度增长最终体现在卡片变大上。
 int homeShelfColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   if (scaler.scale(15) > 22 && width < 640) return 2;
-  if (width < 360) return 2;
+  if (width < 324) return 2;
   if (width < 640) return 3;
   if (width < 900) return 4;
   // 大字号把目标卡宽一起放大：190dp 里塞 2.4 倍的字会挤成竖条。
@@ -85,7 +87,11 @@ SliverGridDelegate homeShelfDelegate(BuildContext context, double width) {
   );
 }
 
-/// Cover (5:7) + 8dp + two title lines + 4dp + one meta line.
+/// 网格卡片的字号。卡片本身和 [homeCardExtent] 必须一起改，否则书名会被
+/// 网格裁掉一行。
+///
+/// Cover (5:7) + 8dp + two title lines + 5dp + one code line + 2dp +
+/// one meta line.
 double homeCardExtent(
   BuildContext context,
   double cardWidth,
@@ -93,9 +99,11 @@ double homeCardExtent(
 ) =>
     cardWidth * 1.4 +
     8 +
-    scaler.scale(15) * 1.35 * 2 +
-    4 +
-    scaler.scale(11) * 1.3 +
+    scaler.scale(homeCardTitleSize) * 1.35 * 2 +
+    5 +
+    scaler.scale(homeCardCodeSize) * 1.35 +
+    2 +
+    scaler.scale(homeCardMetaSize) * 1.3 +
     2;
 
 /// A section title on the shelf: 19sp, tight tracking, no accent bar, no icon.
