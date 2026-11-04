@@ -4,7 +4,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
 
-/// 书城顶栏：店名、档案编号、右端两个圆形入口（搜索 / 分类）。
+/// 书城顶栏：店名、档案编号、右端两个轻量入口（搜索 / 分类）。
 ///
 /// 2026-11 首页重做后不再有搜索胶囊和热搜轮换：顶栏只留身份和两个动作，
 /// 热搜词仍在搜索页里。高度固定，不随内容滚动。
@@ -15,7 +15,7 @@ class HomeMasthead extends StatelessWidget {
   /// 店名下面的档案编号，纯装饰性的识别行。
   static const String brandCode = 'SHIJINPU / STORY ARCHIVE';
 
-  static const double actionSize = 40;
+  static const double actionSize = 36;
 
   final VoidCallback onSearch;
 
@@ -40,20 +40,20 @@ class HomeMasthead extends StatelessWidget {
                   brand,
                   maxLines: 1,
                   style: TextStyle(
-                    fontSize: 23,
+                    fontSize: 20,
                     height: 1.18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.7,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
                     color: palette.ink,
                   ),
                 ),
                 const SizedBox(height: 3),
-                const HomeCode(brandCode),
+                const HomeCode(brandCode, size: 8),
               ],
             ),
           ),
           const SizedBox(width: 12),
-          _RoundAction(
+          _HeaderAction(
             key: const Key('home_search_button'),
             icon: LucideIcons.search,
             label: '搜索',
@@ -62,7 +62,7 @@ class HomeMasthead extends StatelessWidget {
           ),
           if (onCategory != null) ...[
             const SizedBox(width: 8),
-            _RoundAction(
+            _HeaderAction(
               key: const Key('home_category_button'),
               icon: LucideIcons.layout_grid,
               label: '分类',
@@ -76,9 +76,8 @@ class HomeMasthead extends StatelessWidget {
   }
 }
 
-/// 40dp 的圆形入口：奶白底，浅色下带一层很薄的投影；墨水屏改描边。
-class _RoundAction extends StatelessWidget {
-  const _RoundAction({
+class _HeaderAction extends StatelessWidget {
+  const _HeaderAction({
     super.key,
     required this.icon,
     required this.label,
@@ -93,35 +92,17 @@ class _RoundAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return HomePressable(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(HomeMasthead.actionSize / 2),
-      semanticLabel: label,
-      child: Container(
-        width: HomeMasthead.actionSize,
-        height: HomeMasthead.actionSize,
-        decoration: BoxDecoration(
-          color: palette.surface,
-          shape: BoxShape.circle,
-          border: palette.eink
-              ? Border.all(color: palette.ink, width: 1)
-              : null,
-          boxShadow: palette.eink || palette.oled
-              ? null
-              : const [
-                  BoxShadow(
-                    color: Color(0x0D000000),
-                    blurRadius: 2,
-                    offset: Offset(0, 1),
-                  ),
-                  BoxShadow(
-                    color: Color(0x0A000000),
-                    blurRadius: 14,
-                    offset: Offset(0, 4),
-                  ),
-                ],
+    return Tooltip(
+      message: label,
+      excludeFromSemantics: true,
+      child: HomePressable(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(HomeMasthead.actionSize / 2),
+        semanticLabel: label,
+        child: SizedBox.square(
+          dimension: HomeMasthead.actionSize,
+          child: Icon(icon, size: 19, color: palette.ink),
         ),
-        child: Icon(icon, size: 19, color: palette.ink),
       ),
     );
   }

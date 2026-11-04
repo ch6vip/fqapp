@@ -124,7 +124,7 @@ class HomeSectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(gutter, 26, gutter, 12),
+      padding: EdgeInsets.fromLTRB(gutter, 16, gutter, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -137,7 +137,7 @@ class HomeSectionLabel extends StatelessWidget {
               Container(width: 4, height: 4, color: palette.mark),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -147,9 +147,9 @@ class HomeSectionLabel extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 20,
+                    fontSize: 18,
                     height: 1.25,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: -0.4,
                     color: palette.ink,
                   ),
@@ -178,9 +178,9 @@ class HomeSectionAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return GestureDetector(
+    return HomePressable(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
+      borderRadius: BorderRadius.circular(homePanelRadius),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
         child: Row(

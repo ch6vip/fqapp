@@ -64,7 +64,7 @@ class HomePalette {
   /// 书架背景的方格纸。浅色是极淡的黑格，深色是极淡的白格，墨水屏不画。
   Color get grid => eink
       ? Colors.transparent
-      : (dark ? const Color(0x0AFFFFFF) : const Color(0x0A000000));
+      : (dark ? const Color(0x06FFFFFF) : const Color(0x06000000));
 
   /// 细线之上的定位方块：分区标签、选中态都用它。
   Color get mark => eink ? Colors.black : ink;
@@ -144,7 +144,7 @@ class _HomePressableState extends State<HomePressable>
   late final _scale = AnimationController.unbounded(vsync: this, value: 1);
 
   void _press(bool pressed) {
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (einkModeNotifier.value || MediaQuery.disableAnimationsOf(context)) {
       _scale.stop();
       _scale.value = 1;
       return;

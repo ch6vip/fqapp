@@ -175,15 +175,20 @@ class _HomeRankCellState extends State<HomeRankCell> {
           _BoardNames(names: names, selectedIndex: _index, onSelect: _select),
         const SizedBox(height: 8),
         if (_loading)
-          SizedBox(
-            height: homeRankShelfHeight,
-            child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: HomePalette.accent,
+          LayoutBuilder(
+            builder: (context, constraints) => SizedBox(
+              height: HomeRankShelf.loadingHeight(
+                context,
+                constraints.maxWidth,
+              ),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: palette.eink ? palette.ink : HomePalette.accent,
+                  ),
                 ),
               ),
             ),
@@ -195,8 +200,7 @@ class _HomeRankCellState extends State<HomeRankCell> {
   }
 }
 
-/// 榜名：28dp 胶囊，选中项反色。旧版的字号跳变加下划线太吵，这里只留
-/// 描边与反色。
+/// 榜名保留全部真实选项，选中态用浅底与字重区分，避免抢走书架焦点。
 class _BoardNames extends StatelessWidget {
   const _BoardNames({
     required this.names,
@@ -213,39 +217,46 @@ class _BoardNames extends StatelessWidget {
     final palette = HomePalette.of(context);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(homeGutter, 12, homeGutter, 0),
+      padding: const EdgeInsets.symmetric(horizontal: homeGutter),
       child: Row(
         children: [
           for (var index = 0; index < names.length; index++) ...[
             if (index > 0) const SizedBox(width: 6),
-            GestureDetector(
-              onTap: () => onSelect(index),
-              behavior: HitTestBehavior.opaque,
-              child: Container(
-                height: 28,
-                padding: const EdgeInsets.symmetric(horizontal: 11),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: index == selectedIndex
-                      ? palette.mark
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: index == selectedIndex ? palette.mark : palette.line,
-                  ),
-                ),
-                child: Text(
-                  names[index],
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.1,
-                    fontWeight: index == selectedIndex
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                    color: index == selectedIndex
-                        ? palette.canvas
-                        : palette.muted,
+            Semantics(
+              selected: index == selectedIndex,
+              child: HomePressable(
+                onTap: () => onSelect(index),
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 28),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 11,
+                      vertical: 6,
+                    ),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: index == selectedIndex
+                          ? (palette.eink ? palette.mark : palette.soft)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: palette.line),
+                    ),
+                    child: Text(
+                      names[index],
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.1,
+                        fontWeight: index == selectedIndex
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                        color: index == selectedIndex
+                            ? (palette.eink ? palette.canvas : palette.ink)
+                            : palette.muted,
+                      ),
+                    ),
                   ),
                 ),
               ),
