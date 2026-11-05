@@ -655,7 +655,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   void _openSearch() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SearchPage()),
+      SearchRoute(builder: (_) => const SearchPage()),
     );
   }
 
