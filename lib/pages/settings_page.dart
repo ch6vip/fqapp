@@ -174,10 +174,7 @@ class SettingsPage extends StatelessWidget {
       // The desktop body keeps its two-pane workflow; the archive shell only
       // supplies the shared header and background.
       return WenkuPage(
-        header: const Align(
-          alignment: Alignment.centerLeft,
-          child: ArchiveMasthead(title: '设置', code: '04 / SYSTEM PROFILE'),
-        ),
+        header: _header(context),
         child: Padding(
           padding: EdgeInsets.only(
             top:
@@ -189,10 +186,7 @@ class SettingsPage extends StatelessWidget {
     }
 
     return WenkuPage(
-      header: const Align(
-        alignment: Alignment.centerLeft,
-        child: ArchiveMasthead(title: '设置', code: '04 / SYSTEM PROFILE'),
-      ),
+      header: _header(context),
       child: Align(
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
@@ -215,6 +209,28 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// Settings is opened as a route (the “我的” entry and the Windows rail),
+  /// so the upstream tab-style [ArchiveMasthead] needs a way back. The
+  /// masthead stays untouched; the back button only appears when this page
+  /// actually sits on top of another route.
+  static Widget _header(BuildContext context) {
+    const masthead = ArchiveMasthead(title: '设置', code: '04 / SYSTEM PROFILE');
+    if (!Navigator.of(context).canPop()) {
+      return const Align(alignment: Alignment.centerLeft, child: masthead);
+    }
+    return Row(
+      children: [
+        GlassIconButton(
+          icon: CupertinoIcons.back,
+          label: '返回',
+          onPressed: () => Navigator.maybePop(context),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(child: masthead),
+      ],
     );
   }
 
@@ -350,6 +366,8 @@ class SettingsPage extends StatelessWidget {
         icon: CupertinoIcons.rectangle_split_3x1,
         label: '播放页布局',
         value: value,
+        // 行内保留短标签（「自动分屏」），弹层里仍是完整说明性标签。
+        valueLabel: value.shortLabel,
         options: {for (final mode in PlayerLayoutMode.values) mode: mode.label},
         reduceMotion: MediaQuery.disableAnimationsOf(context),
         onChanged: (mode) => _setPlayerLayout(context, mode),
@@ -395,6 +413,8 @@ class SettingsPage extends StatelessWidget {
         title: '切后台悬浮窗播放',
         description: '切到后台或锁屏时用悬浮小窗继续播放，需要悬浮窗权限',
         value: value,
+        // 系统授权页期间不能先把开关画成「开」；授权回来后才跟随偏好翻转。
+        optimistic: false,
         onChanged: (enabled) => _setFloatingWindow(context, enabled),
       ),
     ),

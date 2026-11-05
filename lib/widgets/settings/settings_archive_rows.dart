@@ -60,6 +60,7 @@ class SettingsToggleRow extends StatelessWidget {
     required this.description,
     required this.value,
     required this.onChanged,
+    this.optimistic = true,
   });
 
   final IconData icon;
@@ -67,6 +68,10 @@ class SettingsToggleRow extends StatelessWidget {
   final String description;
   final bool value;
   final FutureOr<void> Function(bool)? onChanged;
+
+  /// Pass false when [onChanged] may ask for confirmation or a system
+  /// permission: the switch must keep the persisted value until it commits.
+  final bool optimistic;
 
   @override
   Widget build(BuildContext context) {
@@ -87,13 +92,12 @@ class SettingsToggleRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              Semantics(
-                label: title,
-                child: SettingsGlassControls.toggle(
-                  context,
-                  value: value,
-                  onChanged: onChanged,
-                ),
+              SettingsGlassControls.toggle(
+                context,
+                value: value,
+                optimistic: optimistic,
+                semanticLabel: title,
+                onChanged: onChanged,
               ),
             ],
           ),
@@ -161,13 +165,11 @@ class SettingsOptionRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Semantics(
-              label: title,
-              child: SettingsGlassControls.toggle(
-                context,
-                value: value,
-                onChanged: onChanged,
-              ),
+            SettingsGlassControls.toggle(
+              context,
+              value: value,
+              semanticLabel: title,
+              onChanged: onChanged,
             ),
           ],
         ),

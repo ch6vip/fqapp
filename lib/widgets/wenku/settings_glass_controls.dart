@@ -19,6 +19,10 @@
 //   exactly as the upstream call sites do.
 // - `liquid_glass_easy` is the vendored third_party path package fqapp already
 //   depends on, so the package API is used unchanged.
+// - fqapp-only knobs on the adapter: `optimistic` lets confirmation /
+//   permission flows keep the persisted value until the callback commits, and
+//   `semanticLabel` restores the accessible label the previous SettingsSwitch
+//   carried.
 
 import 'dart:async';
 
@@ -106,10 +110,11 @@ abstract final class SettingsGlassControls {
     required bool value,
     required FutureOr<void> Function(bool)? onChanged,
     bool haptics = true,
+    bool optimistic = true,
+    String? semanticLabel,
   }) {
     final scheme = Theme.of(context).colorScheme;
     final eink = WenkuTheme.isEinkOf(context);
-    final enabled = onChanged != null;
     final Color active;
     final Color inactive;
     final Color thumb;
@@ -124,14 +129,19 @@ abstract final class SettingsGlassControls {
       inactive = _track(context);
       thumb = _thumb(context);
     }
+    // The disabled dimming stays inside AppGlassSwitch, exactly as upstream
+    // `AppControls.toggle` -> `AppGlassSwitch`: pre-dimming here would apply
+    // the alpha twice.
     return AppGlassSwitch(
       key: key,
       value: value,
       onChanged: onChanged,
       haptics: haptics,
-      activeColor: enabled ? active : active.withValues(alpha: .4),
-      inactiveColor: enabled ? inactive : inactive.withValues(alpha: .5),
-      thumbColor: enabled ? thumb : thumb.withValues(alpha: .55),
+      optimistic: optimistic,
+      semanticLabel: semanticLabel,
+      activeColor: active,
+      inactiveColor: inactive,
+      thumbColor: thumb,
       style: _material(context),
       reduceMotion: MediaQuery.disableAnimationsOf(context),
     );
@@ -153,10 +163,11 @@ abstract final class SettingsGlassControls {
   }) {
     final scheme = Theme.of(context).colorScheme;
     final eink = WenkuTheme.isEinkOf(context);
-    final enabled = onChanged != null;
     final active = eink ? scheme.onSurface : _accent(context);
     final inactive = eink ? scheme.outlineVariant : _track(context);
     final thumb = eink ? scheme.surface : _thumb(context);
+    // Disabled dimming belongs to AppGlassSlider, as in upstream
+    // `AppControls.slider`; dimming the inputs here would double it.
     return AppGlassSlider(
       key: key,
       value: value,
@@ -168,9 +179,9 @@ abstract final class SettingsGlassControls {
       onChanged: onChanged,
       onChangeStart: onChangeStart,
       onChangeEnd: onChangeEnd,
-      activeColor: enabled ? active : active.withValues(alpha: .4),
+      activeColor: active,
       inactiveColor: inactive,
-      thumbColor: enabled ? thumb : thumb.withValues(alpha: .55),
+      thumbColor: thumb,
       style: _material(context),
       reduceMotion: MediaQuery.disableAnimationsOf(context),
     );
@@ -188,8 +199,16 @@ class AppGlassSwitch extends StatefulWidget {
     required this.style,
     required this.reduceMotion,
     this.haptics = true,
+    this.optimistic = true,
+    this.semanticLabel,
   });
   final bool value, reduceMotion, haptics;
+
+  /// Whether the thumb may move before an asynchronous [onChanged] settles.
+  /// Confirmation / permission flows pass false so the control keeps showing
+  /// the persisted value until the callback actually commits it.
+  final bool optimistic;
+  final String? semanticLabel;
   final FutureOr<void> Function(bool)? onChanged;
   final Color activeColor, inactiveColor, thumbColor;
   final easy.LiquidGlassStyle style;
@@ -206,7 +225,9 @@ class _AppGlassSwitchState extends State<AppGlassSwitch> {
     if (action == null || value == _value) return;
     if (widget.haptics) AppHaptics.play(context, HapticCue.selection);
     final request = ++_request;
-    setState(() => _pending = value);
+    // Non-optimistic controls keep the controlled value on screen until the
+    // callback commits (or rejects) the change.
+    if (widget.optimistic) setState(() => _pending = value);
     try {
       await action(value);
     } finally {
@@ -226,6 +247,7 @@ class _AppGlassSwitchState extends State<AppGlassSwitch> {
   Widget build(BuildContext context) {
     final enabled = widget.onChanged != null;
     return Semantics(
+      label: widget.semanticLabel,
       toggled: _value,
       enabled: enabled,
       onTap: enabled ? () => _change(!_value) : null,
