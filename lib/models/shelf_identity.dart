@@ -64,11 +64,8 @@ abstract final class ShelfIdentity {
         : '$normalized/$kind:$contentId';
   }
 
-  static String contentKeyOf(MediaItem item) => contentKeyFor(
-    item.kind,
-    item.seriesId ?? item.id,
-    source: item.source,
-  );
+  static String contentKeyOf(MediaItem item) =>
+      contentKeyFor(item.kind, item.seriesId ?? item.id, source: item.source);
 
   /// `shelf_v1:` + [contentKeyFor].
   static String storageKeyFor(

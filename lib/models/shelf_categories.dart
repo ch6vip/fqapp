@@ -26,9 +26,7 @@ final RegExp _groupPattern = RegExp(r'^g[0-9a-z]+-[0-9a-z]+$');
 /// whitespace, and map the placeholder used by imported books to 未知作者.
 String shelfAuthorName(String value) {
   final name = value.trim().replaceAll(_whitespace, ' ');
-  return name.isEmpty || name == '本地书籍'
-      ? ShelfCategory.unknownAuthor
-      : name;
+  return name.isEmpty || name == '本地书籍' ? ShelfCategory.unknownAuthor : name;
 }
 
 /// `_author:<percent-encoded name>`; the encoding survives any author string.
@@ -45,6 +43,10 @@ String? shelfCategoryAuthor(String category) {
     );
     return name.isEmpty ? null : name;
   } on FormatException {
+    return null;
+  } on ArgumentError {
+    // `Uri.decodeComponent` reports malformed escapes as ArgumentError on
+    // some SDKs and FormatException on others; both mean "not a category".
     return null;
   }
 }
