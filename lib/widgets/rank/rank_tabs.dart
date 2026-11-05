@@ -26,7 +26,10 @@ class RankBoardTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return SizedBox(
-      height: 44,
+      height: (MediaQuery.textScalerOf(context).scale(13) * 1.2 + 24).clamp(
+        48.0,
+        double.infinity,
+      ),
       child: ListView.separated(
         key: const Key('rank_tabs'),
         scrollDirection: Axis.horizontal,
@@ -50,7 +53,7 @@ class RankBoardTabs extends StatelessWidget {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(
                     minWidth: 48,
-                    minHeight: 44,
+                    minHeight: 48,
                   ),
                   child: Center(
                     widthFactor: 1,

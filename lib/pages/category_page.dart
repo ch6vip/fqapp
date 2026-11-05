@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -6,28 +8,14 @@ import '../services/api_client.dart';
 import '../services/desktop_platform.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/category/category_dim_rail.dart';
+import '../widgets/home/home_archive.dart';
+import '../widgets/home/home_back_button.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
 import 'search_page.dart';
 
-/// 官方分类页（`BookCategoryActivity`，7.0.9.32 实测形态）：
-///
-/// * 顶部横向频道 tab（男生/女生/有声书/出版/短剧/漫画；选中黑加粗，未选灰
-///   #8C8C8C），左端返回、右端搜索；
-/// * 左侧 88dp 维度栏（热门标签/主题/角色/情节），项高 50dp、14sp 居中，
-///   **选中橙字、未选黑字**（真机像素取证，无指示条、无底色变化）；
-/// * 右侧 12dp 圆角内容区：**所有分组纵向堆叠**（官方
-///   `TabPageRightContent` 遍历 cells，每组一个组头 + `chunked(3)` 网格行；
-///   老身份只回平铺数据，这里按「热门标签=全量 + 其余 dim 各一组」重建）。
-///   组头 12sp 灰 #969696、行高 24dp，>30 的组在组头右端出「展开/收起」；
-///   chip 为**等宽网格**（官方每颗 `weight(1f)`，尾行补 Spacer）：定高
-///   30dp、圆角 6dp、底 #ECECEC、上6下4行距、7dp 列距、14sp 黑字居中，
-///   热门项左侧 16dp 近黑火苗。官方在手机上固定三列；桌面窗口宽，这里按
-///   [_chipTargetWidth] 加列（手机仍夹在三列），否则 chip 会被拉成横条。
-/// * 左栏点击 → 滚动定位到对应分组（官方 `TabPageScrollEffect`），滚动
-///   反向同步左栏高亮（官方 `c1` 按 firstVisibleItem 反查）。
-///
-/// 数据一次 GET 一个频道（`category_tab` 不同瓦片不同）。
+/// Channel catalogue with a synchronized dimension rail and grouped tags.
+/// Layout geometry is shared with scroll offsets, including text scaling.
 class CategoryPage extends StatefulWidget {
   const CategoryPage({super.key, this.loader});
 
@@ -50,23 +38,16 @@ class _Section {
 /// 官方收起态每组只显示前 30 颗（`CollectionsKt.take(_, 30)`）。
 const _collapsedCount = 30;
 
-/// 桌面下每颗 chip 的目标宽度。
-///
-/// 官方在手机上把内容区 `chunked(3)` 三等分，375dp 屏上每颗约 80dp。桌面
-/// 窗口宽得多，若仍死守三列，1280dp 下每颗会被拉到 350dp——一排三条 12:1
-/// 的横条，中间大片空白。这里改成「内容区够宽就加列」：手机上仍夹在官方
-/// 那 3 列（255 / 170 = 1.5），1280dp 下是 6 列（每颗约 187dp）。
-const double _chipTargetWidth = 170;
+int _chipColumnsFor(double width, TextScaler scaler) =>
+    (width / ((width < 600 ? 70 : 170) * scaler.scale(14) / 14)).floor().clamp(
+      1,
+      10,
+    );
 
-/// 列数夹取区间：下限固定为官方的三列，上限防超宽屏（5K 全屏 2483dp）
-/// 排出十几列后每颗又变得过窄。
-const int _chipMinColumns = 3;
-const int _chipMaxColumns = 10;
-
-/// 按内容区可用宽度（已扣掉左右 padding）算列数。
-int _chipColumnsFor(double contentWidth) => (contentWidth / _chipTargetWidth)
-    .floor()
-    .clamp(_chipMinColumns, _chipMaxColumns);
+double _headerHeight(TextScaler scaler) =>
+    math.max(44, scaler.scale(14) * 1.4 + 16);
+double _chipHeight(TextScaler scaler) =>
+    math.max(44, scaler.scale(14) * 1.35 + 16);
 
 class _CategoryPageState extends State<CategoryPage> {
   CategoryFront? _front;
@@ -89,7 +70,8 @@ class _CategoryPageState extends State<CategoryPage> {
   /// 滚动定位用的是「组高前缀和」，而行数按列数算，两者必须用同一个值；
   /// 列数只在布局阶段变化，所以这里存成普通字段而不是 `setState`——它不
   /// 影响已经渲染的内容，只在下一帧的 `_sectionHeight` 里被读到。
-  int _columns = _chipMinColumns;
+  int _columns = 3;
+  TextScaler _textScaler = TextScaler.noScaling;
 
   @override
   void initState() {
@@ -155,8 +137,7 @@ class _CategoryPageState extends State<CategoryPage> {
   }
 
   // —— 滚动 ↔ 左栏联动（官方 R0 前缀和定位 + c1 反查）——
-  // 所有行高都是定值：组头上距 16 + 组头 24 + 每网格行 40（上6+30+下4）；
-  // 行数按当前列数 [_columns] 算，与 `_SectionView` 的换行步长同源。
+  // Heights and column count must match the actual rendered section.
   double _sectionHeight(int index) {
     final section = _sections[index];
     final visible = _expanded.contains(index)
@@ -165,7 +146,9 @@ class _CategoryPageState extends State<CategoryPage> {
               ? _collapsedCount
               : section.tiles.length);
     final rows = (visible / _columns).ceil();
-    return 16 + 24 + rows * 40.0;
+    return 16 +
+        _headerHeight(_textScaler) +
+        rows * (_chipHeight(_textScaler) + 8);
   }
 
   double _sectionOffset(int index) {
@@ -192,6 +175,12 @@ class _CategoryPageState extends State<CategoryPage> {
       index,
     ).clamp(0.0, _scroll.position.maxScrollExtent).toDouble();
     _programmaticScroll = true;
+    if (HomePalette.of(context).eink ||
+        MediaQuery.disableAnimationsOf(context)) {
+      _scroll.jumpTo(target);
+      _programmaticScroll = false;
+      return;
+    }
     _scroll
         .animateTo(
           target,
@@ -244,9 +233,10 @@ class _CategoryPageState extends State<CategoryPage> {
               onSearch: _openSearch,
             ),
             if (_loading)
-              Padding(
-                padding: const EdgeInsets.only(top: 120),
-                child: CircularProgressIndicator(color: HomePalette.accent),
+              Expanded(
+                child: Center(
+                  child: CircularProgressIndicator(color: palette.ink),
+                ),
               )
             else if (_error != null)
               Expanded(
@@ -258,19 +248,21 @@ class _CategoryPageState extends State<CategoryPage> {
                     actionLabel: '重试',
                     actionIcon: LucideIcons.refresh_cw,
                     onAction: () => _load(),
+                    scrollable: true,
                   ),
                 ),
               )
             else if (front != null)
               Expanded(
-                // 列数按实际内容区宽度算：手机仍是官方三列，桌面按 170dp
-                // 一颗的目标宽度加列，免得 chip 被拉成细长横条。
+                // Wider text reduces columns; the rail uses the same geometry.
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final columns = _chipColumnsFor(
                       constraints.maxWidth - categoryDimRailWidth - 32,
+                      MediaQuery.textScalerOf(context),
                     );
                     _columns = columns;
+                    _textScaler = MediaQuery.textScalerOf(context);
                     return Row(
                       children: [
                         CategoryDimRail(
@@ -316,8 +308,14 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return SizedBox(
-      height: 48,
+    return Container(
+      height: math.max(
+        56,
+        MediaQuery.textScalerOf(context).scale(16) * 1.4 + 24,
+      ),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: palette.line)),
+      ),
       child: Row(
         children: [
           // 桌面壳层顶栏已经有「← 什锦铺」，这里再放一个返回键就是两个
@@ -325,15 +323,7 @@ class _TopBar extends StatelessWidget {
           if (isWindowsDesktop)
             const SizedBox(width: 16)
           else
-            IconButton(
-              key: const Key('category_back'),
-              icon: Icon(
-                LucideIcons.chevron_left,
-                size: 24,
-                color: palette.ink,
-              ),
-              onPressed: () => Navigator.maybePop(context),
-            ),
+            const HomeBackButton(key: Key('category_back'), size: 48),
           Expanded(
             child: tabs.isEmpty
                 ? const SizedBox.shrink()
@@ -345,23 +335,34 @@ class _TopBar extends StatelessWidget {
                     itemBuilder: (context, index) {
                       final tab = tabs[index];
                       final isSelected = int.tryParse(tab.value) == selected;
-                      return GestureDetector(
-                        key: ValueKey('category_tab_${tab.value}'),
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => onSelect(tab.value),
-                        child: Center(
-                          child: Text(
-                            tab.name,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: isSelected
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                              color: isSelected
-                                  ? palette.ink
-                                  : (palette.eink
-                                        ? palette.ink
-                                        : const Color(0xFF8C8C8C)),
+                      return Semantics(
+                        selected: isSelected,
+                        button: true,
+                        child: InkWell(
+                          key: ValueKey('category_tab_${tab.value}'),
+                          onTap: () => onSelect(tab.value),
+                          child: Container(
+                            alignment: Alignment.center,
+                            constraints: const BoxConstraints(minWidth: 48),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: isSelected
+                                      ? palette.ink
+                                      : Colors.transparent,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              tab.name,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: isSelected
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
+                                color: isSelected ? palette.ink : palette.muted,
+                              ),
                             ),
                           ),
                         ),
@@ -381,9 +382,7 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-/// 右侧内容区：官方是 12dp 圆角画布 + `contentPadding(横16, 底16)` 的
-/// LazyColumn，每组「组头 + chunked(3) 网格行」两个 item；此处一组一个
-/// item（组头 + Column(网格行)），行高全是定值，滚动定位用前缀和。
+/// Section heights mirror the prefix sum used by the dimension rail.
 class _SectionList extends StatelessWidget {
   const _SectionList({
     required this.state,
@@ -401,7 +400,7 @@ class _SectionList extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: palette.canvas,
-        borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+        border: Border(left: BorderSide(color: palette.line)),
       ),
       clipBehavior: Clip.antiAlias,
       child: ListView.builder(
@@ -468,8 +467,7 @@ class _SectionView extends StatelessWidget {
   }
 }
 
-/// 组头行：上距 16、行高 24；左端组名（12sp 灰），>30 的组右端挂
-/// 「展开/收起」（12sp + 12dp 箭头，官方 `CategoryLayoutKt` 766-786）。
+/// Compact catalogue heading; expansion keeps the same measured row height.
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({
     required this.keyIndex,
@@ -488,27 +486,40 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final gray = palette.dark || palette.eink
-        ? palette.muted
-        : const Color(0xFF969696);
     return Padding(
       padding: const EdgeInsets.only(top: 16),
       child: SizedBox(
-        height: 24,
+        height: _headerHeight(MediaQuery.textScalerOf(context)),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(title, style: TextStyle(fontSize: 12, color: gray)),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: palette.ink,
+                ),
+              ),
+            ),
             if (collapsible)
-              GestureDetector(
+              TextButton(
                 key: ValueKey('category_expand_toggle_$keyIndex'),
-                behavior: HitTestBehavior.opaque,
-                onTap: onToggle,
+                onPressed: onToggle,
+                style: TextButton.styleFrom(
+                  foregroundColor: palette.muted,
+                  minimumSize: const Size(44, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       expanded ? '收起' : '展开',
-                      style: TextStyle(fontSize: 12, color: gray),
+                      style: const TextStyle(fontSize: 12),
                     ),
                     const SizedBox(width: 2),
                     Icon(
@@ -516,7 +527,7 @@ class _SectionHeader extends StatelessWidget {
                           ? LucideIcons.chevron_up
                           : LucideIcons.chevron_down,
                       size: 12,
-                      color: gray,
+                      color: palette.muted,
                     ),
                   ],
                 ),
@@ -528,9 +539,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 一行 [columns] 颗等宽 chip（官方 `chunked(3)` + 每颗 `weight(1f)`，手机上
-/// 就是三列；桌面按宽度加列）。不足 [columns] 颗的尾行用同权 Spacer 补位，
-/// 保持前几颗不抢宽。列距 7dp。
+/// Equal-width cells; trailing empty cells preserve the last row's alignment.
 class _ChipRow extends StatelessWidget {
   const _ChipRow({
     required this.tiles,
@@ -562,9 +571,7 @@ class _ChipRow extends StatelessWidget {
   }
 }
 
-/// 一颗分类 chip：定宽（由 `_ChipRow` 的 Expanded 决定）、定高 30dp、
-/// 圆角 6dp、底 #ECECEC、上下边距 6/4；内容水平居中，热门项左侧 16dp
-/// 近黑火苗（真机像素取证：官方火苗非橙，与文字同色系）。
+/// Bordered tags use a full-height target and scale with their text.
 class _CategoryChip extends StatelessWidget {
   const _CategoryChip({required this.tile, required this.onTap});
 
@@ -575,20 +582,19 @@ class _CategoryChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: HomePressable(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(homePanelRadius),
         semanticLabel: '搜索${tile.name}分类',
         child: Container(
           key: ValueKey('category_tile_${tile.id}_${tile.name}'),
-          height: 30,
+          height: _chipHeight(MediaQuery.textScalerOf(context)),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
-            color: palette.eink
-                ? Colors.white
-                : (palette.dark ? palette.soft : const Color(0xFFECECEC)),
-            borderRadius: BorderRadius.circular(6),
-            border: palette.eink ? Border.all(color: palette.line) : null,
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(homePanelRadius),
+            border: Border.all(color: palette.line),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -597,9 +603,13 @@ class _CategoryChip extends StatelessWidget {
                 Icon(LucideIcons.flame, size: 16, color: palette.ink),
                 const SizedBox(width: 2),
               ],
-              Text(
-                tile.name,
-                style: TextStyle(fontSize: 14, color: palette.ink),
+              Flexible(
+                child: Text(
+                  tile.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, color: palette.ink),
+                ),
               ),
             ],
           ),

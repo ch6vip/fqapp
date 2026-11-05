@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../models/playlet_comment.dart';
@@ -26,8 +27,8 @@ import '../widgets/series_detail/series_detail_top_bar.dart';
 import 'detail_page.dart' show openBookDetail;
 import 'player_page.dart' show PlayerPage;
 
-/// 短剧详情：版式照 PR #200（`feat/series-detail-redesign`，提交 `2c3a3e3`）
-/// 定稿的设计稿右机——设计稿本身不在仓库里，版式规则以下面这段为准。
+/// Series details retain the existing content order and playback ownership,
+/// with archive headings and controls shared with discovery and book details.
 ///
 /// 自上而下：顶栏（只有返回）→ 头部 → 播放 / 收藏 → 选集 → 简介 →
 /// 剧评 → 原著小说。页面跟随应用主题（浅色 / 深色 / 墨水屏 / OLED）；
@@ -420,43 +421,57 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Scaffold(
-      key: const ValueKey('series-detail-page'),
-      backgroundColor: palette.canvas,
-      body: Stack(
-        children: [
-          Positioned.fill(child: _backdrop(palette)),
-          SafeArea(
-            child: Column(
-              children: [
-                SeriesDetailTopBar(
-                  onBack: () => Navigator.of(context).maybePop(),
-                ),
-                Expanded(
-                  child: CustomScrollView(
-                    key: const ValueKey('series-detail-content'),
-                    controller: _scroll,
-                    slivers: [
-                      SliverToBoxAdapter(child: _hero()),
-                      SliverToBoxAdapter(child: _episodeSection()),
-                      SliverToBoxAdapter(child: _introSection()),
-                      SliverToBoxAdapter(child: _reviewsSection()),
-                      if (_detail.originalBook != null)
-                        SliverToBoxAdapter(
-                          child: SeriesDetailBookSection(
-                            book: _detail.originalBook!,
-                            onOpen: () =>
-                                _openOriginalBook(_detail.originalBook!),
-                          ),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value:
+          (palette.dark
+                  ? SystemUiOverlayStyle.light
+                  : SystemUiOverlayStyle.dark)
+              .copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        key: const ValueKey('series-detail-page'),
+        backgroundColor: palette.canvas,
+        body: Stack(
+          children: [
+            Positioned.fill(child: _backdrop(palette)),
+            SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 840),
+                  child: Column(
+                    children: [
+                      SeriesDetailTopBar(
+                        onBack: () => Navigator.of(context).maybePop(),
+                      ),
+                      Expanded(
+                        child: CustomScrollView(
+                          key: const ValueKey('series-detail-content'),
+                          controller: _scroll,
+                          slivers: [
+                            SliverToBoxAdapter(child: _hero()),
+                            SliverToBoxAdapter(child: _episodeSection()),
+                            SliverToBoxAdapter(child: _introSection()),
+                            SliverToBoxAdapter(child: _reviewsSection()),
+                            if (_detail.originalBook != null)
+                              SliverToBoxAdapter(
+                                child: SeriesDetailBookSection(
+                                  book: _detail.originalBook!,
+                                  onOpen: () =>
+                                      _openOriginalBook(_detail.originalBook!),
+                                ),
+                              ),
+                            const SliverToBoxAdapter(
+                              child: SizedBox(height: 24),
+                            ),
+                          ],
                         ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                      ),
                     ],
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

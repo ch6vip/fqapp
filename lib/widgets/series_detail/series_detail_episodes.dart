@@ -6,14 +6,14 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../models/media_item.dart' show Chapter;
 import '../home/home_cell_blocks.dart' show HomeBlockMore;
 import '../home/home_design.dart';
+import '../home/home_archive.dart';
 import '../player/story_player_panel.dart' show episodeTileLabel;
 import 'series_detail_common.dart';
 import 'series_detail_theme.dart';
 
 /// 选集：紧贴播放钮下方，50 集一段、可倒序，6 列格子。
 ///
-/// 版式稿：区块头 15sp + 右端 12sp 状态；分段胶囊 12sp；格子高 36（34 + 上下 1 描边）、
-/// 圆角 8、间距 6；一段先给 24 格，下面居中的「展开 25–50 集」再放全部。
+/// A range initially shows 24 cells; controls scale without changing episode order.
 /// 目录失败只在本区块内联重试，播放钮保持自己的状态。
 class SeriesDetailEpisodes extends StatefulWidget {
   const SeriesDetailEpisodes({
@@ -93,7 +93,11 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SeriesSectionHeader(title: '选集', action: _headerAction(palette)),
+          SeriesSectionHeader(
+            code: 'EPISODES',
+            title: '选集',
+            action: _headerAction(palette),
+          ),
           widget.episodes.isEmpty
               ? _emptyBody(palette)
               : _catalogBody(palette, range, rangeCount),
@@ -202,23 +206,27 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     return order;
   }
 
-  Widget _expandLink(HomePalette palette, int start, int end) =>
-      GestureDetector(
-        key: const ValueKey('series-episodes-expand'),
-        behavior: HitTestBehavior.opaque,
-        onTap: () => setState(() => _expanded = true),
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              '展开 ${start + SeriesDetailEpisodes.collapsedCount + 1}–$end 集',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: palette.muted),
-            ),
-          ),
+  Widget _expandLink(HomePalette palette, int start, int end) => TextButton(
+    key: const ValueKey('series-episodes-expand'),
+    onPressed: () => setState(() => _expanded = true),
+    style: TextButton.styleFrom(
+      foregroundColor: palette.muted,
+      minimumSize: const Size(double.infinity, 44),
+    ),
+    child: SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          _reversed
+              ? '展开 ${start + 1}–${end - SeriesDetailEpisodes.collapsedCount} 集'
+              : '展开 ${start + SeriesDetailEpisodes.collapsedCount + 1}–$end 集',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: palette.muted),
         ),
-      );
+      ),
+    ),
+  );
 
   Widget _rangeStrip(HomePalette palette, int range, int rangeCount) {
     _revealSelectedRange(range);
@@ -246,26 +254,31 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
   Widget _rangeChip(HomePalette palette, int page, bool selected) => Container(
     key: selected ? _selectedRangeKey : null,
     margin: const EdgeInsets.only(right: 6),
-    child: GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => setState(() {
-        _range = page;
-        _expanded = false;
-      }),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-        decoration: BoxDecoration(
-          color: selected ? palette.ink : palette.soft,
-          borderRadius: BorderRadius.circular(99),
-        ),
-        child: Text(
-          '${page * widget.pageSize + 1}–'
-          '${((page + 1) * widget.pageSize).clamp(0, widget.episodes.length)}',
-          style: TextStyle(
-            fontSize: 12,
-            height: 1.5,
-            fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
-            color: selected ? palette.canvas : palette.muted,
+    child: Semantics(
+      selected: selected,
+      button: true,
+      child: InkWell(
+        onTap: () => setState(() {
+          _range = page;
+          _expanded = false;
+        }),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? palette.ink : palette.soft,
+            borderRadius: BorderRadius.circular(homePanelRadius),
+            border: Border.all(color: palette.line),
+          ),
+          child: Text(
+            '${page * widget.pageSize + 1}–'
+            '${((page + 1) * widget.pageSize).clamp(0, widget.episodes.length)}',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
+              color: selected ? palette.canvas : palette.muted,
+            ),
           ),
         ),
       ),
@@ -277,11 +290,13 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
     return Semantics(
       button: true,
       selected: _reversed,
-      label: '倒序',
-      child: GestureDetector(
+      child: TextButton(
         key: const ValueKey('series-episode-reverse'),
-        behavior: HitTestBehavior.opaque,
-        onTap: () => setState(() => _reversed = !_reversed),
+        onPressed: () => setState(() => _reversed = !_reversed),
+        style: TextButton.styleFrom(
+          minimumSize: const Size(44, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -311,7 +326,11 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
         _rangeScroll.position.ensureVisible(
           target,
           alignment: 0.5,
-          duration: const Duration(milliseconds: 160),
+          duration:
+              HomePalette.of(context).eink ||
+                  MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 160),
         ),
       );
     });
@@ -334,7 +353,7 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
           crossAxisCount: columns,
           mainAxisSpacing: 6,
           crossAxisSpacing: 6,
-          mainAxisExtent: 36 * scale,
+          mainAxisExtent: (36 * scale).clamp(44.0, double.infinity),
         ),
         itemCount: order.length,
         itemBuilder: (context, position) => _tile(palette, order[position]),
@@ -377,7 +396,9 @@ class _SeriesDetailEpisodesState extends State<SeriesDetailEpisodes> {
       child: Material(
         color: isCurrent ? seriesCurrentFill(palette) : palette.surface,
         shape: RoundedRectangleBorder(
-          borderRadius: const BorderRadius.all(Radius.circular(8)),
+          borderRadius: const BorderRadius.all(
+            Radius.circular(homePanelRadius),
+          ),
           side: border,
         ),
         clipBehavior: Clip.antiAlias,

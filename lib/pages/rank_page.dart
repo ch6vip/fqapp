@@ -8,7 +8,7 @@ import '../services/api_client.dart';
 import '../services/rank_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/home/home_back_button.dart';
-import '../widgets/home/home_chip.dart';
+import '../widgets/home/home_archive.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart' show StoryCover;
 import '../widgets/home/home_shelf.dart' show homeGutter;
@@ -252,13 +252,13 @@ class _RankPageState extends State<RankPage> {
         backgroundColor: palette.canvas,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
-        leading: const HomeBackButton(),
+        leading: const HomeBackButton(size: 48),
         title: Text(
           '排行榜',
           style: TextStyle(
             color: palette.ink,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
@@ -285,7 +285,10 @@ class _RankPageState extends State<RankPage> {
   }
 
   Widget _categoryChips(HomePalette palette) => SizedBox(
-    height: HomeChip.minTapTarget,
+    height: (MediaQuery.textScalerOf(context).scale(13) * 1.3 + 24).clamp(
+      48.0,
+      double.infinity,
+    ),
     child: ListView.separated(
       key: const Key('rank_categories'),
       scrollDirection: Axis.horizontal,
@@ -295,12 +298,39 @@ class _RankPageState extends State<RankPage> {
       itemBuilder: (context, index) {
         final category = _catalog.categories[index];
         return Center(
-          child: HomeChip(
-            key: ValueKey('rank_category_${category.id}'),
-            label: category.name,
+          child: Semantics(
             selected: index == _categoryIndex,
-            semanticLabel: '筛选${category.name}',
-            onTap: () => _selectCategory(index),
+            child: HomePressable(
+              key: ValueKey('rank_category_${category.id}'),
+              semanticLabel: '筛选${category.name}',
+              onTap: () => _selectCategory(index),
+              borderRadius: BorderRadius.circular(homePanelRadius),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 48),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: index == _categoryIndex
+                      ? palette.soft
+                      : Colors.transparent,
+                  border: Border.all(color: palette.line),
+                  borderRadius: BorderRadius.circular(homePanelRadius),
+                ),
+                child: Text(
+                  category.name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.3,
+                    color: palette.ink,
+                    fontWeight: index == _categoryIndex
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
           ),
         );
       },
@@ -309,8 +339,8 @@ class _RankPageState extends State<RankPage> {
 
   Widget _body() {
     if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: HomePalette.accent),
+      return Center(
+        child: CircularProgressIndicator(color: HomePalette.of(context).ink),
       );
     }
     if (_error != null) {
@@ -353,14 +383,29 @@ class _RankPageState extends State<RankPage> {
           // 没有流尾时由列表自己吃掉底部安全区；有流尾时交给流尾。
           hasFooter ? 0 : 24 + MediaQuery.paddingOf(context).bottom,
         ),
-        itemCount: _page.entries.length + (hasFooter ? 1 : 0),
+        itemCount: _page.entries.length + 1 + (hasFooter ? 1 : 0),
         itemBuilder: (context, index) {
-          if (index >= _page.entries.length) {
+          if (index == 0) {
+            return HomeSectionLabel(
+              code: 'RANKING',
+              title: _rank?.name ?? '排行榜',
+              gutter: 0,
+              action: Text(
+                '显示 ${_page.entries.length} 部',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: HomePalette.of(context).muted,
+                ),
+              ),
+            );
+          }
+          final entryIndex = index - 1;
+          if (entryIndex >= _page.entries.length) {
             return _footer();
           }
           return _RankRow(
-            entry: _page.entries[index],
-            onTap: () => _openEntry(_page.entries[index]),
+            entry: _page.entries[entryIndex],
+            onTap: () => _openEntry(_page.entries[entryIndex]),
           );
         },
       ),
@@ -404,9 +449,12 @@ class _RankRow extends StatelessWidget {
       key: ValueKey('rank_entry_${entry.id}'),
       semanticLabel: '第${entry.position}名 ${entry.title}',
       onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+      borderRadius: BorderRadius.circular(homePanelRadius),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: palette.line)),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -414,21 +462,17 @@ class _RankRow extends StatelessWidget {
               width: 30,
               child: Padding(
                 padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  '${entry.position}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: top ? palette.accentText : palette.muted,
-                    fontSize: top ? 17 : 15,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+                child: HomeCode(
+                  entry.position.toString().padLeft(2, '0'),
+                  align: TextAlign.center,
+                  color: top ? palette.accentText : palette.muted,
+                  size: 14,
                 ),
               ),
             ),
             const SizedBox(width: 6),
             ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(homeCoverRadius),
               child: SizedBox(
                 width: 56,
                 height: 78,
@@ -444,6 +488,8 @@ class _RankRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  HomeCode(homeFileCode(entry.toMediaItem())),
+                  const SizedBox(height: 5),
                   Text(
                     entry.title,
                     maxLines: 2,

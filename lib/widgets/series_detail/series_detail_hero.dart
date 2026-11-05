@@ -1,16 +1,15 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../home/home_design.dart';
+import '../home/home_archive.dart';
+import '../home/home_media_card.dart';
+import '../../models/media_item.dart';
 import 'series_detail_theme.dart';
 
 /// 头部：封面、标题、`全80集 · 8.7万次播放`、分类标签，紧接播放 / 收藏。
 ///
-/// 尺寸照版式稿右机的渲染结果：外边距 4/16，封面 96×136 圆角 6；标题是
-/// 浏览器默认 `h1` 的样子（26sp / 1.5 行高 / 上下各 0.67em ≈ 17.4 外边距），
-/// 所以它比封面低一截、也比封面的字更大；状态行 12（1.5 行高），标签 11
-/// （1.5 行高，胶囊高 20.5）；动作行上距 14、间距 8、高 40。
+/// The title wraps in full; play and local collection keep their own actions.
 class SeriesDetailHero extends StatelessWidget {
   const SeriesDetailHero({
     super.key,
@@ -48,7 +47,7 @@ class SeriesDetailHero extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -69,28 +68,19 @@ class SeriesDetailHero extends StatelessWidget {
   Widget _titleColumn(HomePalette palette) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
+      const HomeCode('SERIES'),
       Padding(
-        // 浏览器 `h1` 默认 margin-block: 0.67em（26sp → 17.4）。
-        padding: const EdgeInsets.symmetric(vertical: 17.4),
+        padding: const EdgeInsets.only(top: 6, bottom: 8),
         child: Text(
           title,
           key: const ValueKey('series-detail-title'),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 26,
-            height: 1.5,
-            fontWeight: FontWeight.w700,
-            color: palette.ink,
-          ),
+          style: homeSerifStyle(size: 22, height: 1.3, color: palette.ink),
         ),
       ),
       if (statusLine.isNotEmpty)
         Text(
           statusLine,
           key: const ValueKey('series-detail-status'),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: 12, height: 1.5, color: palette.muted),
         ),
       if (categories.isNotEmpty) ...[
@@ -109,7 +99,7 @@ class SeriesDetailHero extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
     decoration: BoxDecoration(
       color: palette.soft,
-      borderRadius: BorderRadius.circular(99),
+      borderRadius: BorderRadius.circular(homePanelRadius),
       border: palette.eink ? Border.all(color: palette.line) : null,
     ),
     child: Text(
@@ -123,22 +113,21 @@ class SeriesDetailHero extends StatelessWidget {
     height: 136,
     clipBehavior: Clip.antiAlias,
     decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(homeCoverRadius),
       border: palette.eink ? Border.all(color: palette.line) : null,
     ),
-    child: coverUrl.isEmpty
-        ? ColoredBox(
-            color: palette.soft,
-            child: Icon(LucideIcons.clapperboard, color: palette.muted),
-          )
-        : CachedNetworkImage(
-            imageUrl: coverUrl,
-            fit: BoxFit.cover,
-            errorWidget: (_, _, _) => ColoredBox(
-              color: palette.soft,
-              child: Icon(LucideIcons.clapperboard, color: palette.muted),
-            ),
-          ),
+    child: StoryCover(
+      item: MediaItem(
+        id: '',
+        title: title,
+        cover: coverUrl,
+        author: '',
+        badge: '',
+        ep: '',
+        kind: 'video',
+      ),
+      cacheWidth: 320,
+    ),
   );
 
   Widget _actions(HomePalette palette) => Row(
@@ -154,10 +143,12 @@ class SeriesDetailHero extends StatelessWidget {
             disabledBackgroundColor: palette.soft,
             disabledForegroundColor: palette.muted,
             elevation: 0,
-            minimumSize: const Size(0, 40),
+            minimumSize: const Size(48, 48),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            shape: const StadiumBorder(),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(homeControlRadius),
+            ),
             textStyle: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
@@ -188,10 +179,12 @@ class SeriesDetailHero extends StatelessWidget {
           backgroundColor: palette.surface,
           disabledForegroundColor: palette.muted,
           side: BorderSide(color: palette.line),
-          minimumSize: const Size(0, 40),
+          minimumSize: const Size(48, 48),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          shape: const StadiumBorder(),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(homeControlRadius),
+          ),
           textStyle: const TextStyle(fontSize: 13),
         ),
         child: Row(

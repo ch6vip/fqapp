@@ -1,11 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/library_store.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/detail/detail_cover_tile.dart';
+import '../widgets/detail/detail_description.dart';
+import '../widgets/detail/detail_read_bar.dart';
+import '../widgets/home/home_archive.dart';
+import '../widgets/home/home_back_button.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
 import 'reader_page.dart';
 
 /// 书旗书籍详情 + 目录。
@@ -150,185 +158,214 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final title = _book?.name.isNotEmpty == true
-        ? _book!.name
-        : (widget.initialTitle.isEmpty ? '书旗' : widget.initialTitle);
+    final palette = HomePalette.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text(title, overflow: TextOverflow.ellipsis)),
-      body: _buildBody(theme),
-    );
-  }
-
-  Widget _buildBody(ThemeData theme) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    final error = _error;
-    if (error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(error, textAlign: TextAlign.center),
-              const SizedBox(height: 14),
-              FilledButton(onPressed: _load, child: const Text('重试')),
-            ],
+      backgroundColor: palette.canvas,
+      appBar: AppBar(
+        backgroundColor: palette.canvas,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
+        leading: const HomeBackButton(size: 48),
+        title: const HomeCode('STORY ARCHIVE'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Text(
+              '书旗 · 只读',
+              style: TextStyle(fontSize: 12, color: palette.muted),
+            ),
           ),
-        ),
-      );
-    }
-    final book = _book;
-    if (book == null) {
-      return const Center(child: Text('没有取到书籍数据'));
-    }
-    // 目录失败或还没回来时，详情照常展示，目录区单独给出状态与重试。
-    final toc = _toc;
-    if (toc == null) {
-      return ListView(
-        children: [_buildHeader(theme, book, null), _buildTocStatus()],
-      );
-    }
-    return ListView.builder(
-      itemCount: toc.chapters.length + 1,
-      itemBuilder: (context, index) {
-        if (index == 0) return _buildHeader(theme, book, toc);
-        final chapter = toc.chapters[index - 1];
-        return ListTile(
-          dense: true,
-          title: Text(
-            chapter.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: chapter.isVip
-              ? Text('VIP', style: theme.textTheme.labelSmall)
-              : null,
-          onTap: () => _openChapter(index - 1),
-        );
-      },
-    );
-  }
-
-  Widget _buildTocStatus() {
-    if (_tocLoading) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      child: Column(
-        children: [
-          Text(_tocError ?? '没有取到目录', textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          OutlinedButton(onPressed: _loadToc, child: const Text('重试')),
         ],
+      ),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 840),
+          child: _buildBody(palette),
+        ),
+      ),
+      bottomNavigationBar: DetailReadBar(
+        label: '开始阅读',
+        opening: false,
+        enabled:
+            !_loading &&
+            _error == null &&
+            _book != null &&
+            (_toc?.chapters.isNotEmpty ?? false),
+        onRead: () => _openChapter(0),
       ),
     );
   }
 
-  Widget _buildHeader(ThemeData theme, ShuqiBook book, ShuqiToc? toc) {
-    final chapters = toc?.chapters ?? const <ShuqiChapter>[];
+  Widget _buildBody(HomePalette palette) {
+    if (_loading) {
+      return Center(child: CircularProgressIndicator(color: palette.ink));
+    }
+    if (_error != null) {
+      return HomeStateView(
+        icon: LucideIcons.cloud_off,
+        title: '暂时无法加载书籍',
+        message: _error,
+        actionLabel: '重试',
+        actionIcon: LucideIcons.refresh_cw,
+        onAction: _load,
+        scrollable: true,
+      );
+    }
+    final book = _book;
+    if (book == null) {
+      return const HomeStateView(
+        icon: LucideIcons.book_open,
+        title: '没有取到书籍数据',
+        scrollable: true,
+      );
+    }
+    final toc = _toc;
+    return CustomScrollView(
+      key: const Key('shuqi_detail_scroll'),
+      slivers: [
+        SliverToBoxAdapter(child: _buildHeader(palette, book)),
+        SliverToBoxAdapter(child: DetailDescription(text: book.intro)),
+        SliverToBoxAdapter(
+          child: HomeSectionLabel(
+            code: 'CONTENTS',
+            title: '目录',
+            action: Text(
+              toc == null ? '待加载' : '共 ${toc.chapters.length} 章',
+              style: TextStyle(fontSize: 12, color: palette.muted),
+            ),
+          ),
+        ),
+        if (toc != null && !toc.hasRealTitles)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                '当前章名为占位序号',
+                style: TextStyle(fontSize: 12, color: palette.muted),
+              ),
+            ),
+          ),
+        if (toc == null)
+          SliverToBoxAdapter(child: _buildTocStatus(palette))
+        else if (toc.chapters.isEmpty)
+          const SliverToBoxAdapter(
+            child: HomeStateView(icon: LucideIcons.list, title: '暂无章节'),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverList.builder(
+              itemCount: toc.chapters.length,
+              itemBuilder: (context, index) {
+                final chapter = toc.chapters[index];
+                return HomePressable(
+                  key: ValueKey('shuqi_chapter_${chapter.chapterId}'),
+                  onTap: () => _openChapter(index),
+                  borderRadius: BorderRadius.circular(homePanelRadius),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: palette.line)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            chapter.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.4,
+                              color: palette.ink,
+                            ),
+                          ),
+                        ),
+                        if (chapter.isVip) ...[
+                          const SizedBox(width: 12),
+                          const HomeCode('VIP'),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+  }
+
+  Widget _buildTocStatus(HomePalette palette) {
+    if (_tocLoading) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Center(child: CircularProgressIndicator(color: palette.ink)),
+      );
+    }
+    return HomeStateView(
+      icon: LucideIcons.list,
+      title: '目录暂不可用',
+      message: _tocError ?? '没有取到目录',
+      actionLabel: '重试',
+      actionIcon: LucideIcons.refresh_cw,
+      onAction: _loadToc,
+    );
+  }
+
+  Widget _buildHeader(HomePalette palette, ShuqiBook book) {
+    final item = book.toMediaItem();
     final meta = [
       book.status,
       book.wordCount,
       book.kind,
     ].where((part) => part.isNotEmpty).join(' · ');
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildCover(theme, book),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      book.name,
-                      style: theme.textTheme.titleMedium,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(book.author, style: theme.textTheme.bodySmall),
-                    if (meta.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        meta,
-                        style: theme.textTheme.bodySmall,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    FilledButton(
-                      onPressed: chapters.isEmpty
-                          ? null
-                          : () => _openChapter(0),
-                      child: const Text('开始阅读'),
-                    ),
-                  ],
+          DetailCoverTile(item: item),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                HomeCode(homeFileCode(item)),
+                const SizedBox(height: 6),
+                Text(
+                  book.name.isEmpty ? widget.initialTitle : book.name,
+                  style: homeSerifStyle(
+                    size: 22,
+                    height: 1.3,
+                    color: palette.ink,
+                  ),
                 ),
-              ),
-            ],
-          ),
-          if (book.intro.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Text(
-              book.intro,
-              style: theme.textTheme.bodySmall,
-              maxLines: 6,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Text(
-                toc == null ? '目录未加载' : '共 ${chapters.length} 章',
-                style: theme.textTheme.titleSmall,
-              ),
-              if (toc != null && !toc.hasRealTitles) ...[
-                const SizedBox(width: 8),
-                Text('（章名为占位）', style: theme.textTheme.bodySmall),
+                if (book.author.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    book.author,
+                    style: TextStyle(fontSize: 14, color: palette.ink),
+                  ),
+                ],
+                if (meta.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    meta,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: palette.muted,
+                    ),
+                  ),
+                ],
               ],
-              const Spacer(),
-              Text('书旗', style: theme.textTheme.bodySmall),
-            ],
+            ),
           ),
-          const Divider(height: 20),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCover(ThemeData theme, ShuqiBook book) {
-    const width = 68.0;
-    const height = 94.0;
-    final fallback = Container(
-      width: width,
-      height: height,
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: const Icon(Icons.menu_book_outlined, size: 28),
-    );
-    if (book.coverUrl.isEmpty) return fallback;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        book.coverUrl,
-        width: width,
-        height: height,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => fallback,
       ),
     );
   }

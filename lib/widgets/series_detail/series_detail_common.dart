@@ -1,47 +1,32 @@
 import 'package:flutter/material.dart';
 
 import '../home/home_design.dart';
+import '../home/home_archive.dart';
 
-/// 短剧详情里统一的区块头：标题 15sp 粗体，右侧动作 12sp 灰字。
-///
-/// 版式稿的 `.sh` 是「15sp 标题 + 右端 12sp 动作」，与首页 19sp 的分区头
-/// 不是同一套，所以这里不复用 `HomeSectionHeader`。
+/// Series details share archive headings with book details.
 class SeriesSectionHeader extends StatelessWidget {
-  const SeriesSectionHeader({super.key, required this.title, this.action});
+  const SeriesSectionHeader({
+    super.key,
+    required this.code,
+    required this.title,
+    this.action,
+  });
 
+  final String code;
   final String title;
   final Widget? action;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 15,
-                // 版式稿渲染出的 `.sh` 行盒是 24（浏览器按字体度量把 15sp
-                // 撑到 1.6 倍），不是名义上的 1.5。
-                height: 1.6,
-                fontWeight: FontWeight.w700,
-                color: palette.ink,
-              ),
-            ),
-          ),
-          if (action != null) ...[const SizedBox(width: 8), action!],
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => HomeSectionLabel(
+    code: code,
+    title: title,
+    action: action,
+    gutter: 0,
+    bottomGap: 10,
+  );
 }
 
-/// 区块外距：左右 16、上 20（版式稿 `.sec`）。
+/// The heading owns top spacing; sections own only outer gutters.
 class SeriesSection extends StatelessWidget {
   const SeriesSection({super.key, required this.child, this.bottom = 0});
 
@@ -50,7 +35,7 @@ class SeriesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      Padding(padding: EdgeInsets.fromLTRB(16, 20, 16, bottom), child: child);
+      Padding(padding: EdgeInsets.fromLTRB(16, 0, 16, bottom), child: child);
 }
 
 /// 区块骨架屏：两行灰条，等宽 + 定宽。
@@ -103,7 +88,7 @@ class SeriesRetryInline extends StatelessWidget {
           onPressed: onRetry,
           style: TextButton.styleFrom(
             foregroundColor: palette.accentText,
-            minimumSize: const Size(0, 36),
+            minimumSize: const Size(44, 44),
             padding: const EdgeInsets.symmetric(horizontal: 8),
           ),
           child: Text(action),

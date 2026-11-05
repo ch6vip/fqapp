@@ -42,6 +42,7 @@ class SeriesDetailReviews extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SeriesSectionHeader(
+            code: 'REVIEWS',
             title: total > 0 ? '剧评 · ${formatCounter('$total')}' : '剧评',
             action: comments.isEmpty
                 ? null

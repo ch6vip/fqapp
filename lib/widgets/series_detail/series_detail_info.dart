@@ -8,8 +8,7 @@ import 'series_detail_common.dart';
 
 /// 简介 + 演职人员。
 ///
-/// 版式稿：正文 13/1.5 最多 3 行，没有「展开」链接——点正文本身展开 /
-/// 收起；演员是 40dp 圆头像 + 11sp 名字。
+/// The synopsis has an explicit expand/collapse action; cast remains horizontal.
 /// 详情接口返回空不算失败：没有简介和演员就整块不画（目录仍照常渲染），
 /// 只有真的请求失败才在区块内给「详情加载失败 / 重试」。
 class SeriesDetailIntroSection extends StatefulWidget {
@@ -51,7 +50,7 @@ class _SeriesDetailIntroSectionState extends State<SeriesDetailIntroSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SeriesSectionHeader(title: '简介'),
+          const SeriesSectionHeader(code: 'ABOUT', title: '简介'),
           if (widget.loading)
             const SeriesDetailSkeleton()
           else if (widget.failed)
@@ -65,16 +64,25 @@ class _SeriesDetailIntroSectionState extends State<SeriesDetailIntroSection> {
     );
   }
 
-  Widget _intro(HomePalette palette) => GestureDetector(
-    behavior: HitTestBehavior.opaque,
-    onTap: () => setState(() => _expanded = !_expanded),
-    child: Text(
-      widget.intro,
-      key: const ValueKey('series-detail-intro'),
-      maxLines: _expanded ? null : 3,
-      overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
-      style: TextStyle(fontSize: 13, height: 1.5, color: palette.ink),
-    ),
+  Widget _intro(HomePalette palette) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        widget.intro,
+        key: const ValueKey('series-detail-intro'),
+        maxLines: _expanded ? null : 3,
+        overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 14, height: 1.65, color: palette.ink),
+      ),
+      TextButton(
+        onPressed: () => setState(() => _expanded = !_expanded),
+        style: TextButton.styleFrom(
+          foregroundColor: palette.muted,
+          minimumSize: const Size(44, 44),
+        ),
+        child: Text(_expanded ? '收起简介' : '展开简介'),
+      ),
+    ],
   );
 
   Widget _castRow(HomePalette palette) => SingleChildScrollView(
