@@ -511,7 +511,9 @@ class GlassOverlayTransition extends StatelessWidget {
     if (anchor != null) {
       return SizeTransition(
         sizeFactor: animation.drive(CurveTween(curve: WenkuMotion.ease)),
-        alignment: Alignment.bottomCenter,
+        // Upstream `axisAlignment: 1` on a vertical transition maps to
+        // `AlignmentDirectional(-1, 1)` (bottom-left), not centred.
+        alignment: const AlignmentDirectional(-1, 1),
         child: RepaintBoundary(child: child),
       );
     }

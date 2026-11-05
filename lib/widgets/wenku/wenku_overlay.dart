@@ -16,6 +16,10 @@
 //   `src/glass_overlay_motion.dart`; the sheet/menu composition is unchanged.
 //
 // fqapp additions (recorded in ADAPTATIONS.md by the integration unit):
+// - The route re-scopes the page's derived reduce-motion choice
+//   (`MediaQuery.disableAnimations` + `PerformanceScope(explicitReduceMotion)`)
+//   into its subtree, because the route is pushed above the page-level
+//   `WenkuScope`; upstream relies on an app-level scope instead.
 // - `GlassMenuItem` keeps desktop operable: focus ring, Enter/Space activate,
 //   Up/Down traverse in `order` sequence, and an `enabled` state.
 // - `confirmArchiveAction` carries `destructive`, `confirmKey` and `cancelKey`
@@ -34,6 +38,7 @@ import 'package:flutter/services.dart';
 import 'src/app_text.dart';
 import 'src/glass_morph.dart';
 import 'src/glass_overlay_motion.dart';
+import 'src/performance_preferences.dart';
 import 'wenku_archive.dart';
 import 'wenku_glass.dart';
 import 'wenku_icons.dart';
@@ -150,9 +155,17 @@ Future<T?> showGlassMenu<T>({
   final appearance = GlassAppearance.of(context);
   final source = _captureGlassSource(context, navigator);
   final sourceBox = source?.box ?? box;
+  // The page's performance/e-ink/reduce-motion choice lives below the root
+  // Navigator (`WenkuScope` is inside the page), so the route must carry it
+  // for its contents to read the same choice.
+  final reduce =
+      reduceMotion ||
+      PerformanceScope.reduceMotionOf(context) ||
+      MediaQuery.disableAnimationsOf(context);
   final route = _GlassOverlayRoute<T>(
     builder: builder,
-    reduceMotion: reduceMotion || MediaQuery.disableAnimationsOf(context),
+    reduceMotion: reduce,
+    performance: PerformanceScope.of(context),
     appearance: appearance,
     themes: InheritedTheme.capture(from: context, to: navigator.context),
     kind: GlassOverlayKind.menu,
@@ -200,6 +213,10 @@ Future<T?> _showGlassOverlay<T>({
       ? null
       : _captureGlassSource(sourceContext, navigator);
   final owner = sourceContext?.findAncestorStateOfType<_GlassMenuAnchorState>();
+  final reduce =
+      reduceMotion ||
+      PerformanceScope.reduceMotionOf(context) ||
+      MediaQuery.disableAnimationsOf(context);
   final route = _GlassOverlayRoute<T>(
     builder: builder,
     kind: kind,
@@ -208,7 +225,8 @@ Future<T?> _showGlassOverlay<T>({
         ? sourceBox
         : null,
     source: source,
-    reduceMotion: reduceMotion || MediaQuery.disableAnimationsOf(context),
+    reduceMotion: reduce,
+    performance: PerformanceScope.of(context),
     appearance: GlassAppearance.of(context),
     themes: InheritedTheme.capture(from: context, to: navigator.context),
     previewing: previewing,
@@ -387,7 +405,12 @@ class _GlassMenuItemState extends State<GlassMenuItem> {
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(ArchiveDesign.panelRadius),
                 border: _focused && widget.enabled
-                    ? Border.all(color: scheme.onSurface, width: 1.6)
+                    // Invert against the fill so the ring stays visible on the
+                    // selected row, whose fill is `onSurface`.
+                    ? Border.all(
+                        color: selected ? scheme.surface : scheme.onSurface,
+                        width: 1.6,
+                      )
                     : null,
               ),
               child: Row(
@@ -483,6 +506,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
     required this.builder,
     required this.kind,
     required this.reduceMotion,
+    required this.performance,
     required this.appearance,
     required this.themes,
     this.anchor,
@@ -499,6 +523,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
   final WidgetBuilder builder;
   final GlassOverlayKind kind;
   final bool reduceMotion;
+  final PerformancePreferences performance;
   final GlassAppearance appearance;
   final CapturedThemes themes;
   final Rect? anchor;
@@ -594,59 +619,76 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
             ),
     );
     final surface = surfaceWrapper?.call(material) ?? material;
+    // Scope the page's reduce-motion choice into the route subtree. The route
+    // is pushed on the root Navigator, so it does not inherit the page-level
+    // `WenkuScope` MediaQuery/PerformanceScope; without this, controls inside
+    // the sheet (jelly press, animated segments) keep animating.
     return themes.wrap(
-      GlassAppearance(
-        blur: appearance.blur,
-        opacity: appearance.opacity,
-        child: Material(
-          type: MaterialType.transparency,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final safe = _popupSafeRect(
-                overlay,
-                constraints.biggest,
-                MediaQuery.of(context),
-              );
-              if (kind == GlassOverlayKind.menu) {
-                return CustomSingleChildLayout(
-                  delegate: _GlassMenuPlacement(origin!, safe, preferBelow),
-                  child: surface,
-                );
-              }
-              final width = math.min(maxWidth, math.max(0.0, safe.width - 24));
-              final sheetBottom = math.min(
-                dockSheet ? origin.bottom : origin?.top ?? safe.bottom,
-                safe.bottom,
-              );
-              final height = math.min(
-                maxHeight ?? double.infinity,
-                math.max(0.0, sheetBottom - safe.top - 22),
-              );
-              return Stack(
-                children: [
-                  Positioned(
-                    left: safe.center.dx - width / 2,
-                    bottom:
-                        math.max(0, constraints.maxHeight - sheetBottom) +
-                        (dockSheet
-                            ? 0
-                            : origin == null
-                            ? 10
-                            : 8),
-                    width: width,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: height),
-                      child: heightFactor == null
-                          ? surface
-                          : SizedBox(
-                              height: math.min(760, height * heightFactor!),
-                              child: surface,
-                            ),
-                    ),
-                  ),
-                ],
-              );
-            },
+      MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations:
+              MediaQuery.disableAnimationsOf(context) || reduceMotion,
+        ),
+        child: PerformanceScope(
+          preferences: performance,
+          explicitReduceMotion: reduceMotion,
+          child: GlassAppearance(
+            blur: appearance.blur,
+            opacity: appearance.opacity,
+            child: Material(
+              type: MaterialType.transparency,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final safe = _popupSafeRect(
+                    overlay,
+                    constraints.biggest,
+                    MediaQuery.of(context),
+                  );
+                  if (kind == GlassOverlayKind.menu) {
+                    return CustomSingleChildLayout(
+                      delegate: _GlassMenuPlacement(origin!, safe, preferBelow),
+                      child: surface,
+                    );
+                  }
+                  final width = math.min(
+                    maxWidth,
+                    math.max(0.0, safe.width - 24),
+                  );
+                  final sheetBottom = math.min(
+                    dockSheet ? origin.bottom : origin?.top ?? safe.bottom,
+                    safe.bottom,
+                  );
+                  final height = math.min(
+                    maxHeight ?? double.infinity,
+                    math.max(0.0, sheetBottom - safe.top - 22),
+                  );
+                  return Stack(
+                    children: [
+                      Positioned(
+                        left: safe.center.dx - width / 2,
+                        bottom:
+                            math.max(0, constraints.maxHeight - sheetBottom) +
+                            (dockSheet
+                                ? 0
+                                : origin == null
+                                ? 10
+                                : 8),
+                        width: width,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxHeight: height),
+                          child: heightFactor == null
+                              ? surface
+                              : SizedBox(
+                                  height: math.min(760, height * heightFactor!),
+                                  child: surface,
+                                ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
