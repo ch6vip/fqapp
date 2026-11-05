@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' show LiquidGlassLens;
 
 import 'package:fqapp/widgets/wenku/src/glass_overlay_motion.dart';
+import 'package:fqapp/widgets/wenku/src/performance_preferences.dart';
 import 'package:fqapp/widgets/wenku/wenku_glass.dart';
 import 'package:fqapp/widgets/wenku/wenku_overlay.dart';
 import 'package:fqapp/widgets/wenku/wenku_theme.dart';
@@ -173,6 +174,105 @@ void main() {
     expect(route.transitionDuration, Duration.zero);
     await tester.pumpAndSettle();
     expect(find.text('弹层'), findsOneWidget);
+    Navigator.of(context).pop();
+    await tester.pumpAndSettle();
+    await future;
+  });
+
+  testWidgets('page-level reduce motion reaches the sheet contents', (
+    tester,
+  ) async {
+    bool? disableAnimations;
+    bool? reduceMotion;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (outer) => MediaQuery(
+              data: MediaQuery.of(outer).copyWith(disableAnimations: true),
+              child: const Center(
+                child: SizedBox(key: Key('anchor'), width: 60, height: 40),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final context = tester.element(find.byKey(const Key('anchor')));
+    final future = showJellySheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        disableAnimations = MediaQuery.disableAnimationsOf(sheetContext);
+        reduceMotion = PerformanceScope.reduceMotionOf(sheetContext);
+        return const SizedBox(height: 80, child: Text('弹层'));
+      },
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    // The route is pushed on the root Navigator, so the page-level MediaQuery
+    // would otherwise not reach the builder.
+    expect(disableAnimations, isTrue);
+    expect(reduceMotion, isTrue);
+    Navigator.of(context).pop();
+    await tester.pumpAndSettle();
+    await future;
+  });
+
+  testWidgets('a page PerformanceScope reduce motion reaches the route', (
+    tester,
+  ) async {
+    final observer = _RouteObserver();
+    bool? disableAnimations;
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [observer],
+        home: Scaffold(
+          body: PerformanceScope(
+            preferences: const PerformancePreferences(),
+            explicitReduceMotion: true,
+            child: const Center(
+              child: SizedBox(key: Key('anchor'), width: 60, height: 40),
+            ),
+          ),
+        ),
+      ),
+    );
+    final context = tester.element(find.byKey(const Key('anchor')));
+    final future = showJellySheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        disableAnimations = MediaQuery.disableAnimationsOf(sheetContext);
+        return const SizedBox(height: 80, child: Text('弹层'));
+      },
+    );
+    await tester.pump();
+    final route = observer.pushed.whereType<TransitionRoute<dynamic>>().last;
+    expect(route.transitionDuration, Duration.zero);
+    await tester.pumpAndSettle();
+    expect(disableAnimations, isTrue);
+    Navigator.of(context).pop();
+    await tester.pumpAndSettle();
+    await future;
+  });
+
+  testWidgets('a narrow anchored sheet hugs the slot left edge', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_host(const SizedBox.shrink()));
+    final context = tester.element(find.byKey(const Key('anchor')));
+    final future = showJellySheet<void>(
+      context: context,
+      anchor: const Rect.fromLTWH(300, 100, 100, 40),
+      builder: (_) =>
+          const SizedBox(width: 100, height: 120, child: Text('窄弹层')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    // Upstream `axisAlignment: 1` pins the sheet to the slot's bottom-left.
+    // The 440dp slot is centred in the 800dp window, so its left edge is 180.
+    final surface = tester.getRect(find.byType(GlassOverlaySurface));
+    expect(surface.left, closeTo(180, .01));
+    expect(surface.width, 100);
     Navigator.of(context).pop();
     await tester.pumpAndSettle();
     await future;
@@ -533,20 +633,82 @@ void main() {
     expect(presses, ['first', 'second', 'first']);
   });
 
-  testWidgets('a disabled menu item is dimmed, unfocusable and inert', (
+  testWidgets('a focused selected menu item draws a contrasting focus ring', (
     tester,
   ) async {
-    var pressed = 0;
+    FocusManager.instance.highlightStrategy =
+        FocusHighlightStrategy.alwaysTraditional;
+    addTearDown(
+      () => FocusManager.instance.highlightStrategy =
+          FocusHighlightStrategy.automatic,
+    );
     await tester.pumpWidget(_host(const SizedBox.shrink()));
     await _openMenu<void>(
       tester,
       (context) => SizedBox(
         height: 120,
-        child: GlassMenuItem(
-          label: '清空历史',
-          enabled: false,
-          autofocus: true,
-          onPressed: () => pressed++,
+        child: Column(
+          children: [
+            GlassMenuItem(
+              label: '当前',
+              selected: true,
+              autofocus: true,
+              order: 0,
+              onPressed: () {},
+            ),
+            GlassMenuItem(label: '其他', order: 1, onPressed: () {}),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final item = find.ancestor(
+      of: find.text('当前'),
+      matching: find.byType(GlassMenuItem),
+    );
+    final row = tester
+        .widgetList<Container>(
+          find.descendant(of: item, matching: find.byType(Container)),
+        )
+        .firstWhere(
+          (container) =>
+              container.decoration is BoxDecoration &&
+              (container.decoration! as BoxDecoration).border != null,
+        );
+    final decoration = row.decoration! as BoxDecoration;
+    final border = decoration.border! as Border;
+    expect(border.top.width, 1.6);
+    // The selected fill is `onSurface`; the ring must invert to stay visible.
+    expect(border.top.color, isNot(decoration.color));
+    expect(
+      border.top.color,
+      Theme.of(tester.element(find.text('当前'))).colorScheme.surface,
+    );
+    Navigator.of(tester.element(find.byKey(const Key('anchor')))).pop();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a disabled menu item is dimmed, inert and cannot take focus', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var pressed = 0;
+    await tester.pumpWidget(_host(const SizedBox.shrink()));
+    await _openMenu<void>(
+      tester,
+      (context) => SizedBox(
+        height: 160,
+        child: Column(
+          children: [
+            GlassMenuItem(
+              label: '清空历史',
+              enabled: false,
+              autofocus: true,
+              order: 0,
+              onPressed: () => pressed++,
+            ),
+            GlassMenuItem(label: '导入', order: 1, onPressed: () {}),
+          ],
         ),
       ),
     );
@@ -555,8 +717,17 @@ void main() {
       find.ancestor(of: find.text('清空历史'), matching: find.byType(Opacity)),
     );
     expect(opacity.opacity, lessThan(1));
+    expect(
+      tester.getSemantics(find.text('清空历史')),
+      isSemantics(hasEnabledState: true, isEnabled: false),
+    );
+    // `autofocus: true` must not win focus while disabled.
+    final node = Focus.maybeOf(tester.element(find.text('清空历史')));
+    expect(node, isNotNull);
+    expect(node!.hasFocus, isFalse);
     await tester.tap(find.text('清空历史'));
     await tester.pump();
     expect(pressed, 0);
+    semantics.dispose();
   });
 }
