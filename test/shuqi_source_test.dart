@@ -149,6 +149,32 @@ void main() {
     expect(find.byType(ChoiceChip), findsNWidgets(6));
   });
 
+  testWidgets('an empty shuqi reply shows no results instead of an error', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchPage(
+          searchLoader:
+              (query, {required int tabType, required int offset}) async {
+                return const <SearchTab>[];
+              },
+          shuqiSearchLoader: (key) async => {'source': 'shuqi', 'data': []},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'xiuxian');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+
+    expect(find.text('无结果'), findsOneWidget);
+    expect(find.text('加载失败，请稍后重试'), findsNothing);
+  });
+
   testWidgets('a restored rating filter does not hide shuqi results', (
     tester,
   ) async {

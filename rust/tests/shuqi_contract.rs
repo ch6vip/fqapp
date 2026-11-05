@@ -109,6 +109,28 @@ async fn search_posts_encrypted_form_and_collects_books() {
 }
 
 #[tokio::test]
+async fn search_without_books_is_an_empty_list() {
+    // 书旗对拼音等查询会回成功但不含任何书节点；这是「没有结果」，不是失败。
+    let upstream = MockUpstream::start(|_: &Recorded| {
+        MockReply::json(json!({
+            "status": "200",
+            "message": "success",
+            "data": { "modules": [{ "title": "相关搜索", "id": "rec" }] }
+        }))
+    })
+    .await;
+    let dir = TempDir::new("shuqi-search-empty");
+    let srv = server(&dir, &upstream.origin).await;
+    let handler = srv.handler("shuqi_search").expect("route registered");
+    let params = Params::from_pairs(vec![("key".to_string(), "xiuxian".to_string())]);
+    let value = handler(&srv.ctx, &params)
+        .await
+        .expect("an empty reply is not an error");
+    assert_eq!(value["source"], "shuqi");
+    assert_eq!(value["data"], json!([]));
+}
+
+#[tokio::test]
 async fn search_without_key_is_bad_request() {
     let upstream = MockUpstream::start(|_: &Recorded| MockReply::status(500)).await;
     let dir = TempDir::new("shuqi-search-nokey");
