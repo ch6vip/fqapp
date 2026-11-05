@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 
+import 'glass_morph.dart';
+
 /// The package owns the live backdrop rendering; the app continues to own
 /// gestures, layout and menu motion. No screen capture or adaptive readback.
 class EasyGlassSurface extends StatelessWidget {
@@ -19,6 +21,7 @@ class EasyGlassSurface extends StatelessWidget {
     required this.activation,
     this.independent = false,
     this.physicalOptics = false,
+    this.morph,
   });
 
   final Widget child;
@@ -32,6 +35,10 @@ class EasyGlassSurface extends StatelessWidget {
   final bool independent;
   final bool physicalOptics;
 
+  /// Resolves the material from the originating control to the overlay. Only
+  /// the lens is rebuilt per frame; the assembled content keeps its identity.
+  final WenkuGlassMorph? morph;
+
   @override
   Widget build(BuildContext context) {
     if (const bool.fromEnvironment('GLASS_RENDER_DIAGNOSTIC') &&
@@ -42,38 +49,54 @@ class EasyGlassSurface extends StatelessWidget {
         '${ui.ImageFilter.isShaderFilterSupported}',
       );
     }
-    final lens = LiquidGlassLens(
-      physicalOptics: physicalOptics,
-      style: LiquidGlassStyle(
-        shape: LiquidGlassShape.roundedRectangle(cornerRadius: radius),
-        // Keep the established clear, slightly milky material. Neither the
-        // package's default bright rim nor its coloured fringe belongs here.
-        specular: const LiquidGlassLight.specular(intensity: 0, thickness: 0),
-        glow: const LiquidGlassLight.glow(intensity: 0, thickness: 0),
-        dispersion: 0,
-        refractionIndex:
-            1 + (refractiveIndex - 1) * .055 + activation.clamp(0, 1) * .006,
-        refractionWidth: thickness,
-        blur: blur,
-        color: ui.Color.alphaBlend(
-          const ui.Color(0xffffffff).withValues(alpha: emission.clamp(0, .05)),
-          tint,
+    final morph = this.morph;
+    Widget lens(BuildContext context, Widget? unused) {
+      final resolvedRadius = morph?.resolve(morph.radius, radius) ?? radius;
+      final resolvedThickness =
+          morph?.resolve(morph.thickness, thickness) ?? thickness;
+      final resolvedBlur = morph?.resolve(morph.blur, blur) ?? blur;
+      return LiquidGlassLens(
+        physicalOptics: physicalOptics,
+        style: LiquidGlassStyle(
+          shape: LiquidGlassShape.roundedRectangle(
+            cornerRadius: resolvedRadius,
+          ),
+          // Keep the established clear, slightly milky material. Neither the
+          // package's default bright rim nor its coloured fringe belongs here.
+          specular: const LiquidGlassLight.specular(intensity: 0, thickness: 0),
+          glow: const LiquidGlassLight.glow(intensity: 0, thickness: 0),
+          dispersion: 0,
+          refractionIndex:
+              1 + (refractiveIndex - 1) * .055 + activation.clamp(0, 1) * .006,
+          refractionWidth: resolvedThickness,
+          blur: resolvedBlur,
+          color: ui.Color.alphaBlend(
+            const ui.Color(
+              0xffffffff,
+            ).withValues(alpha: emission.clamp(0, .05)),
+            tint,
+          ),
         ),
-      ),
-      // Nested controls share ONE read of the finished parent surface. A fresh
-      // batch keeps them off the parent's pre-glass input without making every
-      // button in a scrolling sheet take a separate backdrop copy.
-      child: physicalOptics ? null : LiquidGlassBatch(child: child),
-    );
+        // Nested controls share ONE read of the finished parent surface. A
+        // fresh batch keeps them off the parent's pre-glass input without
+        // making every button in a scrolling sheet take a separate backdrop
+        // copy.
+        child: physicalOptics ? null : LiquidGlassBatch(child: child),
+      );
+    }
+
+    final material = morph == null
+        ? lens(context, null)
+        : AnimatedBuilder(animation: morph.animation, builder: lens);
     final surface = physicalOptics
         ? Stack(
             fit: StackFit.passthrough,
             children: [
-              Positioned.fill(child: lens),
+              Positioned.fill(child: material),
               LiquidGlassBatch(child: child),
             ],
           )
-        : lens;
+        : material;
     // Activation changes batching, not subtree identity. Replacing this
     // wrapper would dispose an active TextField at the end of its jelly motion.
     return LiquidGlassBatch.inherit(enabled: !independent, child: surface);
