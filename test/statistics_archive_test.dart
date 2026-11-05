@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 /// Regression coverage for the statistics route moved onto the Wenku8 archive
@@ -20,6 +22,7 @@ void main() {
     directory = await Directory.systemTemp.createTemp('fqapp-statistics-');
     Hive.init(directory.path);
     await LibraryStore.instance.init();
+    await ShelfStore.instance.init();
   });
 
   tearDown(() async {
@@ -58,4 +61,55 @@ void main() {
     await tester.pump();
     expect(find.text(todayLabel), findsNothing);
   });
+
+  testWidgets('当前文库展示本机藏书与有阅读记录', (tester) async {
+    await tester.runAsync(
+      () => ShelfStore.instance.add(
+        MediaItem(
+          id: 'shelf-book',
+          title: '书架里的书',
+          cover: '',
+          author: '',
+          badge: '',
+          ep: '',
+          kind: 'book',
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => LibraryStore.instance.accumulateReadTime('read-book', 'book', 120),
+    );
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(const MaterialApp(home: ReadingStatisticsPage()));
+    await tester.pumpAndSettle();
+
+    final overview = find.textContaining('当前文库 · ');
+    await tester.scrollUntilVisible(
+      overview,
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const ValueKey('reading-statistics-list')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(overview, findsOneWidget);
+    expect(_metricValue(tester, 'mine-metric-shelf'), '1');
+    expect(_metricValue(tester, 'mine-metric-reading'), '1');
+  });
+}
+
+/// The numeric value inside one statistics metric, found by its stable key.
+String? _metricValue(WidgetTester tester, String key) {
+  final metric = find.byKey(ValueKey(key));
+  final texts = tester.widgetList<Text>(
+    find.descendant(
+      of: metric,
+      matching: find.byWidgetPredicate((widget) => widget is Text),
+    ),
+  );
+  return texts
+      .map((text) => text.data)
+      .firstWhere((data) => data != null && RegExp(r'^\d+$').hasMatch(data));
 }
