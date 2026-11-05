@@ -1,3 +1,19 @@
+// 日志查看页（fqapp 专有功能，上游没有对应页面）。
+//
+// The page shell follows the ported Wenku8 settings vocabulary from revision
+// ebcd7f1 (`lib/pages.dart` SettingsPage / `lib/feature_pages.dart`
+// ArchiveFeaturePage): ArchiveFeaturePage header + GlassIconButton actions and
+// ContentNotice empty states. The fqapp log toolbar, filter sheet, export
+// pipeline and the frozen-list/follow behaviour are kept as-is.
+//
+// Mechanical substitutions:
+// - `SettingsScaffold` + Material AppBar action -> `ArchiveFeaturePage` +
+//   `GlassIconButton` (tooltip/label「日志操作」unchanged). The body reserves
+//   the floating header height because it used to sit under an AppBar.
+// - `HomeStateView` -> `ContentNotice` (same title/message).
+// - The action sheet keeps `showHomeSheet` + `SettingsRow`: it is an
+//   fqapp-specific menu that other tests address by row type.
+
 import 'dart:async';
 import 'dart:collection';
 
