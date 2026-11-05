@@ -99,6 +99,7 @@ void main() {
     expect(video.isVideo, isTrue);
     expect(video.statusLabel, '20');
     expect(video.subtitleLine, '作者甲 · 全20集');
+    expect(video.detailLine, '作者甲 · 全20集');
 
     final manju = ArchiveShelfEntry(
       item: _item(kind: 'manju', ep: ''),
@@ -106,6 +107,23 @@ void main() {
     expect(manju.isVideo, isTrue);
     expect(manju.statusLabel, isNull);
     expect(manju.subtitleLine, '作者甲');
+  });
+
+  test('视频 ep 已是集数文案时原样展示，不重复包裹', () {
+    // `series_detail_page` stores `episodeLabel` (`全66集`).
+    final labelled = ArchiveShelfEntry(
+      item: _item(kind: 'video', ep: '全12集'),
+    );
+    expect(labelled.statusLabel, '全12集');
+    expect(labelled.subtitleLine, '作者甲 · 全12集');
+    expect(labelled.detailLine, '作者甲 · 全12集');
+
+    // `drama_page` stores `共 N 集`.
+    final drama = ArchiveShelfEntry(
+      item: _item(kind: 'manju', ep: '共20集'),
+    );
+    expect(drama.subtitleLine, '作者甲 · 共20集');
+    expect(drama.detailLine, '作者甲 · 共20集');
   });
 
   test('封面徽标顺序：更新/缓存在前，来源随后', () {
@@ -178,6 +196,9 @@ void main() {
       ).progressText,
       '共84章',
     );
+    // Contract is four states; a read entry without chapter info reports no
+    // progress instead of inventing a fifth label.
+    expect(ArchiveShelfEntry(item: _item(), read: true).progressText, isEmpty);
   });
 
   test('archiveSourceLabel 映射来源与媒介', () {

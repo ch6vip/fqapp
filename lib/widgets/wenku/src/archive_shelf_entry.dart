@@ -65,12 +65,21 @@ class ArchiveShelfEntry {
   }
 
   /// `作者 · 状态`, or `作者 · 全 N 集` for video entries.
+  ///
+  /// fqapp video/manga records do not always store a bare episode count:
+  /// `series_detail_page` writes `episodeLabel` (`全66集`) and `drama_page`
+  /// writes `共 N 集`. Only a pure number gets the `全 N 集` wrapper; any other
+  /// label is shown verbatim so it never becomes `全全12集集`.
   String get subtitleLine {
     final author = item.author.trim();
     final String? status;
     if (isVideo) {
       final ep = item.ep.trim();
-      status = ep.isEmpty ? null : '全$ep集';
+      status = ep.isEmpty
+          ? null
+          : _episodeCountPattern.hasMatch(ep)
+          ? '全$ep集'
+          : ep;
     } else {
       status = statusLabel;
     }
@@ -99,6 +108,9 @@ class ArchiveShelfEntry {
   }
 
   /// 尚未开始阅读 / 已读完 / chapterLabel / 共 N 章.
+  ///
+  /// A read entry with neither a chapter label nor a chapter total has no
+  /// progress to report; it returns '' rather than inventing a fifth state.
   String get progressText {
     if (!read) return '尚未开始阅读';
     if (finished) return '已读完';
@@ -106,9 +118,11 @@ class ArchiveShelfEntry {
     if (label != null && label.isNotEmpty) return label;
     final total = totalChapters;
     if (total != null && total > 0) return '共$total章';
-    return '阅读中';
+    return '';
   }
 }
+
+final RegExp _episodeCountPattern = RegExp(r'^[0-9]+$');
 
 /// The source/kinds label shown on the cover and in the wide information pane.
 String? archiveSourceLabel(MediaItem item, {required bool local}) {
