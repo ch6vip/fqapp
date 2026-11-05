@@ -1,0 +1,55 @@
+Wenku8 Flutter
+
+The repository's existing LICENSE and assets/licenses/GPL-3.0.txt apply to
+published source files. Third-party components retain their own copyrights
+and license conditions.
+
+Implementation changes, September-October 2026:
+New Flutter presentation, reader, local library/cache, Android bridges and
+listening implementation. Modified on 2026-10-15 to retire vendor-specific
+speech integration, add configurable low-performance rendering, remove runtime
+diagnostic entries and keep chapter-level listening progress/media metadata.
+Modified on 2026-10-17 to refine paragraph/column page turns, preserve EPUB
+image dimensions, add author work lists and retain complete login sessions.
+
+The project provides presentation, local library and reader source.
+The licenses of included third-party components remain applicable; this notice
+does not change their source or attribution requirements.
+
+Optional unmodified font downloads, not bundled in the APK: Source Han Serif
+CN 2.003 and Source Han Sans CN 2.005, Adobe; LXGW WenKai GB Screen 1.530,
+LXGW and Klee Project Authors; Zhuque Fangsong 0.212 technical preview,
+TrionesType and Alegreya authors; Iansui 1.020, But Ko and Klee Project Authors.
+Each retains SIL Open Font License 1.1; original notices: assets/fonts/.
+
+Edge read-aloud v2 protocol adaptation: rany2/edge-tts,
+Copyright (c) 2025- rany <rany@riseup.net>, LGPL version 3.
+Ported to Dart and modified 2026-10-15 in lib/listening/edge_protocol.dart.
+Upstream commit: bd44c1d1aaebdc1db7f47456ee12431b42ec7cac.
+Full upstream notice: assets/licenses/edge-tts.txt.
+
+See docs/THIRD_PARTY.md for component provenance and license boundaries.
+
+MOBI import: libmobi 0.12, Copyright (c) 2014-2022 Bartek Fabiszewski,
+LGPL version 3 or later. Unmodified library sources and license are retained
+in third_party/libmobi/. Linked dynamically as libmobi.so; the app-specific
+JNI/export wrapper is in android/app/src/main/cpp/. Encryption is disabled.
+Full license also supplied in assets/licenses/libmobi.txt.
+
+Liquid Glass Easy 5.0.0: Copyright (c) 2025 Ahmed Gamil, MIT License.
+Source and license: third_party/liquid_glass_easy/. Modified 2026-10-15 to
+bound unnecessary single-lens shader output; see its PATCHES.md.
+
+OpenCC 1.1.9 dictionaries: BYVoid and contributors, Apache License 2.0.
+Unmodified dictionaries and provenance: assets/opencc/.
+Full license: assets/licenses/opencc.txt. The Dart display converter is
+implemented in this project; the OpenCC native engine is not included.
+
+juniversalchardet 2.0.4: Copyright 2016-2017 Alberto Fernandez,
+2006-2007 Kohei Taketa (Java port), 2001 Netscape Communications Corporation.
+Upstream MPL 1.1 / GPL 2.0-or-later / LGPL 2.1-or-later alternatives retained;
+this distribution uses the MPL 1.1 option. Unmodified source,
+build files and notices: third_party/juniversalchardet-2.0.4/.
+Apache POI HWPF 5.5.1 and document dependency notices: assets/licenses/poi.txt.
+
+0.5.0 source distribution: upstream library test suites and sample fixtures are omitted; runtime library sources and original licenses are retained.
