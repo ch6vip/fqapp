@@ -3,10 +3,13 @@
 //     section rhythm, featurePadding, _muted, _section spacing)
 // Mechanical substitutions:
 // - `ReadingStatisticsData` (range picker, bookmarks, collection, touch
-//   modules) is not ported. fqapp records per-day minutes and a book-level
-//   read-time ranking only; the page renders those upstream sections that the
-//   local store can actually fill: 阅读总览, 阅读节律, 阅读日历, 读得最多.
-//   No upstream-only statistic is invented.
+//   modules) is not ported wholesale. The page renders the upstream overview
+//   sections fqapp's stores can fill: 阅读总览 (累计/活跃/本周/今日, plus the
+//   「当前文库」 block fed by ShelfStore and the reading-history ranking),
+//   阅读节律, 阅读日历, 读得最多. No upstream-only statistic (bookmarks,
+//   light notes, online-book counts) is invented.
+// - 「当前文库」 reads `ShelfStore.records()` and `ReadingStats.rank` (books
+//   with history or recorded time); the page layer only, no service changes.
 // - The category `GlassDock` is not mounted: fqapp opens statistics as a
 //   standalone route above the app shell, and every remaining section fits a
 //   single scroll. Upstream's module configuration sheet has no fqapp
@@ -24,6 +27,7 @@ import '../models/reading_stats.dart';
 import '../services/book_open_preferences.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
+import '../services/shelf_store.dart';
 import '../widgets/mine/mine_heatmap.dart';
 import '../widgets/mine/mine_summary.dart';
 import '../widgets/mine/mine_top_books.dart';
@@ -44,9 +48,11 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
   static const _rhythmDays = 30;
 
   ReadingStats _stats = ReadingStats.empty;
+  int _shelfBooks = 0;
   bool _loading = true;
   late final Listenable _historyChanges;
   late final Listenable _readTimeChanges;
+  late final Listenable _shelfChanges;
   Timer? _reloadTimer;
   bool _visible = false;
   bool _storeDirty = true;
@@ -58,6 +64,8 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
     _historyChanges = LibraryStore.instance.historyListenable
       ..addListener(_scheduleStoreReload);
     _readTimeChanges = LibraryStore.instance.readTimeListenable
+      ..addListener(_scheduleStoreReload);
+    _shelfChanges = ShelfStore.instance.listenable
       ..addListener(_scheduleStoreReload);
   }
 
@@ -79,6 +87,7 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
     _reloadTimer?.cancel();
     _historyChanges.removeListener(_scheduleStoreReload);
     _readTimeChanges.removeListener(_scheduleStoreReload);
+    _shelfChanges.removeListener(_scheduleStoreReload);
     super.dispose();
   }
 
@@ -103,6 +112,7 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
     );
     setState(() {
       _stats = stats;
+      _shelfBooks = ShelfStore.instance.records().length;
       _loading = false;
     });
   }
@@ -138,6 +148,12 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
               padding: featurePadding(context),
               children: [
                 MineSummary(stats: _stats, today: today),
+                const SizedBox(height: 30),
+                MineLibraryOverview(
+                  today: today,
+                  shelfBooks: _shelfBooks,
+                  readingBooks: _stats.rank.length,
+                ),
                 const SizedBox(height: 34),
                 _rhythm(context, today),
                 const SizedBox(height: 34),
@@ -155,8 +171,9 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
       for (var back = _rhythmDays - 1; back >= 0; back--)
         DateTime(today.year, today.month, today.day - back),
     ];
-    // fqapp has no "unobserved day" signal: a day without recorded minutes is
-    // a real zero, so the curve stays continuous instead of inventing gaps.
+    // The rhythm treats a day with no measured minutes as zero so the 7-day
+    // average is defined at every point; the calendar is where fqapp encodes
+    // "recorded zero" versus "no record" separately (a day-map key).
     final minutes = [for (final day in dates) _stats.minutesOn(day)];
     final averages = <double?>[
       for (var i = 0; i < minutes.length; i++)

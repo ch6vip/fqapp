@@ -5,9 +5,15 @@
 // Mechanical substitutions:
 // - The upstream painter is rebuilt as positioned widgets with the same
 //   geometry (14-week segments, 2 px gap, 2 px cell radius, monochrome fill
-//   levels [.055, .18, .31, .49, .72], unrecorded outline .19) so each day
-//   keeps an accessible tap target and a stable `reading-heatmap-cell-N` key
-//   for the existing regression suite.
+//   levels [.055, .18, .31, .49, .72]) so each day keeps an accessible tap
+//   target and a stable `reading-heatmap-cell-N` key for the existing
+//   regression suite.
+// - Cell appearance follows `_CalendarFrame`: a value that exists in the day
+//   map is "recorded" (a recorded zero still gets the .055 first level and no
+//   outline), while a day with no map entry is "unobserved" (transparent fill
+//   plus the .19 muted outline).
+// - Selection is the upstream `rectAt(index).inflate(1.4)` RRect stroke with
+//   radius 3.4, drawn outside the cell and never changing its fill.
 // - `appText(context, value)` -> `value` (single Chinese locale).
 // - Selection and entrance crossfades collapse to a direct repaint; the
 //   selected-day ring and the readout below the grid are the upstream ones.
@@ -118,11 +124,12 @@ class _MineHeatmapState extends State<MineHeatmap> {
     double maximum,
   ) {
     final minutes = widget.stats.minutesOn(date);
-    final fill = minutes <= 0 || maximum <= 0
-        ? 0.0
-        : _levels[(minutes / maximum * 4).ceil().clamp(1, 4)];
+    final recorded = widget.stats.dayMinutes.containsKey(readingDayKey(date));
+    final level = minutes <= 0 || maximum <= 0
+        ? 0
+        : (minutes / maximum * 4).ceil().clamp(1, 4);
+    final fill = recorded ? _levels[level] : 0.0;
     final selected = date == shown;
-    final radius = BorderRadius.circular(selected ? 3.4 : 2);
     return Semantics(
       label:
           '${date.year}年${date.month}月${date.day}日，'
@@ -134,25 +141,61 @@ class _MineHeatmapState extends State<MineHeatmap> {
         key: ValueKey('reading-heatmap-cell-$index'),
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _picked = date),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: fill == 0
-                ? Colors.transparent
-                : scheme.onSurface.withValues(alpha: fill),
-            borderRadius: radius,
-            border: selected
-                ? Border.all(color: scheme.onSurface, width: 1)
-                : fill == 0
-                ? Border.all(
-                    color: scheme.onSurfaceVariant.withValues(alpha: .19),
-                    width: .7,
-                  )
-                : null,
-          ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: recorded
+                    ? scheme.onSurface.withValues(alpha: fill)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
+                border: recorded
+                    ? null
+                    : Border.all(
+                        color: scheme.onSurfaceVariant.withValues(alpha: .19),
+                        width: .7,
+                      ),
+              ),
+            ),
+            if (selected)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _SelectionRingPainter(scheme.onSurface),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
+}
+
+/// Upstream `_CalendarPainter`'s selection ring: `rectAt(index).inflate(1.4)`
+/// with radius 3.4 and a 1 px ink stroke, painted over the untouched cell.
+class _SelectionRingPainter extends CustomPainter {
+  const _SelectionRingPainter(this.ink);
+
+  final Color ink;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        (Offset.zero & size).inflate(1.4),
+        const Radius.circular(3.4),
+      ),
+      Paint()
+        ..color = ink
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SelectionRingPainter old) => old.ink != ink;
 }
 
 /// One week-row dot matrix, arranged in consecutive sections of at most 14

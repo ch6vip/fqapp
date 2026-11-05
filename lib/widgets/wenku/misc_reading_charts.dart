@@ -572,39 +572,28 @@ class _ActivityRingPainter extends CustomPainter {
       }
       canvas.drawCircle(
         center,
-        radius,
-        Paint()
-          ..color = track.withValues(alpha: .12)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
+        size.width * .285,
+        Paint()..color = track.withValues(alpha: .035),
       );
       return;
     }
-    final rect = Rect.fromCircle(
-      center: size.center(Offset.zero),
-      radius: size.width * .42,
-    );
-    canvas.drawArc(
-      rect,
-      0,
-      math.pi * 2,
-      false,
-      Paint()
-        ..color = track.withValues(alpha: .10)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = size.width * .055,
-    );
-    if (value <= 0) return;
+    final rect = (Offset.zero & size).deflate(size.width * .10);
+    final pen = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = size.width * .09;
     canvas.drawArc(
       rect,
       -math.pi / 2,
-      math.pi * 2 * value.clamp(0, 1),
+      math.pi * 2,
       false,
-      Paint()
-        ..color = ink
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeWidth = size.width * .055,
+      pen..color = track.withValues(alpha: .09),
+    );
+    canvas.drawArc(
+      rect,
+      -math.pi / 2,
+      math.pi * 2 * value,
+      false,
+      pen..color = ink,
     );
   }
 
