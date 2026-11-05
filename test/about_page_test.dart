@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/pages/about_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 /// 关于页改版后的结构与交互：全部信息行齐备、版本行点按复制、开源许可
 /// 打开框架许可页、微信赞赏打开赞赏码弹窗。
@@ -41,8 +42,9 @@ void main() {
     expect(find.text('Source Code'), findsNothing);
     expect(find.text('源代码'), findsOneWidget);
     expect(find.text('问题反馈'), findsOneWidget);
-    // 信息行统一走设置组件，不再使用 Material ListTile。
-    expect(find.byType(SettingsRow), findsNWidgets(5));
+    // 信息行统一走档案面板，不再使用设置卡片或 Material ListTile。
+    expect(find.byType(ContentPanel), findsWidgets);
+    expect(find.byType(SettingsRow), findsNothing);
     expect(find.byType(ListTile), findsNothing);
 
     expect(find.text('支持作者'), findsOneWidget);

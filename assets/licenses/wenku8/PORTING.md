@@ -14,9 +14,18 @@ items. `lib/pages/mine_page.dart` adapts the upstream `MyPage` layout.
 
 The adaptations keep fqapp navigation, data models, search services, local
 storage and accessibility preferences. No Wenku8 account, cloud sync,
-repository, reader engine or network implementation is included. The
-existing fqapp statistics views are relocated, not a port of the upstream
-statistics implementation. Original application branding is not copied.
+repository, reader engine or network implementation is included. Original
+application branding is not copied.
+
+The misc feature pages port the upstream archive shell and chart vocabulary:
+`reading_statistics_page.dart` (overview/rhythm/calendar/most-read sections
+that fqapp's local read-time data can fill), `mine_summary.dart`,
+`mine_heatmap.dart`, `mine_top_books.dart`, the offline cache list/empty
+shells (`cached_books_page.dart`, `cached_dramas_page.dart`), the backup and
+legacy-import shells (`library_backup_page.dart`,
+`fanqie_history_import_page.dart`) and the about/licence shell
+(`about_page.dart`). Upstream-only statistics dimensions, account, cloud and
+update services are not synthesised.
 
 The original upstream NOTICE, root LICENSE (GNU GPL version 2 text), and
 assets/licenses/GPL-3.0.txt are retained verbatim in this directory. The
