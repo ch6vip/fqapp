@@ -463,6 +463,7 @@ class _RuleEditorState extends State<_RuleEditor> {
       SettingsGlassControls.toggle(
         context,
         value: _regex,
+        semanticLabel: '使用正则表达式',
         onChanged: _busy ? null : (v) => setState(() => _regex = v),
       ),
     ],

@@ -7,8 +7,10 @@
 //
 // Mechanical substitutions:
 // - `SettingsScaffold` / `SettingsGroupCard` / `SettingsSwitch` / HomePalette
-//   rows -> `ArchiveFeaturePage`, `ContentPanel`, `SettingsPanel`,
+//   rows -> `SettingsArchivePage`, `ContentPanel`, `SettingsPanel`,
 //   `SettingsLinkRow`, `SettingsGlassControls.toggle`.
+// - `SettingsArchivePage` drops the back button when the nearest Navigator has
+//   nothing to pop, so the Windows right pane cannot be emptied by it.
 // - The status dot reads the archive `colorScheme` instead of HomePalette.
 
 import 'dart:convert';
@@ -20,6 +22,7 @@ import 'package:flutter/services.dart';
 
 import '../services/backend_service.dart';
 import '../services/lan_share_preferences.dart';
+import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/settings_glass_controls.dart';
@@ -256,7 +259,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
       ('正文', '/api/v1/chapters/{item_id}', '章节正文与插图'),
     ];
 
-    return ArchiveFeaturePage(
+    return SettingsArchivePage(
       title: '本地接口',
       code: 'SYSTEM / LOCAL API',
       child: Align(
@@ -359,6 +362,10 @@ class _ApiServicePageState extends State<ApiServicePage> {
                           SettingsGlassControls.toggle(
                             context,
                             value: _lanShare,
+                            // 确认框还开着时不能先显示「开」：只有真正
+                            // 开启成功才跟随 `_lanShare` 翻转。
+                            optimistic: false,
+                            semanticLabel: '局域网共享',
                             onChanged: _switching ? null : _toggleLanShare,
                           ),
                       ],

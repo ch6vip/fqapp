@@ -9,6 +9,9 @@
 //   settings components (`lib/widgets/wenku/settings_glass_controls.dart`,
 //   `settings_glass_menu.dart`) through `SettingsToggleRow` /
 //   `GlassSettingMenu`.
+// - `ArchiveFeaturePage` -> `SettingsArchivePage`, which renders the same
+//   header but omits the back button when the nearest Navigator has no route
+//   to pop (the Windows two-pane shell).
 // - The page keeps fqapp's `SettingsCategory` / `SettingsItem` data model so
 //   the Windows two-pane [DesktopSettingsBody] keeps working unchanged.
 // - `rowBuilder` is an fqapp addition: settings rows whose control is a
@@ -17,6 +20,7 @@
 
 import 'package:flutter/cupertino.dart';
 
+import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
@@ -111,7 +115,7 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
   @override
   Widget build(BuildContext context) {
     final items = widget.itemsBuilder?.call(context) ?? widget.items;
-    return ArchiveFeaturePage(
+    return SettingsArchivePage(
       title: widget.title,
       code: widget.code ?? settingsCategoryCode(widget.title),
       child: Align(

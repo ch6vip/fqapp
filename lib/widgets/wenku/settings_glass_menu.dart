@@ -18,6 +18,8 @@
 //   HapticCue.selection through JellyTapSurface.
 // - `MediaQuery.disableAnimationsOf(context)` supplies the reduce-motion flag,
 //   exactly as the upstream call sites do.
+// - fqapp-only `valueLabel`: the inline trigger may show a short label while
+//   the menu still lists the full option labels.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -256,10 +258,16 @@ class GlassSettingMenu<T> extends StatefulWidget {
     required this.onChanged,
     required this.reduceMotion,
     this.semanticLabel,
+    this.valueLabel,
   });
   final IconData icon;
   final String label;
   final String? semanticLabel;
+
+  /// Optional inline value text. Upstream derives the trigger from the
+  /// selected option's label; fqapp keeps short labels for values whose full
+  /// label would wrap the settings row.
+  final String? valueLabel;
   final T value;
   final Map<T, String> options;
   final FutureOr<void> Function(T) onChanged;
@@ -341,7 +349,7 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
               children: [
                 Flexible(
                   child: AppText(
-                    widget.options[widget.value] ?? '',
+                    widget.valueLabel ?? widget.options[widget.value] ?? '',
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.ellipsis,
