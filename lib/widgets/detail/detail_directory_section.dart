@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/media_item.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
+import '../wenku/wenku_ui.dart';
 import 'detail_chapter_row.dart';
 import 'detail_style.dart';
 import 'detail_states.dart';
@@ -108,14 +109,31 @@ class DetailDirectorySection extends StatelessWidget {
                 ),
             ],
           );
+    final action = _action(palette);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DetailSectionHeader(
-          title: '目录',
-          action: _action(palette),
-          bottomGap: progress == null ? 10 : 8,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: Row(
+            children: [
+              const Expanded(
+                child: ArchiveSection(title: '目录', code: '02 / CONTENTS'),
+              ),
+              if (progress != null)
+                Text(
+                  '${progress.number} / ${progress.total}',
+                  style: TextStyle(
+                    color: palette.muted,
+                    fontSize: 12,
+                    fontFeatures: detailNumericFeatures,
+                  ),
+                ),
+              ?action,
+            ],
+          ),
         ),
+        const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: Column(

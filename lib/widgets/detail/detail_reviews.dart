@@ -4,17 +4,19 @@ import 'package:flutter/material.dart';
 import '../../models/book_comment.dart';
 import '../../models/book_detail.dart';
 import '../../services/poster_cache.dart';
-import '../home/home_design.dart';
 import '../home/home_shelf.dart';
-import 'detail_states.dart';
+import '../wenku/wenku_ui.dart';
 
 export 'detail_comment_tile.dart' show DetailCommentTile, ReviewReplyLoader;
 
-/// Review block: section heading with the single 「全部」 entry, then the
-/// newest three reviews, each clamped to four lines.
+/// Review block: the archive `书评` section heading with the single 「全部」
+/// entry, then the newest three reviews, each clamped to four lines.
 ///
-/// The aggregate rating card is gone: the detail page shows the rating once,
-/// in the hero. Renders nothing when there are no reviews at all.
+/// Upstream has no review list on its detail page (reviews live behind
+/// `BookCommunityActions`), so the section keeps fqapp's content and adopts the
+/// shared archive section/row rhythm from `wenku_archive.dart`. The aggregate
+/// rating card stays gone: the detail page shows the rating once, in the hero.
+/// Renders nothing when there are no reviews at all.
 class DetailReviews extends StatelessWidget {
   final BookCommentPage page;
   final BookDetail? detail;
@@ -25,6 +27,10 @@ class DetailReviews extends StatelessWidget {
   /// The book whose reviews these are.
   final String bookId;
 
+  /// True when the caller already supplies the page gutter (the ported detail
+  /// page pads its whole sliver); false adds fqapp's 16dp gutter itself.
+  final bool flush;
+
   const DetailReviews({
     super.key,
     required this.page,
@@ -33,11 +39,11 @@ class DetailReviews extends StatelessWidget {
     this.onOpenAll,
     this.loadingMore = false,
     this.bookId = '',
+    this.flush = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     if (page.isEmpty && page.totalCount == 0) return const SizedBox.shrink();
     final totalCount = page.totalCount > 0
         ? page.totalCount
@@ -47,45 +53,56 @@ class DetailReviews extends StatelessWidget {
         : page.comments;
     final action = onOpenAll ?? (loadingMore ? null : onLoadMore);
     final countLabel = '${formatCount(totalCount)} 条';
-    final actionLabel = action == null ? countLabel : '$countLabel · 全部 ›';
+    final horizontal = flush ? 0.0 : homeGutter;
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DetailSectionHeader(
-          key: const Key('detail_reviews_header'),
-          title: '书评',
-          action: action == null
-              ? Text(
-                  actionLabel,
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: horizontal),
+          child: Row(
+            key: const Key('detail_reviews_header'),
+            children: [
+              Expanded(
+                child: ArchiveSection(
+                  title: '书评',
+                  code: '03 / REVIEWS',
+                  subtitle: countLabel,
+                ),
+              ),
+              if (action == null)
+                Text(
+                  countLabel,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: palette.muted, fontSize: 12),
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
                 )
-              : HomePressable(
+              else
+                GlassTextButton(
                   key: const Key('detail_reviews_more'),
-                  semanticLabel: '查看全部书评',
-                  onTap: action,
-                  borderRadius: BorderRadius.circular(6),
+                  compact: true,
+                  onPressed: action,
                   child: loadingMore
                       ? const SizedBox.square(
                           dimension: 14,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Text(
-                          actionLabel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: palette.muted, fontSize: 12),
-                        ),
+                      : const AppText('全部'),
                 ),
+            ],
+          ),
         ),
         if (page.comments.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+            padding: EdgeInsets.symmetric(horizontal: horizontal),
             child: Column(
               children: [
                 for (var i = 0; i < displayed.length; i++) ...[
-                  if (i > 0) Divider(height: 1, color: palette.line),
+                  if (i > 0)
+                    Divider(height: 1, color: Theme.of(context).dividerColor),
                   _PreviewReview(
                     key: ValueKey('detail_review_${displayed[i].id}'),
                     comment: displayed[i],
@@ -101,9 +118,9 @@ class DetailReviews extends StatelessWidget {
 
 /// Compact review row used on the detail page.
 ///
-/// Mockup: 22dp round avatar, 12dp name with a muted `★ 10`, then the review
-/// clamped to four lines. Likes, replies and the score summary stay in the
-/// 「全部书评」 sheet, not in the preview.
+/// Upstream rhythm: 22dp round avatar, 12dp name with a muted `★ 10`, then the
+/// review clamped to four lines. Likes, replies and the score summary stay in
+/// the 「全部书评」 sheet, not in the preview.
 class _PreviewReview extends StatelessWidget {
   final BookComment comment;
 
@@ -111,7 +128,7 @@ class _PreviewReview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final score = comment.score;
     final scoreLabel = score == score.roundToDouble()
         ? score.toInt().toString()
@@ -123,15 +140,15 @@ class _PreviewReview extends StatelessWidget {
         children: [
           Row(
             children: [
-              _avatar(palette),
+              _avatar(context),
               const SizedBox(width: 8),
               Flexible(
-                child: Text(
+                child: AppText(
                   comment.userName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: palette.ink,
+                    color: scheme.onSurface,
                     fontSize: 12,
                     height: 1.5,
                   ),
@@ -139,10 +156,10 @@ class _PreviewReview extends StatelessWidget {
               ),
               if (comment.score > 0) ...[
                 const SizedBox(width: 8),
-                Text(
+                AppText(
                   '★ $scoreLabel',
                   style: TextStyle(
-                    color: palette.muted,
+                    color: scheme.onSurfaceVariant,
                     fontSize: 12,
                     height: 1.5,
                   ),
@@ -152,12 +169,16 @@ class _PreviewReview extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           if (comment.text.isNotEmpty)
-            Text(
+            AppText(
               comment.text,
               key: ValueKey('detail_review_text_${comment.id}'),
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: palette.ink, fontSize: 13, height: 1.5),
+              style: TextStyle(
+                color: scheme.onSurface,
+                fontSize: 13,
+                height: 1.5,
+              ),
             ),
         ],
       ),
@@ -165,37 +186,32 @@ class _PreviewReview extends StatelessWidget {
   }
 
   /// 22dp round avatar showing the first character of the name.
-  Widget _avatar(HomePalette palette) {
+  Widget _avatar(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final name = comment.userName.trim();
     final fallback = ColoredBox(
-      color: palette.soft,
+      color: scheme.surfaceContainerHighest,
       child: Center(
         child: Text(
           name.isEmpty ? '读' : name.substring(0, 1),
           textScaler: TextScaler.noScaling,
-          style: TextStyle(color: palette.muted, fontSize: 11, height: 1.2),
+          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 11),
         ),
       ),
     );
     final avatar = comment.userAvatar;
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: palette.eink ? Border.all(color: palette.line) : null,
-      ),
-      child: ClipOval(
-        child: SizedBox.square(
-          dimension: 22,
-          child: avatar.isEmpty
-              ? fallback
-              : CachedNetworkImage(
-                  cacheManager: PosterCache.instance,
-                  imageUrl: avatar,
-                  fit: BoxFit.cover,
-                  memCacheWidth: 44,
-                  errorWidget: (context, _, _) => fallback,
-                ),
-        ),
+    return ClipOval(
+      child: SizedBox.square(
+        dimension: 22,
+        child: avatar.isEmpty
+            ? fallback
+            : CachedNetworkImage(
+                cacheManager: PosterCache.instance,
+                imageUrl: avatar,
+                fit: BoxFit.cover,
+                memCacheWidth: 44,
+                errorWidget: (context, _, _) => fallback,
+              ),
       ),
     );
   }
