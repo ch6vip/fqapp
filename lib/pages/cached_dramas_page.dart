@@ -1,13 +1,25 @@
+// Upstream source: Wenku8_Flutter rev ebcd7f1
+//   lib/offline_widgets.dart (OfflineCachePage: ArchiveFeaturePage shell,
+//     ArchiveSection '本地存储', cached-size caption, empty-copy placement)
+//   lib/local_maintenance_page.dart (ContentPanel/list page rhythm)
+// Mechanical substitutions:
+// - Drama cards (`CachedDramaCard`, `DownloadTaskCard`) stay fqapp widgets:
+//   episode-level download state has no upstream counterpart and this unit is
+//   scoped to the page shell. The page now supplies the archive shell, section
+//   header and empty state around them.
+// - The three header actions keep their existing keys and pause/resume/clear
+//   behaviour, rendered as upstream `GlassIconButton`s.
+// - Loading/error retain fqapp's store semantics; the error uses the shared
+//   `FeatureError` treatment.
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/chapter_cache_store.dart' show formatCacheBytes;
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
-import '../widgets/cache/cache_page_widgets.dart';
 import '../widgets/cache/cached_drama_widgets.dart';
-import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/wenku/wenku_ui.dart';
 
 /// 短剧离线缓存管理页（官方 DownloadManagementActivity 的「已下载」tab
 /// 形态）：按剧聚合的卡片 + 集级明细 + 删除（单集/整剧/全部）+ 占用统计
@@ -126,16 +138,21 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     }
   }
 
-  Widget _body(List<DramaDownloadTask> tasks) {
+  Widget _body(List<DramaDownloadTask> tasks, ColorScheme scheme) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error case final error?) {
-      return CacheErrorState(message: error, onRetry: _reload);
-    }
-    if (_dramas.isEmpty && tasks.isEmpty) {
-      return const CacheEmptyState(
-        icon: LucideIcons.clapperboard,
-        title: '暂无离线缓存',
-        message: '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+      return ListView(
+        padding: featurePadding(context),
+        children: [
+          FeatureError(error),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: GlassTextButton(
+              onPressed: _reload,
+              child: const AppText('重试'),
+            ),
+          ),
+        ],
       );
     }
     final episodeCount = _dramas.fold(
@@ -144,53 +161,70 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     );
     final bytes = _dramas.fold(0, (sum, item) => sum + item.bytes);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      key: const ValueKey('cached-dramas-scroll'),
+      padding: featurePadding(context),
       children: [
-        CacheSummaryCard(
-          icon: LucideIcons.clapperboard,
-          title: '已缓存 ${_dramas.length} 部 · 共 $episodeCount 集',
-          subtitle: '占用空间：${formatCacheBytes(bytes)} · 加密离线播放',
+        ArchiveSection(
+          title: '本地存储',
+          code: 'ARCHIVE / LOCAL STORAGE',
+          subtitle: _dramas.isEmpty
+              ? ''
+              : '已缓存 ${_dramas.length} 部 · 共 $episodeCount 集 · '
+                    '${formatCacheBytes(bytes)}',
         ),
-        const SizedBox(height: 12),
-        for (final task in _looseTasks(tasks))
-          DownloadTaskCard(
-            task: task,
-            onRetry: () => _downloader.resume(task.itemId),
+        const SizedBox(height: 14),
+        AppText(
+          '已下载的短剧可加密离线播放。「全部暂停/继续」只影响在途下载，'
+          '清理缓存不会删除书架里的剧集。',
+          style: TextStyle(
+            fontSize: 13,
+            height: 1.7,
+            color: scheme.onSurfaceVariant,
           ),
-        for (final item in _dramas)
-          CachedDramaCard(
-            key: ValueKey('drama-card-${item.drama.id}'),
-            summary: item,
-            tasks: _pendingTasks(item),
-            onDeleteDrama: () => _deleteDrama(item),
-            onDeleteEpisode: _deleteEpisode,
-            onRetry: (task) => _downloader.resume(task.itemId),
+        ),
+        const SizedBox(height: 22),
+        if (_dramas.isEmpty && tasks.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: AppText(
+              '暂无离线缓存',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+          )
+        else ...[
+          for (final task in _looseTasks(tasks))
+            DownloadTaskCard(
+              task: task,
+              onRetry: () => _downloader.resume(task.itemId),
+            ),
+          for (final item in _dramas)
+            CachedDramaCard(
+              key: ValueKey('drama-card-${item.drama.id}'),
+              summary: item,
+              tasks: _pendingTasks(item),
+              onDeleteDrama: () => _deleteDrama(item),
+              onDeleteEpisode: _deleteEpisode,
+              onRetry: (task) => _downloader.resume(task.itemId),
+            ),
+        ],
+        if (_dramas.isEmpty && tasks.isEmpty) ...[
+          const SizedBox(height: 10),
+          AppText(
+            '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.7,
+              color: scheme.onSurfaceVariant,
+            ),
           ),
+        ],
       ],
     );
   }
 
-  Widget _actionButton({
-    required Key key,
-    required String tooltip,
-    required IconData icon,
-    required VoidCallback? onPressed,
-    required HomePalette palette,
-  }) => IconButton(
-    key: key,
-    tooltip: tooltip,
-    onPressed: onPressed,
-    icon: Icon(
-      icon,
-      color: onPressed == null
-          ? palette.muted.withValues(alpha: 0.4)
-          : palette.ink,
-    ),
-  );
-
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final tasks = _downloader.value;
     final hasActiveTasks = tasks.any(
       (task) =>
@@ -200,33 +234,31 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     final hasPausedTasks = tasks.any(
       (task) => task.status == DramaDownloadStatus.paused,
     );
-    return SettingsScaffold(
+    return ArchiveFeaturePage(
       key: const ValueKey('dramas-page'),
       title: '短剧离线缓存',
+      code: 'ARCHIVE / LOCAL STORAGE',
       actions: [
-        _actionButton(
+        GlassIconButton(
           key: const ValueKey('dramas-pause-all'),
-          tooltip: '暂停全部下载',
-          icon: LucideIcons.circle_pause,
+          icon: CupertinoIcons.pause_circle,
+          label: '暂停全部下载',
           onPressed: hasActiveTasks ? _downloader.pauseAll : null,
-          palette: palette,
         ),
-        _actionButton(
+        GlassIconButton(
           key: const ValueKey('dramas-resume-all'),
-          tooltip: '继续全部下载',
-          icon: LucideIcons.circle_play,
+          icon: CupertinoIcons.play_circle,
+          label: '继续全部下载',
           onPressed: hasPausedTasks ? _downloader.resumeAll : null,
-          palette: palette,
         ),
-        _actionButton(
+        GlassIconButton(
           key: const ValueKey('dramas-clear-all'),
-          tooltip: '清空全部缓存',
-          icon: LucideIcons.trash,
+          icon: CupertinoIcons.trash,
+          label: '清空全部缓存',
           onPressed: _dramas.isEmpty ? null : _clearAll,
-          palette: palette,
         ),
       ],
-      body: _body(tasks),
+      child: _body(tasks, scheme),
     );
   }
 }

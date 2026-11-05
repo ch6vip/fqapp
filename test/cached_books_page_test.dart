@@ -10,8 +10,8 @@ import 'package:fqapp/pages/cached_books_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
-import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
 
@@ -27,11 +27,14 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
     expect(find.text('小说离线缓存'), findsOneWidget);
     expect(find.text('暂无缓存章节'), findsOneWidget);
+    expect(find.byType(ArchiveSection), findsOneWidget);
+    expect(find.byType(SettingsSectionHeader), findsNothing);
   });
 
-  testWidgets('深色 OLED 下缓存卡片使用 HomePalette 的表面色', (tester) async {
+  testWidgets('深色 OLED 下缓存卡片使用页面主题的表面色', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final savedMode = themeModeNotifier.value;
     final savedOled = oledModeNotifier.value;
@@ -65,15 +68,17 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    final panel = find.byType(ContentPanel).first;
     final surface = tester.widget<Material>(
-      find
-          .descendant(
-            of: find.byType(SettingsGroupCard),
-            matching: find.byType(Material),
-          )
-          .first,
+      find.descendant(of: panel, matching: find.byType(Material)).first,
     );
-    expect(surface.color, const HomePalette(true, oled: true).surface);
+    final expected = Theme.of(tester.element(panel)).colorScheme.surface;
+    expect(surface.color, expected);
+    expect(
+      expected.computeLuminance(),
+      lessThan(0.1),
+      reason: '深色 OLED 下卡片不得回退到浅色底',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
