@@ -86,3 +86,40 @@ abstract final class AppHaptics {
     }
   }
 }
+
+/// Only an explicit barrier dismissal clicks. Route transitions, timer closes
+/// and buttons inside a dialog retain their own feedback owner.
+mixin AppHapticModalBarrier<T> on ModalRoute<T> {
+  @override
+  Widget buildModalBarrier() => Builder(
+    builder: (context) {
+      void dismiss() {
+        if (!isCurrent || !barrierDismissible) return;
+        AppHaptics.play(context, HapticCue.action);
+        navigator?.maybePop();
+      }
+
+      final color = barrierColor;
+      if (color != null && color.a != 0 && !offstage) {
+        return AnimatedModalBarrier(
+          color: animation!.drive(
+            ColorTween(
+              begin: color.withValues(alpha: 0),
+              end: color,
+            ).chain(CurveTween(curve: barrierCurve)),
+          ),
+          dismissible: barrierDismissible,
+          semanticsLabel: barrierLabel,
+          barrierSemanticsDismissible: semanticsDismissible,
+          onDismiss: dismiss,
+        );
+      }
+      return ModalBarrier(
+        dismissible: barrierDismissible,
+        semanticsLabel: barrierLabel,
+        barrierSemanticsDismissible: semanticsDismissible,
+        onDismiss: dismiss,
+      );
+    },
+  );
+}
