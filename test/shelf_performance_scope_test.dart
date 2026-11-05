@@ -139,4 +139,20 @@ void main() {
     expect(on.shelf3d, isTrue);
     expect(on.glass, isTrue);
   });
+
+  test('关闭的预设被物化为全效果；调用方只应按 allows 读取', () {
+    final off = ShelfPerformanceScope.preferencesFor(
+      const PerformancePreferences(),
+      shelf3d: false,
+    );
+    // `.enabled` is not a lightweight-mode flag for the merged preset.
+    expect(off.enabled, isTrue);
+    for (final effect in PerformanceEffect.values) {
+      expect(
+        off.allows(effect),
+        effect != PerformanceEffect.shelf3d,
+        reason: '$effect',
+      );
+    }
+  });
 }

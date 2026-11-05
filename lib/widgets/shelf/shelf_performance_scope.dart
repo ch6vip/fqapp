@@ -29,6 +29,11 @@ class ShelfPerformanceScope extends StatelessWidget {
 
   /// Outer effects other than `shelf3d` are preserved verbatim; only
   /// `shelf3d` is added or removed from the merged preset.
+  ///
+  /// The result always has `enabled = true`: a disabled preset means "every
+  /// effect allowed", which cannot express "everything except 3D". Callers
+  /// must therefore read individual effects (or [PerformancePreferences.allows])
+  /// and never use `.enabled` to decide whether the lightweight preset is on.
   static PerformancePreferences preferencesFor(
     PerformancePreferences outer, {
     required bool shelf3d,
