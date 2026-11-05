@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'home_archive.dart';
 import 'home_design.dart';
 import 'home_shelf.dart';
 
@@ -51,7 +52,15 @@ class _HomeSkeletonState extends State<HomeSkeleton>
               homeGutter,
               homeHeaderGap,
             ),
-            child: _Bar(width: 96, height: 18, radius: 4),
+            // 分区头：编号细条 + 粗标题，和 HomeSectionLabel 同形。
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _Bar(width: 68, height: 8, radius: 2),
+                SizedBox(height: 7),
+                _Bar(width: 112, height: 20, radius: 3),
+              ],
+            ),
           ),
           _GridSkeleton(),
         ],
@@ -69,20 +78,28 @@ class _HomeSkeletonState extends State<HomeSkeleton>
   }
 }
 
-/// 「继续阅读」那一行字：左侧动作 + 一条书名。
+/// 「继续阅读」那一块：外框与真实面板同形，内部是动作 + 书名两条。
 class _ContinueSkeleton extends StatelessWidget {
   const _ContinueSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.fromLTRB(homeGutter, 10, homeGutter, 10),
-      child: Row(
-        children: [
-          _Bar(width: 52, height: 11, radius: 4),
-          SizedBox(width: 8),
-          Expanded(child: _Bar(height: 12, radius: 4)),
-        ],
+    final palette = HomePalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(homeGutter, 10, homeGutter, 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: palette.soft,
+          borderRadius: BorderRadius.circular(homePanelRadius),
+        ),
+        child: const Row(
+          children: [
+            _Bar(width: 52, height: 11, radius: 2),
+            SizedBox(width: 8),
+            Expanded(child: _Bar(height: 12, radius: 2)),
+          ],
+        ),
       ),
     );
   }
@@ -121,23 +138,27 @@ class _CardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 行高与 HomeMediaCard 的标题 / 编号 / 元信息三行对齐。
     return const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        AspectRatio(aspectRatio: 5 / 7, child: _Bar(radius: 12)),
-        SizedBox(height: 8),
-        _Bar(height: 14, radius: 4),
-        SizedBox(height: 6),
-        FractionallySizedBox(
-          widthFactor: 0.55,
-          alignment: Alignment.centerLeft,
-          child: _Bar(height: 14, radius: 4),
+        AspectRatio(
+          aspectRatio: 5 / 7,
+          child: _Bar(radius: homeCoverRadius),
         ),
-        SizedBox(height: 6),
+        SizedBox(height: 8),
+        _Bar(height: homeCardTitleSize, radius: 2),
+        SizedBox(height: 5),
         FractionallySizedBox(
-          widthFactor: 0.4,
+          widthFactor: 0.36,
           alignment: Alignment.centerLeft,
-          child: _Bar(height: 10, radius: 4),
+          child: _Bar(height: 8, radius: 1.5),
+        ),
+        SizedBox(height: 4),
+        FractionallySizedBox(
+          widthFactor: 0.5,
+          alignment: Alignment.centerLeft,
+          child: _Bar(height: homeCardMetaSize, radius: 2),
         ),
       ],
     );

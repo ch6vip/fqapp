@@ -6,6 +6,8 @@ import 'package:fqapp/models/search_discovery.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/services/search_history_store.dart';
 
+import 'support/search_finders.dart';
+
 void main() {
   testWidgets('the clear icon drops the draft and the suggestion panel', (
     tester,
@@ -33,7 +35,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('search_suggestions')), findsNothing);
-    expect(find.text('搜索历史'), findsOneWidget);
+    expect(searchDiscoveryScreen, findsOneWidget);
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
       isEmpty,
@@ -68,7 +70,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('旧结果'), findsNothing);
-    expect(find.text('搜索历史'), findsOneWidget);
+    expect(searchDiscoveryScreen, findsOneWidget);
   });
 }
 

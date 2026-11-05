@@ -36,7 +36,11 @@ class TestButton extends StatelessWidget {
         enabled: onPressed != null,
         focusNode: focusNode,
         autofocus: autofocus,
-        child: GestureDetector(behavior: behavior, onTap: onPressed, child: child),
+        child: GestureDetector(
+          behavior: behavior,
+          onTap: onPressed,
+          child: child,
+        ),
       ),
     );
   }

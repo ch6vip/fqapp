@@ -114,14 +114,14 @@ void main() {
     );
     expect(current.style?.color, HomePalette.accentStrong);
     expect(current.style?.fontWeight, FontWeight.w500);
-    // 已看集（第 1 格）灰字 #706C66（浅色 palette.muted）。
+    // 已看集（第 1 格）灰字 #6E6D68（浅色 palette.muted）。
     final watched = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('series-episode-0')),
         matching: find.text('1'),
       ),
     );
-    expect(watched.style?.color, const Color(0xFF706C66));
+    expect(watched.style?.color, const Color(0xFF6E6D68));
     // 点普通格回传该集下标。
     await tester.tap(find.byKey(const ValueKey('series-episode-6')));
     expect(played, [6]);
@@ -611,7 +611,7 @@ void main() {
     await tester.pumpAndSettle();
     final bandTop = Color.alphaBlend(
       const Color(0xFF302010).withValues(alpha: 0.10),
-      const Color(0xFFF6F6F6),
+      const Color(0xFFF4F3EF),
     );
     Future<void> checkPixels() async {
       final boundary =

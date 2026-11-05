@@ -1,0 +1,1760 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
+
+import '../../../controllers/liquid_glass_view_controller.dart';
+import 'liquid_glass_tab_bar.dart';
+import '../liquid_glass_adaptive_area.dart';
+import '../liquid_glass_tab_item.dart' show LiquidGlassTabBarItem;
+import '../../lens/liquid_glass_batch.dart';
+import '../../lens/liquid_glass_lens.dart';
+import '../../lens/liquid_glass_lens_scope.dart';
+import '../../utils/liquid_glass_adaptivity.dart';
+import '../../utils/liquid_glass_adaptivity_driver.dart';
+import '../../liquid_glass.dart';
+import '../../utils/liquid_glass_light.dart';
+import '../../liquid_glass_config.dart';
+import '../../liquid_glass_style.dart';
+import '../../liquid_glass_view.dart';
+import '../../utils/liquid_glass_spring.dart' show liquidGlassSpringStep;
+import '../../utils/liquid_glass_position.dart';
+import '../../utils/liquid_glass_refresh_rate.dart';
+import '../../utils/liquid_glass_shape.dart';
+import '../../utils/liquid_glass_lens_motion.dart';
+import 'liquid_glass_nav_bar_motion_pill.dart';
+import '../liquid_glass_shadow.dart';
+
+/// Self-contained **animated** liquid-glass bottom nav bar — the iOS-26
+/// "morphing glass pill" that slides between tabs, grows out of the rest
+/// highlight, can be picked up with a press-and-hold on the selected pill
+/// and dragged, and reveals the selected icon as it passes.
+///
+/// This is the internal machinery behind
+/// [LiquidGlassTabBar.glassPill]: it owns the entire dual
+/// `LiquidGlassView` pipeline and is built by
+/// [LiquidGlassTabBar.buildGlassPillBar] (which
+/// `LiquidGlassScaffold` calls when the bar's `glassPill` mode resolves
+/// for the active renderer). Prefer configuring it through
+/// [LiquidGlassTabBar] — constructing it directly still works, but
+/// it will be hidden from the public API in 3.0.
+///
+/// ## How the pill deforms
+///
+/// The BAR runs [LiquidGlassLensMotion], not the glass widget: its drawn
+/// position is sampled every frame in PIXELS, differentiated twice, and
+/// the averaged acceleration scales it oppositely on the two axes —
+///
+///     scaleX = 1 + d      scaleY = 1 − d
+///
+/// Force, not speed: the pill deforms hardest as it launches off a tab
+/// and as it brakes into the next, and sits undeformed at constant
+/// speed. There is no lean term, so it deforms about its centre and
+/// travels on the spring alone.
+///
+/// Under a **finger** the sign is the force's own, so the pill answers
+/// the hand: push it right and it stretches wide, push it left and it
+/// squashes narrow and tall.
+///
+/// A **travel** takes the same magnitudes but keys the sign to the
+/// direction it is going ([_travelSign]) — a tap to the left stretches
+/// the pill for the whole trip, a tap to the right holds it narrow and
+/// tall. Signed on the force, a journey contradicted itself: the launch
+/// pulled one way and the braking the other, and only the braking was
+/// still on screen when you looked at the tab you had chosen. The
+/// landing is unchanged; the launch now agrees with it.
+///
+/// Because the model reads the position the pill is actually drawn at,
+/// every motion feeds it and none needs special-casing: a drag-release
+/// snap genuinely IS a travel, and its braking is exactly the landing
+/// deformation you want.
+///
+/// It lives on the bar because the deformation belongs to the selection
+/// pill as a thing, not to whichever widget is drawing it this frame. The
+/// glass and the plain pill are both drawn at the size it produces, so it
+/// runs unbroken across the hand-off between them — and it outlives the
+/// glass, which is where the landing squash actually happens.
+///
+/// ## How the deformation is drawn
+///
+/// The pill is a [LiquidGlassNavBarMotionPill] — a lens widget — in the
+/// outer view's `child:` slot. Its shape is evaluated at the ENVELOPE
+/// (rest) size and the deformation rides the shader's `u_shapeScale` with
+/// matching elliptical clips, so the outline STRETCHES as one body and
+/// the end caps go elliptical rather than the capsule being re-rounded at
+/// each new size. The outer view's capture is the inner stack, so the
+/// pill still bends the bar's own glass.
+///
+/// A host's chrome — everything else it floats over the page — goes in
+/// [chromeChild], and the bar decides which view draws it by renderer.
+/// On **Impeller** it sits in the outer view's `child:` slot, after the
+/// pill, exactly as it always has: no capture exists there, so the outer
+/// view costs nothing at rest, and the chrome paints over the bar's cells
+/// and the pill. On **Skia** the outer view captures the whole screen
+/// again, and a settled bar unmounts the glass and puts that capture to
+/// sleep — so there the chrome rides the inner view's own slot instead,
+/// where it refracts the captured body directly and never wakes the
+/// outer view. [outerChild] is the explicit outer slot for a host that
+/// needs one on both renderers; it pairs with [outerNeedsRealtime].
+///
+/// Two layering notes. On Skia, [chromeChild] paints above the bar
+/// capsule but below the icon shell and the pill, so glass placed over
+/// the bar's own cells sits under them there (and over them on Impeller).
+/// And the outer view paints its `child:` slot BELOW its positioned
+/// `children:`, so the pill sits under [outerLenses] rather than over
+/// them. Nothing overlaps a bottom-anchored pill in practice — an app bar
+/// is at the top, a side action sits beside the bar.
+///
+/// ## How the pill grows
+///
+/// The lift is a **held state**, not a pass the travel makes through a
+/// bigger size. Tap a tab and the pill inflates at once, on springs
+/// under critical damping so it overshoots its raised size and rebounds;
+/// it stays there for the whole journey; and only once it has landed
+/// ([handoverStart]) is the lift released, so it deflates where it
+/// stands — dipping a little under its resting size and coming back.
+/// A grab is the same thing held open by a finger.
+///
+/// Each axis carries its own spring, at damping ratios that differ just
+/// enough that the width overshoots a shade further and settles a shade
+/// later than the height. The material has a third, much faster one, so
+/// the glass is fully on long before the size stops moving.
+///
+/// ## Handing over to the plain pill
+///
+/// A settled bar draws no glass at all — no shader pass, no clip, no
+/// outer capture, no dual-layer icon reveal. The glass gets there by
+/// **becoming** the plain pill rather than being cross-faded with one.
+///
+/// From the landing ([handoverStart]) the lens sheds its glass while
+/// everything else keeps running: the rim and its contact shadow go
+/// first, then the refraction band narrows to nothing behind them. The
+/// deflation and the acceleration squash are untouched throughout — the
+/// pill is still shrinking and still deforming while it stops looking
+/// like glass.
+///
+/// Only once there is nothing left in it to see — no glass, no lift, no
+/// deformation — is the lens dropped and
+/// `LiquidGlassBottomNavPillStatic` put in its place. By then the lens is
+/// drawing a flat fill at rest size, which is exactly what the plain pill
+/// draws, so the exchange is two identical pictures. That is what keeps
+/// the plain pill plain: it never needs the deformation, the stretched
+/// outline or an opacity, because it only ever appears once all three
+/// have finished.
+///
+/// [handoverStart] is a target rather than a switch, so tapping another
+/// tab mid-hand-off turns the glass straight back around
+/// ([glassReturnTau]) instead of finishing and starting over.
+///
+/// [body] is the page content, captured behind the glass. [chromeChild]
+/// is the host's chrome (e.g. the app bar and the side action button),
+/// placed by renderer as described above; [outerLenses] and [outerChild]
+/// are always in the outer view, over the bar and the pill.
+class LiquidGlassAnimatedNavBar extends StatefulWidget {
+  final Widget body;
+  final List<LiquidGlassTabBarItem> items;
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+
+  /// Icon + label styling for every tab cell.
+  final LiquidGlassTabItemStyle itemStyle;
+
+  /// Whether the persistent selection glass pill is drawn.
+  final bool showSelectionPill;
+
+  /// Whether the OUTER pipeline must keep capturing independently of the
+  /// selection pill. Hosts that put lenses in [outerChild] must pass
+  /// `true` while those lenses are showing; [chromeChild] never needs it.
+  final bool outerNeedsRealtime;
+
+  /// Bar geometry (size, position, padding). The bottom margin should
+  /// already include any safe-area inset.
+  final LiquidGlassTabBarLayout layout;
+
+  /// The host's chrome: a full-screen `Stack` of lens-anywhere widgets —
+  /// app bar, side action, floating button, extra lenses. The bar
+  /// places it by renderer. On Impeller it goes in the **outer** view's
+  /// `child:` slot after the pill, over the bar's cells, as the outer slot
+  /// always did. On Skia it goes in the **inner** view's `child:` slot,
+  /// above the bar capsule and below the icon shell and the pill, so it
+  /// refracts the body on the capture the bar already takes and the outer
+  /// capture can sleep while the pill is at rest. Adaptive areas and
+  /// lenses in it reach the inner view's sampler either way.
+  final Widget? chromeChild;
+
+  /// Lenses composited in the **outer** view, above the bar.
+  final List<LiquidGlass> outerLenses;
+
+  /// Widget subtree composited in the **outer** view's `child:` slot,
+  /// above the captured bar/body and above the moving pill, which lives
+  /// in that same slot. Reserved for what must paint over the bar's cells
+  /// and the pill (a modal barrier); pair it with [outerNeedsRealtime].
+  final Widget? outerChild;
+
+  /// Optional solid color behind [body].
+  final Color? backgroundColor;
+
+  /// Custom placement for the bar.
+  final LiquidGlassPosition? barPosition;
+
+  /// Overrides the bar-capsule glass shape.
+  final LiquidGlassShape? barShape;
+
+  /// The bar capsule's border lights; `null` keeps [barShape]'s own, or the
+  /// tuned defaults.
+  final LiquidGlassLight? barSpecular;
+  final LiquidGlassLight? barGlow;
+
+  /// The bar capsule's second highlight; `null` draws none.
+  final LiquidGlassLight? barSecondSpecular;
+
+  /// Refraction of the bar capsule.
+  final LiquidGlassRefraction? barRefraction;
+
+  /// Appearance (tint + blur) of the bar capsule.
+  final LiquidGlassAppearance? barAppearance;
+
+  /// iOS-style adaptivity for the whole bar (same contract as
+  /// `LiquidGlassStyle.adaptivity`): the bar capsule's tint follows the
+  /// adaptive glass color and the shell's **unselected** icons/labels
+  /// the adaptive content color, flipping together as the background
+  /// behind the bar turns dark or light (the selected item keeps
+  /// [itemStyle]'s fixed `selectedColor`). The verdict comes from
+  /// sampling the captured [body] through the inner view (see
+  /// [sampleBackground]), a manual `permanentBrightness`, or a followed
+  /// link. `null` (default) disables the feature entirely.
+  final LiquidGlassAdaptivity? adaptivity;
+
+  /// Tuning for the body-luminance sampling behind [adaptivity]. `null`
+  /// uses the standard tuning (pixelRatio 0.05, frameLimit 8).
+  final LiquidGlassAdaptiveSampling? adaptiveSampling;
+
+  /// Sampling opt-in for adaptive areas/lenses a host places in
+  /// [chromeChild] or [outerChild] (e.g. `LiquidGlassScaffold`'s system
+  /// strips and shared adaptivity groups). All register with the
+  /// **inner** view's sampler — the pre-glass body image — through that
+  /// view's own scope when drawn inside it, through a redirect when drawn
+  /// in the outer view — so the whole pipeline runs ONE sampler and no
+  /// widget ever reads its own glass back. `null` (the default) leaves
+  /// slot clients without sampling.
+  final LiquidGlassAdaptiveSampling? outerAdaptiveSampling;
+
+  /// The host's area context for the bar — the adaptivity group (e.g. a
+  /// scaffold's shared-edges area or bottom band) the bar should behave
+  /// as if it sat inside. The bar renders in its own pipeline, so it can
+  /// never be a real descendant of that area; this is the explicit
+  /// stand-in. Used as the fallback palettes when [adaptivity] is null.
+  final LiquidGlassAdaptivity? areaAdaptivity;
+
+  /// The link that area publishes its verdict on. When the bar's
+  /// resolved adaptivity carries no link of its own, the bar follows
+  /// this one instead of sampling its own region — one shared verdict,
+  /// and the bar's own sampler stays off.
+  final LiquidGlassAdaptivityLink? areaLink;
+
+  /// Whether [adaptivity] may sample [body] through the inner view.
+  /// Pass `false` when [body] is an empty stand-in (the bodyless
+  /// standalone bar) — the verdict then falls back to the adaptivity's
+  /// `permanentBrightness`, its followed link, or platform brightness.
+  final bool sampleBackground;
+
+  /// Also drive the system navigation bar's icon brightness from this
+  /// bar's verdict (see [LiquidGlassSystemChrome]). The bar is a
+  /// full-screen widget, so it covers the navigation bar's probe point
+  /// by construction. Only the navigation-bar side applies on this path
+  /// (`both` acts as `navigationBar`; `statusBar` is ignored — a top
+  /// band here would have to sample the bar's own glass). Requires
+  /// [adaptivity]. Off by default.
+  final LiquidGlassSystemChrome systemChrome;
+
+  /// Contact shadow around the **bar capsule** — the soft dark band that
+  /// hugs its rim and pools underneath, so the bar reads as sitting in
+  /// the page rather than floating on it. `null` (the default) draws
+  /// none.
+  ///
+  /// It is drawn into the INNER stack, above the capsule's glass and
+  /// below the icons, which puts it in the outer view's capture — so the
+  /// moving pill refracts the bar's shadow along with its glass. Its
+  /// corner follows [barShape] when one is set.
+  final LiquidGlassShadow? barShadow;
+
+  /// Blur behind the moving glass pill. Defaults to none.
+  final double pillBlur;
+
+  /// How much taller than the bar the glass pill stands while it is
+  /// lifted — which is the whole travel, not a peak it passes through.
+  final double pillGrowHeight;
+
+  /// Refraction strength of the moving glass pill.
+  final double pillRefractionIndex;
+
+  /// Width of the glass pill's refraction band.
+  final double pillRefractionWidth;
+
+  /// Complete refraction configuration for the moving pill. When set,
+  /// this supersedes [pillRefractionIndex], [pillRefractionWidth] and
+  /// [pillMagnification].
+  final LiquidGlassRefraction? pillRefraction;
+
+  /// Magnification of the content seen through the glass pill.
+  final double pillMagnification;
+
+  /// Overrides the moving glass pill's shape. When `null` the pill is an
+  /// Apple capsule-style shape whose radius tracks the pill's ENVELOPE
+  /// height — the size before the acceleration deformation, since the
+  /// shader stretches the authored outline rather than re-rounding it.
+  final LiquidGlassShape? pillShape;
+
+  /// The glass pill's border lights; `null` keeps [pillShape]'s own, or the
+  /// pill's defaults.
+  final LiquidGlassLight? pillSpecular;
+  final LiquidGlassLight? pillGlow;
+
+  /// The glass pill's second highlight; `null` draws none.
+  final LiquidGlassLight? pillSecondSpecular;
+
+  /// Fill tint of the moving glass pill.
+  final Color pillColor;
+
+  /// Contact shadow around the **moving pill**. `null` (the default)
+  /// draws none.
+  ///
+  /// It wraps the pill's lens rather than living inside it, so the arc
+  /// that pools below the pill is not clipped off at the outline, and it
+  /// is handed the live envelope corner and outline stretch so the ring
+  /// stays on the rim while the pill squashes. It fades with the pill.
+  final LiquidGlassShadow? pillShadow;
+
+  /// Resting material endpoint of the same persistent glass pill.
+  final LiquidGlassStyle restStyle;
+
+  /// Stiffness of the spring carrying the pill between tabs.
+  final double travelStiffness;
+
+  /// Damping of the travel spring.
+  final double travelDamping;
+
+  /// The pill's acceleration squash/stretch tuning, applied on both
+  /// finger-drags and tap-travel.
+  ///
+  /// The default caps the deformation at ±12 % rather than the free-floating
+  /// ±30 % a slider thumb can afford: this pill lives inside the bar
+  /// capsule, and a third of its height in overhang would climb out of it.
+  final LiquidGlassLensMotionSpec motion;
+
+  /// How far through a travel the pill counts as **landed**, `0`..`1` —
+  /// the one moment the settle hangs off. At it the lift is released, so
+  /// the pill starts deflating, and the hand-off to the plain twin
+  /// begins with it.
+  ///
+  /// The default `0.92` is the last of the travel, where the spring is
+  /// creeping the final pixels in: the pill arrives at full size and
+  /// comes down where it stands, rather than shrinking on the way in.
+  ///
+  /// A press-and-hold is held up for as long as the finger is down, and
+  /// then lands like any other travel — letting go starts the snap, not
+  /// the settle.
+  final double handoverStart;
+
+  /// Time constant of the hand-off — glass → plain. Larger is slower.
+  final double handoverTau;
+
+  /// Time constant of the reverse — plain → glass, when a travel starts
+  /// or a pill is picked up. Shorter than [handoverTau]: glass that is
+  /// slow to arrive reads as lag, while glass that is slow to leave reads
+  /// as settling.
+  final double glassReturnTau;
+
+  // Render pipeline knobs forwarded to both views.
+  final double pixelRatio;
+  final bool useSync;
+  final bool? useImpellerBackdrop;
+
+  /// See `LiquidGlassView.batch`, forwarded to both views. The bar's own
+  /// glass — capsule, moving pill and magnifier pill — is kept out
+  /// regardless: each takes a read of its own, so the batch only carries
+  /// the host's [chromeChild].
+  final bool batch;
+
+  /// See `LiquidGlassView.foregroundBatchId`, handed to both views: with it
+  /// the [chromeChild] slots are one batch whichever view draws them — how
+  /// the scaffold puts the sheets and dialogs presented over it, when they
+  /// ask for it, on a single read. Library-internal.
+  final int? foregroundBatchId;
+
+  /// Whether the **inner** view (body + bar capsule) captures every frame.
+  final bool realTimeCapture;
+
+  /// The Impeller-only magnifier pill under the glass one — see
+  /// [LiquidGlassTabMagnifierPillStyle].
+  final LiquidGlassTabMagnifierPillStyle magnifierPill;
+
+  const LiquidGlassAnimatedNavBar({
+    super.key,
+    required this.body,
+    required this.items,
+    required this.selectedIndex,
+    required this.onChanged,
+    required this.layout,
+    this.itemStyle = const LiquidGlassTabItemStyle(),
+    this.showSelectionPill = true,
+    this.outerNeedsRealtime = false,
+    this.chromeChild,
+    this.outerLenses = const [],
+    this.outerChild,
+    this.backgroundColor,
+    this.barPosition,
+    this.barShape,
+    this.barSpecular,
+    this.barGlow,
+    this.barSecondSpecular,
+    this.barRefraction,
+    this.barAppearance,
+    this.barShadow,
+    this.pillShadow,
+    this.pillBlur = 0,
+    this.pillGrowHeight = 12,
+    this.pillRefractionIndex = 1.025,
+    this.pillRefractionWidth = 10,
+    this.pillRefraction,
+    this.pillMagnification = 1,
+    this.pillShape,
+    this.pillSpecular,
+    this.pillGlow,
+    this.pillSecondSpecular,
+    this.pillColor = const Color(0x1CFFFFFF),
+    // Inert at rest: the moving pill hands over to a non-refracting
+    // static pill, so any glass left here would pop off at the swap.
+    this.restStyle = const LiquidGlassStyle(
+      color: Color(0x26FFFFFF),
+      blur: 0,
+      refractionIndex: 1.0,
+      refractionWidth: 0,
+      dispersion: 0,
+    ),
+    this.travelStiffness = 280,
+    this.travelDamping = 31.4,
+    this.motion = const LiquidGlassLensMotionSpec(
+      sampleWindow: 0.3,
+      sensitivity: 0.00007,
+      maxDeformation: 0.12,
+      responseTime: 0.18,
+    ),
+    this.handoverStart = 0.92,
+    this.handoverTau = 0.09,
+    this.glassReturnTau = 0.05,
+    this.pixelRatio = 1.0,
+    this.useSync = true,
+    this.useImpellerBackdrop,
+    this.batch = true,
+    this.foregroundBatchId,
+    this.realTimeCapture = true,
+    this.magnifierPill = const LiquidGlassTabMagnifierPillStyle(),
+    this.adaptivity,
+    this.adaptiveSampling,
+    this.outerAdaptiveSampling,
+    this.areaAdaptivity,
+    this.areaLink,
+    this.sampleBackground = true,
+    this.systemChrome = LiquidGlassSystemChrome.none,
+  });
+
+  @override
+  State<LiquidGlassAnimatedNavBar> createState() =>
+      _LiquidGlassAnimatedNavBarState();
+}
+
+class _LiquidGlassAnimatedNavBarState extends State<LiquidGlassAnimatedNavBar>
+    with TickerProviderStateMixin, LiquidGlassAdaptiveClient {
+  // Inner pipeline captures wallpaper + bar capsule; outer composites
+  // the moving glass pill on top so it refracts the bar's own glass.
+  final _outerViewController = LiquidGlassViewController();
+  final _innerViewController = LiquidGlassViewController();
+
+  // ===== Adaptivity (widget.adaptivity) =====
+  // The shared verdict machine (see [LiquidGlassAdaptivityDriver]) does
+  // all deciding/animating. The sampling itself runs in the INNER view
+  // (it owns the captured body); a registrar in that view's child slot
+  // enrolls this state as the sampler's client, and every sample is
+  // forwarded to the driver.
+  late final LiquidGlassAdaptivityDriver _adaptDriver =
+      LiquidGlassAdaptivityDriver(vsync: this);
+
+  // Identity-stable redirect functions for the outer slots' adaptive
+  // clients (clients re-register whenever the function identity
+  // changes, so these are created exactly once). They forward to the
+  // inner view's sampler through its controller.
+  late final void Function(LiquidGlassAdaptiveClient) _outerAdaptiveRegister =
+      _innerViewController.registerAdaptiveClient;
+  late final void Function(LiquidGlassAdaptiveClient) _outerAdaptiveUnregister =
+      _innerViewController.unregisterAdaptiveClient;
+
+  /// An outer-view slot with its adaptive clients redirected to the inner
+  /// sampler — or the slot as given when the host asked for no sampling.
+  Widget _outerRedirected(Widget slot) => widget.outerAdaptiveSampling == null
+      ? slot
+      : LiquidGlassAdaptiveSamplerScope(
+          register: _outerAdaptiveRegister,
+          unregister: _outerAdaptiveUnregister,
+          child: slot,
+        );
+
+  /// Effective adaptivity for this build: the widget's own, else the
+  /// enclosing [LiquidGlassAdaptiveArea]'s. Resolved in [build].
+  LiquidGlassAdaptivity? _effAdaptivity;
+
+  /// The link the bar follows this build (explicit link, else the
+  /// enclosing area's). Null when the bar resolves its own verdict.
+  LiquidGlassAdaptivityLink? _adaptFollow;
+
+  /// Whether the verdict comes from sampling the captured body: no
+  /// manual override, no link/area to follow, and the body is real
+  /// (see [LiquidGlassAnimatedNavBar.sampleBackground]).
+  bool get _adaptSamples => _adaptDriver.samplingWanted(_effAdaptivity,
+      following: _adaptFollow != null, canRegister: widget.sampleBackground);
+
+  /// The sampling config the HOST handed down — this bar's own slot
+  /// first, then the outer pipeline's. Null means the host did not ask
+  /// for adaptive sampling, and the bar does not start one for itself.
+  LiquidGlassAdaptiveSampling? get _hostSampling =>
+      widget.adaptiveSampling ?? widget.outerAdaptiveSampling;
+
+  /// The adaptivity controller flipped: rebuild so sampling
+  /// registration and the driver's verdict source follow the switch.
+  void _adaptResync() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Rect? adaptiveRegion(RenderBox backgroundBox) {
+    if (!mounted) return null;
+    // The bar's rect in the inner background's coordinate space, from
+    // the same geometry the capsule lens is positioned with. (The inner
+    // background and the outer overlay share the full-screen size, so
+    // the build-time [_barLeft]/[_effBottomMargin] apply directly.)
+    final Size size = backgroundBox.size;
+    final double top = size.height - _effBottomMargin - _layout.height;
+    return Rect.fromLTWH(_barLeft, top, _layout.width, _layout.height);
+  }
+
+  @override
+  ui.Path? adaptiveMaskPath(RenderBox backgroundBox, Rect region) {
+    final LiquidGlassShape shape = widget.barShape ??
+        const LiquidGlassShape.roundedRectangle(cornerRadius: 40);
+    return liquidGlassOutlinePath(shape, region.size, const Offset(1, 1))
+        .shift(region.topLeft);
+  }
+
+  @override
+  void onAdaptiveSample(LiquidGlassBackdropSample sample) {
+    if (!mounted) return;
+    _adaptDriver.onBackdropSample(sample);
+  }
+
+  /// Live selection driving the animation (source of truth internally).
+  late int _tabIndex;
+
+  /// Index the static UI (shell icons, rest pill) shows as selected.
+  /// Flips only AFTER the glass finishes travelling.
+  late int _tabIndexCommitted;
+
+  /// Fractional pill position (0..itemCount-1). While dragging this is
+  /// the finger's target; the pill is drawn at [_dragFollow], a smoothed
+  /// chase of it.
+  double _tabPillFracIndex = 0;
+  double _dragFollow = 0;
+  bool _tabDragging = false;
+
+  /// Fractional position of the initial press, captured at long-press
+  /// start.
+  double _pressFrac = 0;
+
+  /// True once the finger has moved far enough from [_pressFrac] to count
+  /// as a genuine drag.
+  bool _draggedRealMove = false;
+
+  // ── Travel spring ────────────────────────────────────────────────
+  double _travelPos = 0;
+  double _travelVel = 0;
+  double _travelTarget = 0;
+  double _travelFrom = 0;
+
+  /// True from the moment a travel starts until the spring settles.
+  bool _travelActive = false;
+
+  /// Whether the pill is currently held up at its raised size. It goes
+  /// up the instant a travel starts or a pill is grabbed, stays up for
+  /// the whole journey, and only comes down once the pill has landed.
+  bool _lifted = false;
+
+  /// The raised size, one spring per axis. Both are under critical, so
+  /// each end of the lift overshoots and rebounds rather than easing in
+  /// — and the two ratios differ slightly, so the width overshoots a
+  /// little further and settles a little later than the height. That
+  /// small disagreement is what keeps the growth from reading as a
+  /// plain scale-up.
+  double _liftX = 0;
+  double _liftXVel = 0;
+  double _liftY = 0;
+  double _liftYVel = 0;
+
+  /// The material's own lift — how much of the glass is on. Critically
+  /// damped and four times as stiff as the size springs, so the pill
+  /// LOOKS like glass almost at once, and stops looking like it as soon
+  /// as it lands, while its size is still wobbling into place.
+  double _lift = 0;
+  double _liftVel = 0;
+
+  static const double _kLiftStiffness = 250;
+
+  /// Damping ratio 0.6 across, 0.7 down (`ζ · 2√k`).
+  static const double _kLiftDampingX = 19.0;
+  static const double _kLiftDampingY = 22.1;
+
+  static const double _kMaterialStiffness = 1000;
+  static const double _kMaterialDamping = 63.3;
+
+  /// The pill's acceleration squash/stretch — owned by the BAR, not by
+  /// the glass pill.
+  ///
+  /// The deformation belongs to the selection pill as a thing, not to
+  /// whichever widget happens to be drawing it. Both the glass and the
+  /// plain pill are drawn at the size this produces, so a hand-off in the
+  /// middle of a squash is invisible; and it keeps running after the
+  /// glass is gone, which is where the landing squash actually lands.
+  late final LiquidGlassLensMotion _pillMotion =
+      LiquidGlassLensMotion(spec: widget.motion);
+  double _deviation = 0;
+
+  /// Which way the current travel is headed — `-1` left, `1` right, `0`
+  /// while a finger is driving the pill instead.
+  ///
+  /// A travel deforms by where it is GOING, not by which way the force
+  /// happens to point this instant. The raw model is signed on the
+  /// force, so a journey used to contradict itself: the launch and the
+  /// braking pull the pill opposite ways, and only the second of the two
+  /// is still on screen when you look. Keyed to the travel instead, the
+  /// launch agrees with the landing — a tap to the left stretches the
+  /// pill wide for the whole trip, a tap to the right holds it narrow
+  /// and tall — and the landing itself is the deformation it always was.
+  ///
+  /// Only the travel is keyed this way. A finger keeps the raw force,
+  /// where pushing right stretches and pushing left squashes: a drag is
+  /// something you are doing to the pill, and it should answer the hand.
+  double _travelSign = 0;
+
+  /// The key the deformation is actually drawn with, which crosses
+  /// between the two directions rather than switching.
+  ///
+  /// Tapping a tab on the other side mid-flight reverses [_travelSign]
+  /// in one frame, and with it the entire deformation — a pill squashed
+  /// narrow would be stretched wide on the very next frame. Crossing
+  /// instead takes it through `0`, where the pill is drawn on the raw
+  /// force it always was, so a reversal passes through undeformed
+  /// instead of turning inside out. A travel starting from rest has
+  /// nothing to cross and takes its key at once.
+  double _travelSignEased = 0;
+
+  /// How far the pill has shed its glass. `0` = the full material, `1` =
+  /// a flat fill indistinguishable from the plain pill.
+  double _handover = 1;
+
+  /// Pill centre, recomputed on the ticker so the motion model samples
+  /// the position the pill is drawn at this frame — not last frame's.
+  Offset _pillCenter = Offset.zero;
+  bool _pillCenterValid = false;
+
+  /// Single ticker driving the travel spring, the motion sampling and
+  /// the settle-grow decay.
+  Ticker? _ticker;
+  Duration? _tickerLast;
+
+  /// Absolute left edge of the bar in the parent, recomputed each build.
+  double _barLeft = 0;
+
+  /// Effective bottom inset of the bar.
+  double _effBottomMargin = 0;
+
+  /// True when the lenses render on the Impeller BackdropFilter path —
+  /// the same resolution [LiquidGlassView] applies. Only there do
+  /// stacked lenses chain (each samples everything painted beneath it),
+  /// which is what the under-pill magnifier needs; the Skia capture
+  /// path keeps the single glass pill exactly as it is.
+  late final bool _useImpeller = (widget.useImpellerBackdrop ?? true) &&
+      ui.ImageFilter.isShaderFilterSupported;
+
+  LiquidGlassTabBarLayout get _layout => widget.layout;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabIndex = widget.selectedIndex;
+    _tabIndexCommitted = widget.selectedIndex;
+    _tabPillFracIndex = widget.selectedIndex.toDouble();
+    _travelPos = widget.selectedIndex.toDouble();
+    _travelTarget = _travelPos;
+    _travelFrom = _travelPos;
+    _ticker = createTicker(_onTick);
+  }
+
+  /// Starts the shared ticker if it isn't already running.
+  void _startTicker() {
+    if (_ticker?.isActive != true) {
+      _tickerLast = null;
+      _ticker?.start();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant LiquidGlassAnimatedNavBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // External (programmatic) selection change — animate to it without
+    // re-notifying the parent.
+    if (widget.selectedIndex != _tabIndex &&
+        widget.selectedIndex != oldWidget.selectedIndex) {
+      _animateTo(widget.selectedIndex, notify: false);
+    }
+  }
+
+  @override
+  void dispose() {
+    // (Sampler unregistration is owned by the registrar widget inside
+    // the inner view — it unmounts with this subtree.)
+    _adaptDriver.dispose();
+    _ticker?.dispose();
+    _outerViewController.detach();
+    _innerViewController.detach();
+    super.dispose();
+  }
+
+  // ── Capture lifecycle ────────────────────────────────────────────
+  void _startCapture() {
+    if (!widget.realTimeCapture) _innerViewController.startRealtimeCapture();
+    // The OUTER view is the one the moving pill samples on Skia, and it
+    // sleeps at rest — so it is woken here, at the gesture, rather than
+    // being left to the rebuilt widget's `realTimeCapture` flag alone.
+    // The wake retires the sleep-time capture with it, so the pill's
+    // first frame refracts the live bar and not the snapshot from
+    // whenever the bar last settled. Idempotent when already live.
+    if (!widget.outerNeedsRealtime) {
+      _outerViewController.startRealtimeCapture();
+    }
+  }
+
+  void _maybeStopCapture() {
+    if (!_travelActive && !_tabDragging) {
+      if (!widget.realTimeCapture) _innerViewController.stopRealtimeCapture();
+      if (!widget.outerNeedsRealtime) {
+        _outerViewController.stopRealtimeCapture();
+      }
+    }
+  }
+
+  // ── Selection / animation ────────────────────────────────────────
+  void _animateTo(int next, {required bool notify}) {
+    if (next == _tabIndex) return;
+    setState(() {
+      _tabIndex = next;
+      _travelActive = true;
+      _lifted = true;
+      // Retarget from wherever the pill currently is; the spring keeps
+      // its velocity.
+      _travelFrom = _travelPos;
+      _travelTarget = next.toDouble();
+      _travelSign = _signOfTravel(_travelTarget - _travelFrom);
+    });
+    _startCapture();
+    _startTicker();
+    if (notify) widget.onChanged(next);
+  }
+
+  // ── Gesture geometry ─────────────────────────────────────────────
+  double _xToTabFrac(double globalDx) {
+    final cell0Center = _barLeft + _layout.padding + _layout.cellWidth / 2;
+    final cellW = _layout.cellWidth;
+    final raw = (globalDx - cell0Center) / cellW;
+    return raw.clamp(0.0, (_layout.itemCount - 1).toDouble());
+  }
+
+  void _onTabBarTapUp(TapUpDetails d) {
+    final cellW = _layout.cellWidth;
+    final raw = d.localPosition.dx / cellW;
+    final idx = raw.floor().clamp(0, _layout.itemCount - 1);
+    _animateTo(idx, notify: true);
+  }
+
+  // ── Hold-to-grab handlers ────────────────────────────────────────
+  void _onTabPillLongPressStart(LongPressStartDetails d) {
+    _tabDragging = true;
+    _travelActive = false;
+    _lifted = true;
+    // The hand takes the deformation back off the travel.
+    _travelSign = 0;
+    _startCapture();
+    final frac = _xToTabFrac(d.globalPosition.dx);
+    // Start the smoothed follow at the pill's current resting position so
+    // a hold away from the pill EASES over to the finger.
+    _dragFollow = _travelPos;
+    _travelVel = 0;
+    _pressFrac = frac;
+    _draggedRealMove = false;
+    _startTicker();
+    setState(() => _tabPillFracIndex = frac);
+  }
+
+  void _onTabPillLongPressMoveUpdate(LongPressMoveUpdateDetails d) {
+    if (!_tabDragging) return;
+    final frac = _xToTabFrac(d.globalPosition.dx);
+    if ((frac - _pressFrac).abs() > 0.2) _draggedRealMove = true;
+    setState(() => _tabPillFracIndex = frac);
+  }
+
+  void _onTabPillLongPressEnd(LongPressEndDetails d) {
+    if (!_tabDragging) return;
+    _releaseTabPillDrag();
+  }
+
+  void _onTabPillLongPressCancel() {
+    if (!_tabDragging) return;
+    _releaseTabPillDrag();
+  }
+
+  void _releaseTabPillDrag() {
+    final from = _dragFollow;
+    final double snapFrac = _draggedRealMove ? from : _pressFrac;
+    final next = snapFrac.round().clamp(0, _layout.itemCount - 1);
+    final notify = next != _tabIndex;
+    // The pill stays lifted through the snap and comes down on landing,
+    // exactly as a tap's does — letting go is not the end of the
+    // journey, arriving is.
+    setState(() {
+      _tabDragging = false;
+      _tabIndex = next;
+      _travelActive = true;
+      _travelPos = from;
+      _travelVel = 0;
+      _travelFrom = from;
+      _travelTarget = next.toDouble();
+      _travelSign = _signOfTravel(_travelTarget - _travelFrom);
+    });
+    _startTicker();
+    if (notify) widget.onChanged(next);
+  }
+
+  /// One frame of the pill's physics, all of which the bar owns: the
+  /// travel spring, the smoothed follow while a finger is down, the lift
+  /// springs, the acceleration squash and the hand-off. The pill widget
+  /// is handed the results and draws them.
+  void _onTick(Duration elapsed) {
+    final last = _tickerLast ?? elapsed;
+    final dt = (elapsed - last).inMicroseconds / 1e6;
+    _tickerLast = elapsed;
+
+    // 1) Travel (positional) spring.
+    bool travelSettled = true;
+    if (_travelActive) {
+      final r = liquidGlassSpringStep(
+        x: _travelPos,
+        vel: _travelVel,
+        target: _travelTarget,
+        dt: dt,
+        stiffness: widget.travelStiffness,
+        damping: widget.travelDamping,
+      );
+      _travelPos = r.$1;
+      _travelVel = r.$2;
+      travelSettled =
+          (_travelPos - _travelTarget).abs() < 0.003 && _travelVel.abs() < 0.05;
+      if (travelSettled) {
+        _travelPos = _travelTarget;
+        _travelVel = 0;
+      }
+    }
+
+    // 2) While dragging, smoothly chase the finger target so a hold away
+    // from the pill glides to the held position.
+    if (_tabDragging) {
+      const followTau = 0.05;
+      _dragFollow +=
+          (_tabPillFracIndex - _dragFollow) * (1 - math.exp(-dt / followTau));
+    }
+
+    // 3) The lift. The pill is raised for the whole journey and comes
+    // down once it has landed — [handoverStart] is where "landed"
+    // begins — so it arrives at full size and settles afterwards,
+    // rather than deflating on the way in.
+    // Arriving counts as landing whatever [handoverStart] says, so a
+    // gate set past the end of the travel cannot strand the pill up.
+    if (!_tabDragging &&
+        (travelSettled || _travelProgress() >= widget.handoverStart)) {
+      _lifted = false;
+    }
+    final double liftTarget = _lifted ? 1.0 : 0.0;
+    final xr = _stepLift(
+      _liftX,
+      _liftXVel,
+      liftTarget,
+      dt,
+      _kLiftStiffness,
+      _kLiftDampingX,
+    );
+    _liftX = xr.$1;
+    _liftXVel = xr.$2;
+    final yr = _stepLift(
+      _liftY,
+      _liftYVel,
+      liftTarget,
+      dt,
+      _kLiftStiffness,
+      _kLiftDampingY,
+    );
+    _liftY = yr.$1;
+    _liftYVel = yr.$2;
+    final mr = _stepLift(
+      _lift,
+      _liftVel,
+      liftTarget,
+      dt,
+      _kMaterialStiffness,
+      _kMaterialDamping,
+    );
+    _lift = mr.$1;
+    _liftVel = mr.$2;
+    final bool liftSettled =
+        !_lifted && _liftX == 0 && _liftY == 0 && _lift == 0;
+
+    // 4) Commit only once the travel AND the lift have finished: the
+    // deflation outlives the spring that carried the pill there.
+    if (_travelActive && travelSettled && liftSettled && !_tabDragging) {
+      _travelActive = false;
+      _tabIndexCommitted = _tabIndex;
+    }
+
+    // 5) Sample the pill where it is drawn THIS frame, in pixels. Done
+    // here rather than from the last build so the model never reads a
+    // frame-old position, and so it keeps running once the glass is gone.
+    if (_pillCenterValid) {
+      _pillCenter = _resolvePillCenter();
+      if (!_pillMotion.isTracking) _pillMotion.start();
+      _pillMotion.track(
+        _pillCenter,
+        now: elapsed.inMicroseconds / 1e6,
+        dt: dt,
+      );
+      _deviation = _pillMotion.deviation;
+
+      // A key of zero is a destination like any other — grabbing a pill
+      // mid-flight hands it back to the raw force, and that hand-back
+      // crosses too.
+      if (_travelSignEased == 0) {
+        _travelSignEased = _travelSign;
+      } else if (_travelSignEased != _travelSign) {
+        const signTau = 0.25;
+        _travelSignEased +=
+            (_travelSign - _travelSignEased) * (1 - math.exp(-dt / signTau));
+        if ((_travelSign - _travelSignEased).abs() < 0.01) {
+          _travelSignEased = _travelSign;
+        }
+      }
+
+      // Keep the force's MAGNITUDE — the launch peak, the lull at
+      // constant speed, the braking peak — and take its sign from the
+      // direction of travel, so the pill deforms one way for the whole
+      // journey instead of turning itself inside out at the halfway
+      // mark. A part-way key is a blend of the two, which is what makes
+      // a reversal cross rather than switch. See [_travelSign].
+      final double key = _travelSignEased;
+      if (key != 0) {
+        _deviation = _deviation * (1 - key.abs()) - key * _deviation.abs();
+      }
+    }
+
+    // 6) The hand-off, on the same landing the deflation runs off: the
+    // glass leaves as the pill starts coming down. It is a target, not a
+    // switch, so tapping again mid-hand-off turns the glass straight
+    // back around instead of restarting it.
+    final double handoverTarget = _lifted ? 0 : 1;
+    final double tau =
+        handoverTarget > _handover ? widget.handoverTau : widget.glassReturnTau;
+    _handover += (handoverTarget - _handover) * (1 - math.exp(-dt / tau));
+    if ((handoverTarget - _handover).abs() < 0.002) _handover = handoverTarget;
+
+    // Everything must be finished — not just the travel. The deflation
+    // and the squash both outlive the spring (the squash's sampling
+    // window has to drain), and the hand-off outlives all of them, so
+    // stopping on the spring alone would freeze the pill mid-shrink,
+    // mid-deformation or mid-fade.
+    final bool motionSettled = _deviation.abs() < 0.0005;
+    final bool handoverSettled = _handover >= 1.0;
+    if (!_travelActive &&
+        !_tabDragging &&
+        liftSettled &&
+        motionSettled &&
+        handoverSettled) {
+      _pillMotion.stop();
+      _deviation = 0;
+      // Held until here, not dropped at the end of the travel: the
+      // deformation drains after the spring does, and it has to drain
+      // on the sense it was drawn with.
+      _travelSign = 0;
+      _travelSignEased = 0;
+      _maybeStopCapture();
+      _ticker?.stop();
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  /// The direction key for a travel of [span] cells. A travel with no
+  /// distance in it has no direction either, and keeps the raw force.
+  double _signOfTravel(double span) => span.abs() < 1e-6 ? 0 : span.sign;
+
+  /// One frame of a lift spring, snapped to its target once it has
+  /// nothing left to say — so a settled lift compares equal to `0` and
+  /// the bar can tell the deflation has finished.
+  (double, double) _stepLift(
+    double x,
+    double vel,
+    double target,
+    double dt,
+    double stiffness,
+    double damping,
+  ) {
+    final r = liquidGlassSpringStep(
+      x: x,
+      vel: vel,
+      target: target,
+      dt: dt,
+      stiffness: stiffness,
+      damping: damping,
+    );
+    if ((r.$1 - target).abs() < 0.0008 && r.$2.abs() < 0.01) {
+      return (target, 0.0);
+    }
+    return r;
+  }
+
+  /// How far through the current travel the pill is, `0`..`1`.
+  double _travelProgress() {
+    final double span = (_travelTarget - _travelFrom).abs();
+    if (span < 1e-6) return 1;
+    return (1 - (_travelTarget - _travelPos).abs() / span).clamp(0.0, 1.0);
+  }
+
+  /// The pill's centre in the outer view's coordinates, from the current
+  /// spring/drag state and the geometry the last build resolved.
+  Offset _resolvePillCenter() {
+    final layout = _layout;
+    final double frac = _tabDragging ? _dragFollow : _travelPos;
+    return Offset(
+      _barLeft +
+          layout.padding +
+          frac * layout.cellWidth +
+          layout.pillWidth / 2,
+      _pillCenter.dy,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Adaptivity: resolve the effective config (own, else the enclosing
+    // area's) and sync the driver's verdict source. Its controller only
+    // drives the INNER stack (capsule tint + shell content color), which
+    // watches it through its own AnimatedBuilder in [_buildInner] —
+    // idle between flips.
+    final LiquidGlassAdaptiveAreaScope? areaScope =
+        LiquidGlassAdaptiveArea.maybeOf(context);
+    final LiquidGlassAdaptivity? resolvedAdapt =
+        widget.adaptivity ?? areaScope?.adaptivity ?? widget.areaAdaptivity;
+    _effAdaptivity = (resolvedAdapt?.isNone ?? false) ? null : resolvedAdapt;
+    _adaptFollow = _effAdaptivity == null
+        ? null
+        : (_effAdaptivity!.link ?? areaScope?.link ?? widget.areaLink);
+    _adaptDriver.onResync = _adaptResync;
+    _adaptDriver.sync(
+      _effAdaptivity,
+      follow: _adaptFollow,
+      canSample: widget.sampleBackground,
+      fallbackBrightness:
+          liquidGlassFallbackBrightness(context, _effAdaptivity),
+    );
+
+    final Widget bar = LayoutBuilder(builder: (context, constraints) {
+      final parentWidth = constraints.maxWidth;
+      final parentHeight = constraints.maxHeight;
+
+      // Resolve the bar's placement.
+      final centeredLeft = (parentWidth - _layout.width) / 2;
+      if (widget.barPosition != null) {
+        final off = widget.barPosition!.resolve(
+          Size(parentWidth, parentHeight),
+          Size(_layout.width, _layout.height),
+        );
+        _barLeft = off.dx;
+        _effBottomMargin = parentHeight - off.dy - _layout.height;
+      } else {
+        _barLeft = centeredLeft;
+        _effBottomMargin = _layout.bottomMargin;
+      }
+      final layout = _layout.copyWith(bottomMargin: _effBottomMargin);
+
+      final cellW = layout.cellWidth;
+
+      // The two ends of the lift: the cell the pill rests in, and the
+      // raised glass it stands at while it is up — the same w:h ratio,
+      // scaled so the glass is a touch bigger than the bar height.
+      final Size pillRest = Size(layout.pillWidth, layout.cellHeight);
+      final double liftedH = layout.height + widget.pillGrowHeight;
+      final Size pillLifted =
+          Size(liftedH * (layout.pillWidth / layout.cellHeight), liftedH);
+
+      // How much of the glass is on. Its own spring, so the material
+      // can be all the way in before the size is.
+      final double morphProgress = _lift.clamp(0.0, 1.0);
+
+      final pillFrac = _tabDragging ? _dragFollow : _travelPos;
+
+      // The pill's centre in the outer view's coordinates. Horizontally
+      // it rides its cell; vertically the centre never moves, since the
+      // morph is symmetric about the bar's row.
+      final double pillCX =
+          _barLeft + layout.padding + pillFrac * cellW + layout.pillWidth / 2;
+      final double pillCY = parentHeight -
+          (_effBottomMargin + layout.padding + layout.cellHeight / 2);
+      // Hand the row's Y to the ticker, which re-derives X itself each
+      // frame. Until layout has run once there is no centre to sample, so
+      // the model stays parked rather than tracking a bogus origin.
+      _pillCenter = Offset(pillCX, pillCY);
+      _pillCenterValid = true;
+
+      // The size the pill would be with no deformation, and the size it is
+      // actually drawn at. The deformation is the BAR's, so it applies to
+      // whichever pill is on screen — including both at once, mid-hand-off.
+      //
+      // The envelope is the two lift springs, one per axis, rather than
+      // one progress along a line between the two sizes: they overshoot
+      // past the raised size and dip under the resting one, and they do
+      // it by slightly different amounts.
+      final Size envelopeSize = Size(
+        pillRest.width + (pillLifted.width - pillRest.width) * _liftX,
+        pillRest.height + (pillLifted.height - pillRest.height) * _liftY,
+      );
+      final double dev = _deviation;
+      final Size liveSize = Size(
+        envelopeSize.width * (1 + dev),
+        envelopeSize.height * (1 - dev),
+      );
+
+      // How much of the pill still reads as glass. It sheds the rim, its
+      // shadow and its refraction on this, and keeps everything else —
+      // the travel, the lift, the squash — running underneath.
+      final double glassPresence = (1 - _handover).clamp(0.0, 1.0);
+
+      // The lens stays until there is nothing left in it to see: no glass,
+      // no lift and no deformation. By then it is drawing a flat fill at
+      // rest size — exactly what the plain pill draws — so handing over is
+      // a swap of two identical pictures and needs no cross-fade, and the
+      // plain pill never has to know about the motion.
+      final bool pillIsFlat = glassPresence <= 0 &&
+          morphProgress <= 0 &&
+          _liftX == 0 &&
+          _liftY == 0 &&
+          dev.abs() < 0.0005 &&
+          !_travelActive &&
+          !_tabDragging;
+      final bool glassMounted = widget.showSelectionPill && !pillIsFlat;
+
+      // The icon shell's reveal is cut to the size the pill says it is
+      // drawing, so the selected colour wipes on exactly under the glass.
+      final double? hlFrac = glassMounted ? pillFrac : null;
+      final double? hlW = glassMounted ? liveSize.width : null;
+      final double? hlH = glassMounted ? liveSize.height : null;
+
+      // Impeller only: a pill-shaped magnifier that lives INSIDE the
+      // inner stack, above the bar capsule but BELOW the icon shell —
+      // same silhouette, same lift, travel, squash and shed as the
+      // glass pill, but transparent, unblurred, undistorted, rimless
+      // and shadowless. Painted there, its backdrop sample contains
+      // only the page and the capsule, so under the pill the BAR reads
+      // pushed back while the icons keep their size; the glass pill
+      // above then refracts the receded bar and the crisp icons alike.
+      // The Skia capture path cannot chain lenses and is untouched.
+      final Widget? magnifierPill =
+          (glassMounted && _useImpeller && widget.magnifierPill.enabled)
+              ? Positioned.fill(
+                  key: const ValueKey('lg-motion-nav-pill-magnifier'),
+                  child: IgnorePointer(
+                    // Its own read, never a batch's: it sits on the capsule
+                    // to push it back, and a shared copy has no capsule in
+                    // it. It also paints INSIDE the outer view's background,
+                    // where joining a batch would take that batch's copy
+                    // before the icon shell above it had painted.
+                    child: LiquidGlassBatch.exclude(
+                      child: LiquidGlassNavBarMotionPill(
+                        center: Offset(pillCX, pillCY),
+                        active: _lifted,
+                        morphProgress: morphProgress,
+                        envelopeSize: envelopeSize,
+                        restSize: pillRest,
+                        activeSize: pillLifted,
+                        style: _magnifierStyle(
+                          baseShape: widget.pillShape,
+                          fallbackRadius: pillLifted.height / 2,
+                          magnification: widget.magnifierPill.magnification,
+                        ),
+                        restStyle: _magnifierStyle(
+                          baseShape: widget.restStyle.shape,
+                          fallbackRadius: pillRest.height / 2,
+                          magnification: 1,
+                        ),
+                        deviation: dev,
+                        glassPresence: glassPresence,
+                        honorBackdropAlpha: false,
+                      ),
+                    ),
+                  ),
+                )
+              : null;
+
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          // OUTER view: captures the inner stack and composites the
+          // moving glass pill + the developer's outer lenses on top.
+          LiquidGlassView.withPositionedLenses(
+            controller: _outerViewController,
+            pixelRatio: widget.pixelRatio,
+            useSync: widget.useSync,
+            // Only capture while there is something to composite — which is
+            // now only while the glass pill is actually mounted.
+            realTimeCapture: glassMounted || widget.outerNeedsRealtime,
+            refreshRate: LiquidGlassRefreshRate.deviceRefreshRate,
+            useImpellerBackdrop: widget.useImpellerBackdrop,
+            batch: widget.batch,
+            foregroundBatchId: widget.foregroundBatchId,
+            backgroundWidget: _buildInner(
+              layout: layout,
+              pillFrac: hlFrac,
+              pillW: hlW,
+              pillH: hlH,
+              pillGlass: glassPresence,
+              magnifier: magnifierPill,
+            ),
+            children: [
+              // Stable, role-based keys so each outer lens keeps its own
+              // `State`. The pill no longer lives in this list, so the
+              // list's length is now invariant.
+              for (int i = 0; i < widget.outerLenses.length; i++)
+                widget.outerLenses[i].key != null
+                    ? widget.outerLenses[i]
+                    : widget.outerLenses[i]
+                        .copyWith(key: ValueKey('lg-nav-outer-$i')),
+            ],
+            // The pill is a lens WIDGET now, in the view's `child:` slot —
+            // the only place an externally-driven deformation can be
+            // rendered (a positioned `LiquidGlass` can only deform from
+            // its own internal touch driver). It refracts the same
+            // capture the positioned pill did: this view's background,
+            // which is the inner stack.
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (glassMounted)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      // Its own read, never a batch's: the pill exists to
+                      // refract the capsule and whatever the outer slots
+                      // paint around it, none of which a shared copy holds.
+                      child: LiquidGlassBatch.exclude(
+                        // Same resolved fill the flat pill paints — the
+                        // glass pill lerps INTO it, so a mismatch here
+                        // shows up as a colour pop at the hand-over.
+                        child: _withRestStyle(
+                          (LiquidGlassStyle rest) =>
+                              LiquidGlassNavBarMotionPill(
+                            center: Offset(pillCX, pillCY),
+                            active: _lifted,
+                            // The bar owns the size as well as the squash;
+                            // the pill's own morph spring stays out of it.
+                            morphProgress: morphProgress,
+                            envelopeSize: envelopeSize,
+                            restSize: pillRest,
+                            activeSize: pillLifted,
+                            style: _pillStyle(),
+                            restStyle: rest,
+                            // The bar owns the model; the pill just draws it.
+                            deviation: dev,
+                            glassPresence: glassPresence,
+                            shadow: widget.pillShadow,
+                            honorBackdropAlpha: false,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                // Flat: the same rect the glass just vacated, painted as a
+                // plain fill. Placed from the pill's own centre rather than
+                // re-derived from the committed index, so the two can never
+                // disagree by a pixel at the hand-off.
+                else if (widget.showSelectionPill)
+                  Positioned(
+                    key: const ValueKey('lg-motion-nav-pill-static'),
+                    left: pillCX - pillRest.width / 2,
+                    top: pillCY - pillRest.height / 2,
+                    child: _restPill(pillRest),
+                  ),
+                // The host's chrome, on Impeller only: no capture up here
+                // to keep awake, so it paints over the cells and the pill
+                // exactly as the outer slot always has. (On Skia it is in
+                // the inner view instead — see `_buildInnerStack`.)
+                if (_useImpeller && widget.chromeChild != null)
+                  _outerRedirected(widget.chromeChild!),
+                // Adaptive areas/lenses in the outer slots sample through
+                // the INNER view (the pre-glass body image) via this
+                // redirect — one sampler for the whole pipeline.
+                if (widget.outerChild != null)
+                  _outerRedirected(widget.outerChild!),
+              ],
+            ),
+          ),
+          // Unified gesture overlay: a quick tap on any cell selects it;
+          // a press-and-hold lifts the pill to drag.
+          Positioned(
+            key: const ValueKey('lg-animated-nav-gesture-overlay'),
+            left: _barLeft + layout.padding,
+            bottom: _effBottomMargin + layout.padding,
+            width: layout.width - 2 * layout.padding,
+            height: layout.cellHeight,
+            child: RawGestureDetector(
+              behavior: HitTestBehavior.opaque,
+              gestures: {
+                TapGestureRecognizer:
+                    GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+                  () => TapGestureRecognizer(),
+                  (instance) => instance.onTapUp = _onTabBarTapUp,
+                ),
+                LongPressGestureRecognizer:
+                    GestureRecognizerFactoryWithHandlers<
+                        LongPressGestureRecognizer>(
+                  () => LongPressGestureRecognizer(
+                    duration: const Duration(milliseconds: 100),
+                  ),
+                  (instance) => instance
+                    ..onLongPressStart = _onTabPillLongPressStart
+                    ..onLongPressMoveUpdate = _onTabPillLongPressMoveUpdate
+                    ..onLongPressEnd = _onTabPillLongPressEnd
+                    ..onLongPressCancel = _onTabPillLongPressCancel,
+                ),
+              },
+            ),
+          ),
+        ],
+      );
+    });
+
+    // System chrome: annotate the (full-screen) bar so the navigation
+    // bar's icons flip with the verdict. Before any verdict the chrome
+    // sits on the same entry guess the palettes use.
+    final LiquidGlassAdaptivity? chromeAdaptivity = _effAdaptivity;
+    if (chromeAdaptivity != null &&
+        (widget.systemChrome == LiquidGlassSystemChrome.navigationBar ||
+            widget.systemChrome == LiquidGlassSystemChrome.both)) {
+      final Brightness guess = chromeAdaptivity.permanentBrightness ??
+          chromeAdaptivity.initialBrightness ??
+          liquidGlassFallbackBrightness(context, chromeAdaptivity);
+      return AnimatedBuilder(
+        animation: _adaptDriver.listenable!,
+        builder: (context, _) => AnnotatedRegion<SystemUiOverlayStyle>(
+          value: liquidGlassSystemChromeStyle(_adaptDriver.verdict ?? guess,
+              LiquidGlassSystemChrome.navigationBar),
+          child: bar,
+        ),
+      );
+    }
+    return bar;
+  }
+
+  /// The moving pill's look, assembled from the bar's pill-* knobs.
+  ///
+  /// A null [pillShape] is left null on purpose: the pill then builds a
+  /// capsule whose radius tracks its own morphing height, and scales the
+  /// refraction band with it — both of which it is better placed to do,
+  /// since it owns the size.
+  LiquidGlassStyle _pillStyle() {
+    final LiquidGlassRefraction refraction = widget.pillRefraction ??
+        LiquidGlassRefraction(
+          magnification: widget.pillMagnification,
+          refractionIndex: widget.pillRefractionIndex,
+          refractionWidth: widget.pillRefractionWidth,
+          dispersion: 1.32,
+        );
+    return LiquidGlassStyle(
+      shape: widget.pillShape,
+      specular: widget.pillSpecular,
+      glow: widget.pillGlow,
+      color: widget.pillColor,
+      blur: widget.pillBlur,
+      refractionIndex: refraction.refractionIndex,
+      refractionWidth: refraction.refractionWidth,
+      // On Impeller the under-pill magnifier lens owns the magnification;
+      // the glass pill on top must not compound it (m² in the middle).
+      magnification: _useImpeller ? 1 : refraction.magnification,
+      dispersion: refraction.dispersion,
+    );
+  }
+
+  /// The magnifier's silhouette: the shape the glass pill draws with at
+  /// this end of the morph, stripped of everything visible — no rim, no
+  /// glint. [base] mirrors the pill's own shape resolution ([fallbackRadius]
+  /// is the capsule radius used when the host authored no shape).
+  LiquidGlassShape _magnifierShape(
+      LiquidGlassShape? base, double fallbackRadius) {
+    final LiquidGlassLitShape lit = LiquidGlassLitShape.of(base ??
+        LiquidGlassShape.continuousRoundedRectangle(
+            cornerRadius: fallbackRadius));
+    return lit.copyWith(
+      specular: lit.specular.copyWith(thickness: 0, intensity: 0),
+      glow: lit.glow.copyWith(thickness: 0),
+      secondSpecular: lit.secondSpecular?.copyWith(thickness: 0),
+    );
+  }
+
+  /// One end of the Impeller under-pill magnifier's material: pure
+  /// magnification — fully transparent, zero blur, no distortion, no
+  /// dispersion, no rim. The lifted end carries
+  /// [_magnifierMagnification]; the rest end carries `1`, so the
+  /// magnification lerps in with the lift and back out through the
+  /// handover on exactly the curve the glass material runs.
+  LiquidGlassStyle _magnifierStyle({
+    required LiquidGlassShape? baseShape,
+    required double fallbackRadius,
+    required double magnification,
+  }) {
+    return LiquidGlassStyle(
+      shape: _magnifierShape(baseShape, fallbackRadius),
+      color: Color(0x00000000),
+      blur: 0,
+      refractionIndex: 1.0,
+      refractionWidth: 0,
+      magnification: magnification,
+      dispersion: 0,
+    );
+  }
+
+  /// Inner stack the outer view captures: wallpaper/body + bar capsule
+  /// lens, with the icon shell drawn on top. [magnifier] (Impeller only)
+  /// slots between the capsule and the icons, so it recedes the bar
+  /// without touching the icons drawn above it.
+  ///
+  /// The flat rest pill.
+  ///
+  /// When the bar is adaptive its fill rides the bar's OWN verdict — the
+  /// pill sits on the capsule, so sampling its own rect would read the
+  /// capsule's tint back instead of the page. It gets its own
+  /// AnimatedBuilder because this pill is built in [build], outside the
+  /// one wrapping the inner stack; without it the fill would settle only
+  /// on the next rebuild, arriving after the capsule it sits on.
+  /// Builds [child] with [restStyle]'s fill resolved against the bar's
+  /// verdict.
+  ///
+  /// A bar that adapts brings its pill along on the shipped palette,
+  /// whether that adaptivity is the bar's OWN or inherited from an
+  /// enclosing area/scaffold. The source does not change what the pill
+  /// has to do: it sits on the capsule, and a capsule that darkens over
+  /// a dark page leaves a fixed light fill reading as a light pill on a
+  /// dark bar. `rest.adaptivity` overrides this palette, and
+  /// `LiquidGlassAdaptivity.none` opts a caller-chosen fill out of the
+  /// flip entirely.
+  ///
+  /// Both the flat rest pill and the MOVING pill's resting endpoint go
+  /// through here, and they have to: the glass pill lerps toward this
+  /// fill and the flat pill is painted in it, so if only one adapted the
+  /// hand-over would swap one colour for another in a single frame.
+  ///
+  /// Its own [AnimatedBuilder] because both callers are built in
+  /// [build], outside the one wrapping the inner stack — without it the
+  /// fill would settle a rebuild late, arriving after the capsule.
+  Widget _withRestStyle(Widget Function(LiquidGlassStyle rest) child) {
+    final LiquidGlassAdaptivity palette = widget.restStyle.adaptivity ??
+        LiquidGlassTabPillStyle.defaultRestAdaptivity;
+    if (_effAdaptivity == null || palette.isNone) {
+      return child(widget.restStyle);
+    }
+    return AnimatedBuilder(
+      animation: _adaptDriver.listenable!,
+      builder: (context, _) => child(
+        widget.restStyle.copyWith(color: _adaptDriver.glassColor(palette)),
+      ),
+    );
+  }
+
+  Widget _restPill(Size size) => _withRestStyle(
+        (LiquidGlassStyle rest) => LiquidGlassBottomNavPillStatic(
+          width: size.width,
+          height: size.height,
+          color: rest.appearance.color,
+          shape: rest.shape,
+        ),
+      );
+
+  /// With adaptivity active the stack is rebuilt through an
+  /// [AnimatedBuilder] on the flip controller, so the capsule tint and
+  /// the shell's content color animate together on every verdict
+  /// change — and cost nothing between flips.
+  Widget _buildInner({
+    required LiquidGlassTabBarLayout layout,
+    double? pillFrac,
+    double? pillW,
+    double? pillH,
+    double pillGlass = 0,
+    Widget? magnifier,
+  }) {
+    final LiquidGlassAdaptivity? adaptivity = _effAdaptivity;
+    if (adaptivity == null) {
+      return _buildInnerStack(
+        layout: layout,
+        pillFrac: pillFrac,
+        pillW: pillW,
+        pillH: pillH,
+        pillGlass: pillGlass,
+        magnifier: magnifier,
+      );
+    }
+    return AnimatedBuilder(
+      animation: _adaptDriver.listenable!,
+      builder: (context, _) => _buildInnerStack(
+        layout: layout,
+        pillFrac: pillFrac,
+        pillW: pillW,
+        pillH: pillH,
+        pillGlass: pillGlass,
+        magnifier: magnifier,
+        adaptivity: adaptivity,
+      ),
+    );
+  }
+
+  Widget _buildInnerStack({
+    required LiquidGlassTabBarLayout layout,
+    double? pillFrac,
+    double? pillW,
+    double? pillH,
+    double pillGlass = 0,
+    Widget? magnifier,
+    LiquidGlassAdaptivity? adaptivity,
+  }) {
+    final Widget background = widget.backgroundColor == null
+        ? widget.body
+        : ColoredBox(color: widget.backgroundColor!, child: widget.body);
+
+    // The bar capsule's material: the caller's groups over the tuned
+    // defaults, with the bar's contact shadow riding the appearance
+    // (`appearance.shadow`) — the lens wraps itself in the ring, so it
+    // paints behind the glass, lands inside the outer view's capture,
+    // and the moving pill refracts it too. A shadow already carried by
+    // [barAppearance] is honored when [barShadow] is unset.
+    LiquidGlassAppearance capsuleAppearance = widget.barAppearance ??
+        LiquidGlassAppearance(
+          color: Colors.white.withAlpha(22),
+          blur: 2,
+        );
+    // Resolve the adaptive palette for this frame: the capsule tint
+    // overrides the bar appearance's color, the content color reaches
+    // the shell's cells through IconTheme (see LiquidGlassNavTabCell).
+    Color? adaptiveContent;
+    if (adaptivity != null) {
+      adaptiveContent = _adaptDriver.contentColor(adaptivity);
+      capsuleAppearance = capsuleAppearance.copyWith(
+          color: _adaptDriver.glassColor(adaptivity));
+    }
+    final LiquidGlassStyle capsuleStyle = LiquidGlassStyle.groups(
+      shape: widget.barShape ??
+          LiquidGlassLitShape(
+            cornerStyle: LiquidGlassCornerStyle.roundedRectangle,
+            cornerRadius: 40,
+            specular: const LiquidGlassLight.specular(),
+          ),
+      specular: widget.barSpecular,
+      glow: widget.barGlow,
+      secondSpecular: widget.barSecondSpecular,
+      appearance: widget.barShadow == null
+          ? capsuleAppearance
+          : capsuleAppearance.copyWith(shadow: widget.barShadow),
+      refraction: widget.barRefraction ??
+          const LiquidGlassRefraction(
+            refractionIndex: 1.1,
+            refractionWidth: 12,
+          ),
+    );
+
+    Widget shell = LiquidGlassAnimatedBottomNavBarShell(
+      items: widget.items,
+      selectedIndex: _tabIndexCommitted,
+      itemStyle: widget.itemStyle,
+      layout: layout,
+      left: _barLeft,
+      bottom: _effBottomMargin,
+      highlightFrac: pillFrac,
+      highlightWidth: pillW,
+      highlightHeight: pillH,
+      underGlass: pillGlass,
+      adaptive: adaptivity != null,
+    );
+    if (adaptiveContent != null) {
+      // Same ambient contract as the lens child: the animated content
+      // color rides IconTheme/DefaultTextStyle and the adaptive cells
+      // resolve their selected/unselected strengths from it.
+      shell = IconTheme.merge(
+        data: IconThemeData(color: adaptiveContent),
+        child: DefaultTextStyle.merge(
+          style: TextStyle(color: adaptiveContent),
+          child: shell,
+        ),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        LiquidGlassView.withPositionedLenses(
+          controller: _innerViewController,
+          pixelRatio: widget.pixelRatio,
+          useSync: widget.useSync,
+          realTimeCapture: widget.realTimeCapture,
+          refreshRate: LiquidGlassRefreshRate.deviceRefreshRate,
+          useImpellerBackdrop: widget.useImpellerBackdrop,
+          batch: widget.batch,
+          foregroundBatchId: widget.foregroundBatchId,
+          backgroundWidget: background,
+          // Body-luminance sampling for adaptivity: the inner view owns
+          // the captured body, so it hosts the sampler; the registrar in
+          // its child slot enrolls this state as the sampling client.
+          // The pipeline's SINGLE sampler: serves the bar's own verdict,
+          // the inner-slot areas/lenses through this view's own scope, and
+          // any outer-slot ones redirected here through the outer view's
+          // sampler scope.
+          // The HOST decides whether a sampler exists at all. A bar
+          // carrying its own `style.adaptivity` used to fall back on a
+          // default config and open one here — which meant a scaffold
+          // that never asked for adaptivity still got captures, through
+          // this view, because of what its nav bar happened to carry.
+          // Now: no config from above, no sampler, and the bar's verdict
+          // falls back like any other unsampled surface.
+          adaptiveSampling: _hostSampling != null &&
+                  (_adaptSamples || widget.outerAdaptiveSampling != null)
+              ? _hostSampling
+              : null,
+          children: const [],
+          // The capsule is a layout-driven [LiquidGlassLens] in the
+          // view's child slot: on Skia it refracts this view's captured
+          // background, on Impeller the live backdrop. Placed off the
+          // same [_barLeft]/[_effBottomMargin] the shell, the gesture
+          // overlay and the pill already use, so the four can never
+          // disagree by a pixel.
+          child: Stack(
+            children: [
+              Positioned(
+                left: _barLeft,
+                bottom: _effBottomMargin,
+                width: layout.width,
+                height: layout.height,
+                child: IgnorePointer(
+                  // Its own read, never a batch's: the bar stays off the
+                  // shared chrome read even when the host batches.
+                  child: LiquidGlassBatch.exclude(
+                    child: LiquidGlassLens(style: capsuleStyle),
+                  ),
+                ),
+              ),
+              // The host's chrome, on Skia only, on THIS view's capture: it
+              // refracts the body the way the capsule does, joins the same
+              // foreground batch, and never asks the outer view to stay
+              // awake. Above the capsule, below the shell and the pill. (On
+              // Impeller it is in the outer view instead — see the build.)
+              if (!_useImpeller && widget.chromeChild != null)
+                Positioned.fill(child: widget.chromeChild!),
+              // The bar's state lives OUTSIDE this view, so it cannot
+              // reach the scope itself — this registrar does it from in
+              // here and forwards every sample to the driver.
+              if (_adaptSamples) _AdaptiveClientRegistrar(client: this),
+            ],
+          ),
+        ),
+        // Impeller-only magnifier pill: painted here its backdrop sample
+        // is the page + capsule (+ shadow) alone — the icon shell above
+        // stays out of it, so the bar recedes under the pill while the
+        // icons keep their size.
+        if (magnifier != null) magnifier,
+        // Cosmetic only — taps are owned by the outer gesture overlay.
+        IgnorePointer(
+          child: Material(
+            type: MaterialType.transparency,
+            child: shell,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Enrolls a [LiquidGlassAdaptiveClient] with the enclosing view's
+/// luminance sampler for as long as it is mounted. Placed in the inner
+/// view's `child:` slot so the animated bar's state — which lives
+/// OUTSIDE that view — can receive samples of the captured body.
+class _AdaptiveClientRegistrar extends StatefulWidget {
+  final LiquidGlassAdaptiveClient client;
+
+  const _AdaptiveClientRegistrar({required this.client});
+
+  @override
+  State<_AdaptiveClientRegistrar> createState() =>
+      _AdaptiveClientRegistrarState();
+}
+
+class _AdaptiveClientRegistrarState extends State<_AdaptiveClientRegistrar> {
+  /// The register tear-off doubles as the identity of "who we're
+  /// registered with" (same contract as the lens's bookkeeping).
+  void Function(LiquidGlassAdaptiveClient)? _registeredWith;
+  void Function(LiquidGlassAdaptiveClient)? _unregister;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final LiquidGlassLensScope? scope = LiquidGlassLensScope.maybeOf(context);
+    final void Function(LiquidGlassAdaptiveClient)? register =
+        scope?.registerAdaptiveClient;
+    if (!identical(register, _registeredWith)) {
+      _unregister?.call(widget.client);
+      _unregister = null;
+      _registeredWith = register;
+      if (register != null) {
+        register(widget.client);
+        _unregister = scope!.unregisterAdaptiveClient;
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AdaptiveClientRegistrar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.client, widget.client)) {
+      _unregister?.call(oldWidget.client);
+      _registeredWith?.call(widget.client);
+    }
+  }
+
+  @override
+  void dispose() {
+    _unregister?.call(widget.client);
+    _unregister = null;
+    _registeredWith = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}

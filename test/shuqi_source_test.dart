@@ -6,6 +6,8 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/shuqi_book.dart';
 import 'package:fqapp/pages/search_page.dart';
 
+import 'support/search_finders.dart';
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -136,7 +138,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), '凡人');
@@ -145,8 +147,10 @@ void main() {
 
     expect(calls, ['凡人']);
     expect(find.text('凡人修仙传'), findsOneWidget);
-    // 分类页签在书旗模式下不参与选中，数量仍是番茄那 6 个。
-    expect(find.byType(ChoiceChip), findsNWidgets(6));
+    // 书旗是分段的最后一段，番茄那 6 个分类仍在同一行。
+    for (final label in ['综合', '小说', '短剧', '漫剧', '漫画', '听书']) {
+      expect(searchSegment(label), findsOneWidget);
+    }
   });
 
   testWidgets('an empty shuqi reply shows no results instead of an error', (
@@ -213,7 +217,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '凡人');
     await tester.testTextInput.receiveAction(TextInputAction.search);

@@ -1,4 +1,3 @@
-import 'services/api_client.dart';
 import 'services/audio_downloader.dart';
 import 'widgets/desktop_app_frame.dart';
 import 'services/native_player.dart';
@@ -15,7 +14,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
-import 'dart:ui' show ImageFilter;
 
 import 'pages/home_page.dart';
 import 'pages/audio_page.dart';
@@ -47,7 +45,9 @@ import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
 import 'services/shelf_store.dart';
 import 'services/swipe_guide_store.dart';
+import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
+import 'widgets/shell_dock.dart';
 import 'widgets/unsupported_feature_page.dart';
 import 'widgets/home/home_design.dart';
 
@@ -72,6 +72,7 @@ Future<void> main() async {
 /// `runApp` 之前的运行时装配：桌面窗口回调、应用内日志、分享与 Rust 日志的桥。
 /// 这些都不决定界面能不能起来，所以失败只记日志（见 [main]）。
 Future<void> _prepareRuntime() async {
+  registerPortedUiLicenses();
   if (isWindowsDesktop) await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
   // [main] 的 runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
@@ -558,7 +559,7 @@ class _RootShellState extends State<RootShell> {
           return LazyIndexedStack(
             index: index,
             children: [
-              HomePage(cueLoader: () => ApiClient.instance.searchCue()),
+              const HomePage(),
               const DramaPage(),
               LibraryPage(
                 onBrowse: () => desktopTab.value = 0,
@@ -577,107 +578,6 @@ class _RootShellState extends State<RootShell> {
     // 短剧的推荐频道压在全屏视频流上，dock 用深色玻璃；看剧/漫剧/最近/收藏
     // 是浅色页，dock 跟主题走，否则浅色外观下页面是奶白、dock 还是黑的。
     final dramaOnVideo = isDramaTab && !dramaLightPageNotifier.value;
-    final glassDark = isDark || dramaOnVideo;
-    // 墨水屏模式：本 build 由 Theme 变化触发重建（上面读了 Theme.of），
-    // 这里直接读 notifier 当前值即可拿到最新开关，不另加监听。
-    final eink = einkModeNotifier.value;
-    // OLED 纯黑只在深色外观下生效，浅色 / 墨水屏时该值为 false。
-    final oled = oledActive();
-    final navBar = NavigationBarTheme(
-      data: NavigationBarThemeData(
-        height: 64,
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        shadowColor: Colors.transparent,
-        indicatorColor: eink
-            ? Colors.black
-            : HomePalette.accent.withValues(alpha: glassDark ? 0.20 : 0.12),
-        indicatorShape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        iconTheme: WidgetStateProperty.resolveWith(
-          (states) => IconThemeData(
-            size: 22,
-            color: states.contains(WidgetState.selected)
-                ? (eink ? Colors.white : HomePalette.accent)
-                : (eink
-                      ? Colors.black
-                      : (glassDark
-                            ? Colors.white.withValues(alpha: 0.65)
-                            : palette.muted)),
-          ),
-        ),
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => TextStyle(
-            fontSize: 11,
-            fontWeight: states.contains(WidgetState.selected)
-                ? FontWeight.w700
-                : FontWeight.w500,
-            color: states.contains(WidgetState.selected)
-                ? (eink
-                      ? Colors.black
-                      : (glassDark ? HomePalette.accent : palette.accentText))
-                : (eink
-                      ? Colors.black
-                      : (glassDark
-                            ? Colors.white.withValues(alpha: 0.65)
-                            : palette.muted)),
-          ),
-        ),
-      ),
-      child: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _selectTab,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(LucideIcons.house),
-            selectedIcon: Icon(LucideIcons.house),
-            label: '首页',
-          ),
-          NavigationDestination(
-            icon: Icon(LucideIcons.clapperboard),
-            selectedIcon: Icon(LucideIcons.clapperboard),
-            label: '短剧',
-          ),
-          NavigationDestination(
-            icon: Icon(LucideIcons.library_big),
-            selectedIcon: Icon(LucideIcons.library_big),
-            label: '书架',
-          ),
-          NavigationDestination(
-            icon: Icon(LucideIcons.circle_user_round),
-            selectedIcon: Icon(LucideIcons.circle_user_round),
-            label: '我的',
-          ),
-        ],
-      ),
-    );
-
-    // 静态半透明底：与毛玻璃同色，供短剧 tab 复用（短剧 tab 背后是每帧
-    // 变化的视频流，BackdropFilter 每帧重算模糊，GPU 满负荷；该 tab 下
-    // 用静态底，外观几乎不变；切出短剧 tab 后恢复毛玻璃）。OLED 纯黑直接
-    // 用不透明的近黑底：纯黑画布上毛玻璃只会晕出一圈灰，还白白模糊每帧。
-    final staticNavBar = Container(
-      decoration: BoxDecoration(
-        color: oled
-            ? const Color(0xFF0C0C0E)
-            : (glassDark
-                  ? const Color(0xFF161619).withValues(alpha: 0.72)
-                  : Colors.white.withValues(alpha: 0.82)),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: glassDark
-              ? Colors.white.withValues(alpha: 0.16)
-              : Colors.white.withValues(alpha: 0.75),
-          width: 0.8,
-        ),
-      ),
-      child: navBar,
-    );
-
     // 系统导航栏（Android 底部系统自绘的那条）按当前画布取色。Flutter 的
     // light / dark 两套预设都把它写成纯黑底 + 白图标，浅色页面下会在最底部
     // 留一条突兀的黑带；短剧只有视频流（推荐）背后是视频，仍用黑。
@@ -695,6 +595,11 @@ class _RootShellState extends State<RootShell> {
                     ? SystemUiOverlayStyle.light
                     : SystemUiOverlayStyle.dark)
                 .copyWith(
+                  // 状态栏显式铺成画布色：透明状态栏在 Android 10+ 会被系统
+                  // 叠一层对比度黑纱，奶白画布会被压成灰带。短剧视频流仍透明。
+                  statusBarColor: dramaOnVideo
+                      ? Colors.transparent
+                      : palette.canvas,
                   systemNavigationBarColor: dramaOnVideo
                       ? Colors.black
                       : palette.canvas,
@@ -708,10 +613,7 @@ class _RootShellState extends State<RootShell> {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(
-              scrollController: _homeScroll,
-              cueLoader: () => ApiClient.instance.searchCue(),
-            ),
+            HomePage(scrollController: _homeScroll),
             // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
             // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
             if (supportsVideoPlayback)
@@ -732,61 +634,13 @@ class _RootShellState extends State<RootShell> {
           ],
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        left: false,
-        right: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: RepaintBoundary(
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(28),
-                // 墨水屏：阴影是灰阶 + 刷新残影来源，直接去掉，改用实线边框。
-                boxShadow: eink
-                    ? null
-                    : [
-                        BoxShadow(
-                          color: Colors.black.withValues(
-                            alpha: glassDark ? 0.38 : 0.08,
-                          ),
-                          blurRadius: 22,
-                          offset: const Offset(0, 8),
-                        ),
-                        BoxShadow(
-                          color: HomePalette.accent.withValues(
-                            alpha: glassDark ? 0.06 : 0.03,
-                          ),
-                          blurRadius: 14,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(28),
-                // 墨水屏：BackdropFilter 毛玻璃会把底部栏变成一团灰，改实色。
-                // 短剧 tab：背后是每帧变化的视频流，BackdropFilter 每帧都要
-                // 重算模糊，GPU 一直满负荷；该 tab 下改用同色静态半透明底，
-                // 外观几乎不变，省掉每帧重栅格化。切出短剧 tab 后恢复毛玻璃。
-                child: eink
-                    ? Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: Colors.black, width: 0.8),
-                        ),
-                        child: navBar,
-                      )
-                    : isDramaTab || oled
-                    ? staticNavBar
-                    : BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                        child: staticNavBar,
-                      ),
-              ),
-            ),
-          ),
-        ),
+      // 上游 Wenku8 GlassDock：胶囊、拖动预览和液态玻璃选中区；短剧视频流
+      // 与 OLED 纯黑下改用同色静态底板，不对每帧变化的画面做实时折射。
+      bottomNavigationBar: ShellDock(
+        selectedIndex: _index,
+        onSelected: _selectTab,
+        overVideo: dramaOnVideo,
+        staticMaterial: shellDockStaticMaterial(overVideo: dramaOnVideo),
       ),
     );
   }
