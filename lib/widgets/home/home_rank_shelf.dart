@@ -178,8 +178,8 @@ class HomeRankShelf extends StatefulWidget {
     final viewportHeight = viewport != null && viewport.hasViewportDimension
         ? viewport.viewportDimension
         : media.size.height - media.padding.top;
-    // Reserve a quarter of the feed for its headings, plus the dock and the
-    // unscaled controls. Keep a readable rail on short or large-text screens.
+    // The feed viewport already excludes the dock. Reserve space for headings
+    // and unscaled controls while keeping a readable rail on short screens.
     final available =
         (viewportHeight - media.padding.bottom) * .75 -
         _InfoRow.heightFor(media.textScaler) -

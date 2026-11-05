@@ -3,12 +3,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import 'home_design.dart';
 
-/// 底部弹层的统一基座：拖拽柄 + 标题 + Lucide 关闭 + 可滚动内容。
-///
-/// 几何取阅读设置面板 [ReaderSettingsSheetFrame] 的一套并固定下来：
-/// 顶部圆角 22、标题 19sp w600、关闭图标 Lucide x 20、拖拽柄 36×4。
-/// 历史上弹层圆角有 12/16/20/22/24 五套、标题字号五套、关闭图标四种，
-/// 新增弹层一律走这里；`homeSheetShape` 的默认 24 保留给已上线的旧调用方。
+/// Shared sheet surface. Long virtualized lists reuse [HomeSheetHeader] without
+/// nesting their scroll controller inside this frame.
 class HomeSheetFrame extends StatelessWidget {
   const HomeSheetFrame({
     super.key,
@@ -23,11 +19,10 @@ class HomeSheetFrame extends StatelessWidget {
     this.scrollKey,
   });
 
-  /// 统一的弹层顶部圆角（与阅读设置面板一致）。
-  static const double radius = 22;
+  static const double radius = 16;
 
   /// 统一的弹层标题字号。
-  static const double titleFontSize = 19;
+  static const double titleFontSize = 20;
 
   final String title;
   final List<Widget> children;
@@ -51,86 +46,138 @@ class HomeSheetFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    // 键盘 + 手势条：内容不压在输入法或系统导航条下面。
-    final bottomInset =
-        MediaQuery.viewInsetsOf(context).bottom +
-        MediaQuery.paddingOf(context).bottom;
-    return AnimatedContainer(
-      // 墨水屏：插值动画会留残影，面板直接跳变。
-      duration: palette.eink
+    final media = MediaQuery.of(context);
+    final availableHeight =
+        (media.size.height - media.viewInsets.bottom - media.padding.top).clamp(
+          0.0,
+          media.size.height,
+        );
+    return AnimatedPadding(
+      duration: palette.eink || media.disableAnimations
           ? Duration.zero
           : const Duration(milliseconds: 160),
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * maxHeightFactor,
-      ),
-      decoration: BoxDecoration(
-        color: homeSheetColor(palette),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(radius)),
-        // 只描上缘：弹层底边贴着屏幕，画一圈会在手势条上方多一条线。
-        border: Border(top: homeSheetShape(palette, top: radius).side),
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (showHandle) _handle(palette),
-              _header(context, palette),
-              Flexible(
-                child: SingleChildScrollView(
-                  key: scrollKey,
-                  padding: contentPadding,
+      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: availableHeight * maxHeightFactor,
+        ),
+        decoration: BoxDecoration(
+          color: homeSheetColor(palette),
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(radius),
+          ),
+          border: Border(top: homeSheetShape(palette, top: radius).side),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          // The header also scrolls on short screens with a keyboard open.
+          child: SingleChildScrollView(
+            key: scrollKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                HomeSheetHeader(
+                  title: title,
+                  closeTooltip: closeTooltip,
+                  closeKey: closeKey,
+                  onClose: onClose,
+                  showHandle: showHandle,
+                ),
+                Padding(
+                  padding: contentPadding.add(
+                    EdgeInsets.only(bottom: media.padding.bottom),
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: children,
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _handle(HomePalette palette) => Container(
-    margin: const EdgeInsets.only(top: 10, bottom: 4),
-    width: 36,
-    height: 4,
-    decoration: BoxDecoration(
-      color: palette.muted.withValues(alpha: 0.25),
-      borderRadius: BorderRadius.circular(2),
-    ),
-  );
+class HomeSheetHeader extends StatelessWidget {
+  const HomeSheetHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.closeTooltip = '关闭',
+    this.closeKey,
+    this.onClose,
+    this.showHandle = true,
+  });
 
-  Widget _header(BuildContext context, HomePalette palette) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 0, 8, 2),
-    child: Row(
+  final String title;
+  final String? subtitle;
+  final String closeTooltip;
+  final Key? closeKey;
+  final VoidCallback? onClose;
+  final bool showHandle;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.ink,
-              fontSize: titleFontSize,
-              fontWeight: FontWeight.w600,
+        if (showHandle)
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 6),
+            width: 32,
+            height: 3,
+            decoration: BoxDecoration(
+              color: palette.line,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 8, 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: palette.ink,
+                        fontSize: HomeSheetFrame.titleFontSize,
+                        height: 1.3,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (subtitle?.isNotEmpty == true) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: palette.muted, fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              IconButton(
+                key: closeKey,
+                tooltip: closeTooltip,
+                onPressed: onClose ?? () => Navigator.maybePop(context),
+                color: palette.ink,
+                icon: const Icon(LucideIcons.x, size: 20),
+              ),
+            ],
+          ),
         ),
-        IconButton(
-          key: closeKey,
-          tooltip: closeTooltip,
-          onPressed: onClose ?? () => Navigator.maybePop(context),
-          color: palette.ink,
-          icon: const Icon(LucideIcons.x, size: 20),
-        ),
+        Divider(height: 1, color: palette.line),
       ],
-    ),
-  );
+    );
+  }
 }
 
 /// 以 [HomeSheetFrame] 为基座打开底部弹层。
@@ -156,6 +203,9 @@ Future<T?> showHomeSheet<T>({
     backgroundColor: homeSheetColor(palette),
     clipBehavior: Clip.antiAlias,
     shape: homeSheetShape(palette, top: HomeSheetFrame.radius),
+    sheetAnimationStyle: palette.eink || MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (sheetContext) => HomeSheetFrame(
       title: title,
       closeTooltip: closeTooltip ?? '关闭',

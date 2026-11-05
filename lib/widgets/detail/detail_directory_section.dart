@@ -112,6 +112,7 @@ class DetailDirectorySection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         DetailSectionHeader(
+          code: 'CONTENTS',
           title: '目录',
           action: _action(palette),
           bottomGap: progress == null ? 10 : 8,

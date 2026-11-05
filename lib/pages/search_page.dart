@@ -13,7 +13,10 @@ import '../services/backend_transport.dart';
 import '../services/desktop_platform.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/home/home_archive.dart';
+import '../widgets/home/home_back_button.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_shelf.dart';
 import '../widgets/media_card.dart';
@@ -237,9 +240,9 @@ class _SearchPageState extends State<SearchPage> {
         }
       } catch (_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('评分筛选未保存，本次选择仍有效')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('评分筛选未保存，本次选择仍有效')));
       }
     });
   }
@@ -389,17 +392,24 @@ class _SearchPageState extends State<SearchPage> {
   /// 书旗搜索：单次返回、服务端不支持分页，结果全量落在第一个 feed。
   Future<void> _searchShuqi(String query, int generation) async {
     final feed = _feeds[0];
-    setState(() { feed.loading = true; feed.error = null; });
+    setState(() {
+      feed.loading = true;
+      feed.error = null;
+    });
     try {
       final loader = widget.shuqiSearchLoader ?? ApiClient.instance.shuqiSearch;
       final items = await loadShuqiSearch(loader, query);
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
-        feed.items..clear()..addAll(items);
+        feed.items
+          ..clear()
+          ..addAll(items);
         feed.seen
           ..clear()
           ..addAll(items.map((item) => '${item.kind}:${item.id}'));
-        feed.hasMore = false; feed.initialized = true; feed.loading = false;
+        feed.hasMore = false;
+        feed.initialized = true;
+        feed.loading = false;
       });
     } catch (error) {
       if (!mounted || generation != _requestGeneration) return;
@@ -651,16 +661,19 @@ class _SearchPageState extends State<SearchPage> {
     return Scaffold(
       backgroundColor: palette.canvas,
       appBar: AppBar(
+        leading: const HomeBackButton(size: 48),
+        toolbarHeight: 64,
         titleSpacing: 0,
         backgroundColor: palette.canvas,
         elevation: 0,
         scrolledUnderElevation: 0,
         title: Container(
-          constraints: const BoxConstraints(minHeight: 40),
+          constraints: const BoxConstraints(minHeight: 48),
           margin: const EdgeInsets.only(right: homeGutter),
           decoration: BoxDecoration(
-            color: palette.searchBar,
-            borderRadius: BorderRadius.circular(20),
+            color: palette.surface,
+            border: Border.all(color: palette.line),
+            borderRadius: BorderRadius.circular(homeControlRadius),
           ),
           child: TextField(
             controller: _ctrl,
@@ -699,7 +712,7 @@ class _SearchPageState extends State<SearchPage> {
                       icon: Icon(
                         LucideIcons.search,
                         size: 17,
-                        color: HomePalette.accent,
+                        color: palette.ink,
                       ),
                       onPressed: () => _search(_ctrl.text),
                     ),
@@ -760,17 +773,20 @@ class _SearchPageState extends State<SearchPage> {
       return _resultsShell(
         context,
         Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  feed.error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                _paginationFooter(context, feed),
-              ],
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  HomeStateView(
+                    icon: LucideIcons.cloud_off,
+                    title: '暂时无法搜索',
+                    message: feed.error!,
+                  ),
+                  _paginationFooter(context, feed),
+                ],
+              ),
             ),
           ),
         ),
@@ -781,26 +797,29 @@ class _SearchPageState extends State<SearchPage> {
       return _resultsShell(
         context,
         Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _idQuery != null
-                    ? (_feeds.first.items.isEmpty
-                          ? '未找到该 ID 对应的作品'
-                          : '该分类下没有匹配的作品')
-                    : (!_shuqiSource && _minimumScore > 0
-                          ? '已加载结果中暂无达到评分的作品'
-                          : (feed.hasMore ? '当前页暂无匹配结果' : '无结果')),
-              ),
-              if (_idQuery == null && !_shuqiSource && _minimumScore > 0)
-                TextButton(
-                  onPressed: () => setState(() => _minimumScore = 0),
-                  child: const Text('清除评分筛选'),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                HomeStateView(
+                  icon: LucideIcons.search,
+                  title: _idQuery != null
+                      ? (_feeds.first.items.isEmpty
+                            ? '未找到该 ID 对应的作品'
+                            : '该分类下没有匹配的作品')
+                      : (!_shuqiSource && _minimumScore > 0
+                            ? '已加载结果中暂无达到评分的作品'
+                            : (feed.hasMore ? '当前页暂无匹配结果' : '无结果')),
                 ),
-              if (feed.hasMore || feed.loading || feed.error != null)
-                _paginationFooter(context, feed),
-            ],
+                if (_idQuery == null && !_shuqiSource && _minimumScore > 0)
+                  TextButton(
+                    onPressed: () => setState(() => _minimumScore = 0),
+                    child: const Text('清除评分筛选'),
+                  ),
+                if (feed.hasMore || feed.loading || feed.error != null)
+                  _paginationFooter(context, feed),
+              ],
+            ),
           ),
         ),
       );
@@ -864,6 +883,19 @@ class _SearchPageState extends State<SearchPage> {
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           slivers: [
             SliverToBoxAdapter(child: _toolbar(context)),
+            SliverToBoxAdapter(
+              child: HomeSectionLabel(
+                code: 'RESULTS',
+                title: '搜索结果',
+                action: Text(
+                  '显示 ${items.length} 部',
+                  style: TextStyle(
+                    color: HomePalette.of(context).muted,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
             if (_idQuery != null)
               SliverToBoxAdapter(
                 child: SearchIdLookupHint(
@@ -885,6 +917,9 @@ class _SearchPageState extends State<SearchPage> {
                         return HomeMediaCard(
                           item: item,
                           coverWidth: homeShelfCardWidth(context, width),
+                          radius: homeCoverRadius,
+                          titleSize: homeCardTitleSize,
+                          archiveCode: homeFileCode(item),
                           showLength: true,
                           onTap: () => _openItem(item),
                         );
@@ -913,6 +948,8 @@ class _SearchPageState extends State<SearchPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              HomeCode(homeFileCode(item)),
+              const SizedBox(height: 5),
               Text(
                 item.title,
                 maxLines: 2,

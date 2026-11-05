@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import 'detail_style.dart';
 
-/// A section title for the detail page.
-///
-/// Mockup rhythm: 16dp gutter, 20dp above, 10dp below, a 15dp heading and a
-/// 12dp muted action. The trailing action is flexible so a long
-/// `完结 共820章 · 全部 ›` ellipsises on a 320dp screen at 3× text instead of
-/// overflowing the row.
+/// Detail sections share the discovery page's archive heading.
 class DetailSectionHeader extends StatelessWidget {
+  final String code;
   final String title;
   final Widget? action;
 
@@ -20,45 +17,19 @@ class DetailSectionHeader extends StatelessWidget {
 
   const DetailSectionHeader({
     super.key,
+    required this.code,
     required this.title,
     this.action,
     this.bottomGap = 10,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        homeGutter,
-        homeSectionGap,
-        homeGutter,
-        bottomGap,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Flexible(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 15,
-                height: 1.5,
-                fontWeight: FontWeight.w700,
-                color: palette.ink,
-              ),
-            ),
-          ),
-          if (action != null) ...[
-            const SizedBox(width: 12),
-            Flexible(child: action!),
-          ],
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => HomeSectionLabel(
+    code: code,
+    title: title,
+    action: action,
+    bottomGap: bottomGap,
+  );
 }
 
 /// `＋ 书架` pill in the app bar (and in the desktop side card).
@@ -90,21 +61,29 @@ class DetailShelfPill extends StatelessWidget {
         key: Key(keyName),
         semanticLabel: inShelf ? '已在书架' : '加入书架',
         onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(homeControlRadius),
         child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
+            color: inShelf ? palette.soft : Colors.transparent,
+            borderRadius: BorderRadius.circular(homeControlRadius),
             border: Border.all(color: palette.line, width: 1),
           ),
-          child: Text(
-            inShelf ? '✓ 书架' : '＋ 书架',
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              height: 1.5,
-              fontWeight: FontWeight.w400,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                inShelf ? LucideIcons.check : LucideIcons.plus,
+                size: 15,
+                color: color,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '书架',
+                style: TextStyle(color: color, fontSize: 12, height: 1.5),
+              ),
+            ],
           ),
         ),
       ),

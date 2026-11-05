@@ -40,8 +40,8 @@ class _DetailDescriptionState extends State<DetailDescription> {
     final palette = HomePalette.of(context);
     final style = TextStyle(
       color: palette.ink,
-      fontSize: widget.desktop ? 15 : 13,
-      height: widget.desktop ? 1.65 : 1.5,
+      fontSize: widget.desktop ? 15 : 14,
+      height: 1.65,
     );
     final defaultTextStyle = DefaultTextStyle.of(context);
     final effectiveStyle = MediaQuery.boldTextOf(context)
@@ -52,7 +52,7 @@ class _DetailDescriptionState extends State<DetailDescription> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DetailSectionHeader(title: widget.title),
+        DetailSectionHeader(code: 'ABOUT', title: widget.title),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: widget.text.isEmpty
@@ -92,12 +92,16 @@ class _DetailDescriptionState extends State<DetailDescription> {
                             semanticLabel: _expanded ? '收起简介' : '展开简介',
                             onTap: () => setState(() => _expanded = !_expanded),
                             borderRadius: BorderRadius.circular(4),
-                            child: Text(
-                              _expanded ? '收起' : '展开',
-                              style: TextStyle(
-                                color: palette.muted,
-                                fontSize: 12,
-                                height: 1.5,
+                            child: Container(
+                              constraints: const BoxConstraints(minHeight: 44),
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                _expanded ? '收起' : '展开',
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 12,
+                                  height: 1.5,
+                                ),
                               ),
                             ),
                           ),

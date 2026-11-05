@@ -266,7 +266,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                 : 840,
           ),
           child: SafeArea(
-            bottom: false,
+            // The shell supplies the dock height through MediaQuery.padding.
+            // Clip the whole viewport above it, not just the last feed item.
+            bottom: true,
             child: Column(
               children: [
                 HomeMasthead(onSearch: _openSearch, onCategory: _openCategory),
@@ -650,7 +652,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   SliverToBoxAdapter _bottomSpacer(BuildContext context) =>
-      SliverToBoxAdapter(child: SizedBox(height: homeBottomClearance(context)));
+      const SliverToBoxAdapter(child: SizedBox(height: 24));
 
   void _openSearch() {
     Navigator.push(

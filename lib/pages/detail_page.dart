@@ -36,6 +36,9 @@ import '../widgets/detail/detail_sections.dart';
 import '../widgets/detail/detail_states.dart';
 import '../widgets/detail/detail_style.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_archive.dart';
+import '../widgets/home/home_back_button.dart';
+import '../widgets/home/home_sheet.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_shelf.dart';
 import '../widgets/media_card.dart';
@@ -525,25 +528,11 @@ class _DetailPageState extends State<DetailPage> {
                 surfaceTintColor: Colors.transparent,
                 scrolledUnderElevation: 0,
                 elevation: 0,
-                toolbarHeight: 52,
+                toolbarHeight: 56,
                 leadingWidth: 56,
-                leading: Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: Center(
-                    child: IconButton(
-                      tooltip: '返回',
-                      onPressed: () => Navigator.maybePop(context),
-                      style: IconButton.styleFrom(
-                        foregroundColor: palette.ink,
-                        fixedSize: const Size(36, 36),
-                        minimumSize: const Size(36, 36),
-                        padding: EdgeInsets.zero,
-                      ),
-                      icon: const Icon(LucideIcons.chevron_left, size: 20),
-                    ),
-                  ),
-                ),
+                leading: const HomeBackButton(size: 48),
                 titleSpacing: 0,
+                title: const HomeCode('STORY ARCHIVE'),
                 actions: [
                   Padding(
                     padding: const EdgeInsets.only(right: 10),
@@ -896,7 +885,7 @@ class _DetailPageState extends State<DetailPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (_detailError != null) ...[
-          const DetailSectionHeader(title: '简介'),
+          const DetailSectionHeader(code: 'ABOUT', title: '简介'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: homeGutter),
             child: DetailInlineError(message: _detailError!, onRetry: _load),
@@ -958,7 +947,7 @@ class _DetailPageState extends State<DetailPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const DetailSectionHeader(title: '书评'),
+          const DetailSectionHeader(code: 'REVIEWS', title: '书评'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: homeGutter),
             child: DetailInlineError(
@@ -1253,45 +1242,45 @@ class _DetailPageState extends State<DetailPage> {
     final cached = _cachedBook != null;
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: homeSheetColor(palette),
-      shape: homeSheetShape(palette),
-      builder: (sheetContext) => SafeArea(
-        top: false,
-        child: Padding(
-          key: const Key('detail_download_sheet'),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DetailSheetOption(
-                key: const Key('detail_download_all'),
-                icon: LucideIcons.download,
-                title: '整本下载',
-                subtitle: progress != null
-                    ? '下载中 ${progress.completed}/${progress.total}'
-                    : (_allChapters.isEmpty
-                          ? '目录加载中'
-                          : '缓存全部 ${_allChapters.length}$_chapterUnit'),
-                enabled: _allChapters.isNotEmpty,
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _toggleDownload();
-                },
-              ),
-              DetailSheetOption(
-                key: const Key('detail_download_cached'),
-                icon: LucideIcons.book_open,
-                title: '离线缓存',
-                subtitle: cached ? '用本地整本缓存直接阅读' : '暂无本地缓存',
-                enabled: cached,
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  unawaited(_readCached());
-                },
-              ),
-            ],
+      shape: homeSheetShape(palette, top: HomeSheetFrame.radius),
+      sheetAnimationStyle:
+          palette.eink || MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
+      builder: (sheetContext) => HomeSheetFrame(
+        key: const Key('detail_download_sheet'),
+        title: '下载与缓存',
+        children: [
+          DetailSheetOption(
+            key: const Key('detail_download_all'),
+            icon: LucideIcons.download,
+            title: '整本下载',
+            subtitle: progress != null
+                ? '下载中 ${progress.completed}/${progress.total}'
+                : (_allChapters.isEmpty
+                      ? '目录加载中'
+                      : '缓存全部 ${_allChapters.length}$_chapterUnit'),
+            enabled: _allChapters.isNotEmpty,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _toggleDownload();
+            },
           ),
-        ),
+          DetailSheetOption(
+            key: const Key('detail_download_cached'),
+            icon: LucideIcons.book_open,
+            title: '离线缓存',
+            subtitle: cached ? '用本地整本缓存直接阅读' : '暂无本地缓存',
+            enabled: cached,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              unawaited(_readCached());
+            },
+          ),
+        ],
       ),
     );
   }

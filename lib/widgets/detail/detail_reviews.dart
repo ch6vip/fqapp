@@ -52,6 +52,7 @@ class DetailReviews extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         DetailSectionHeader(
+          code: 'REVIEWS',
           key: const Key('detail_reviews_header'),
           title: '书评',
           action: action == null

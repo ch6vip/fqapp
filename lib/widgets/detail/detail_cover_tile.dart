@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 import '../home/home_media_card.dart';
 
 /// 3:4-ish detail cover, tappable to open the zoomable viewer.
 ///
-/// Mockup size is exactly 92×128 at r6 with no shadow, spine or border; e-ink
-/// keeps the shape and paints the artwork in grayscale.
+/// Uses the same small corner radius and grayscale treatment as discovery.
 class DetailCoverTile extends StatelessWidget {
   final MediaItem item;
 
@@ -25,7 +25,6 @@ class DetailCoverTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     final width = desktop ? (compact ? 112.0 : 168.0) : 92.0;
     final height = desktop ? width * 4 / 3 : 128.0;
     return SizedBox(
@@ -35,21 +34,11 @@ class DetailCoverTile extends StatelessWidget {
         key: const Key('detail_cover_button'),
         semanticLabel: '查看《${item.title}》封面',
         onTap: () => showDetailCover(context, item),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(homeCoverRadius),
         child: ExcludeSemantics(
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: palette.eink
-                ? ColorFiltered(
-                    colorFilter: const ColorFilter.matrix(<double>[
-                      0.2126, 0.7152, 0.0722, 0, 0, //
-                      0.2126, 0.7152, 0.0722, 0, 0, //
-                      0.2126, 0.7152, 0.0722, 0, 0, //
-                      0, 0, 0, 1, 0, //
-                    ]),
-                    child: StoryCover(item: item, cacheWidth: 320),
-                  )
-                : StoryCover(item: item, cacheWidth: 320),
+            borderRadius: BorderRadius.circular(homeCoverRadius),
+            child: StoryCover(item: item, cacheWidth: 320),
           ),
         ),
       ),

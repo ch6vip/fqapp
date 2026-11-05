@@ -2,14 +2,13 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 
 /// 搜索来源的「番茄 | 书旗」两段切换。
 ///
-/// 外框 32 高、内边距 2、圆角 16、[HomePalette.soft] 底；每段 28 高、
-/// 水平内边距 11、13sp。选中段浅色用 [HomePalette.surface]，深色用
-/// [HomePalette.line]，文字 ink、w700，并带一层轻阴影；未选中段 muted、
-/// w500。点击区纵向撑满整条范围条，不只限于 28 高的胶囊。
+/// Bordered, shadow-free segments stay distinct from the category underline.
+/// The full-height hit targets extend beyond the visible track.
 class SearchSourceSwitch extends StatelessWidget {
   static const double defaultTapHeight = 48;
   static const double trackHeight = 32;
@@ -35,7 +34,7 @@ class SearchSourceSwitch extends StatelessWidget {
     // 默认字号下就是样稿的 28 / 32；大字体时随文字长高，避免 13sp 被裁掉。
     final segmentHeight = math.max(
       SearchSourceSwitch.segmentHeight,
-      MediaQuery.textScalerOf(context).scale(13) * 1.2,
+      MediaQuery.textScalerOf(context).scale(12) * 1.2 + 4,
     );
     final trackHeight = segmentHeight + 4;
     return SizedBox(
@@ -51,7 +50,8 @@ class SearchSourceSwitch extends StatelessWidget {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: palette.soft,
-                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: palette.line),
+                borderRadius: BorderRadius.circular(homePanelRadius),
               ),
             ),
           ),
@@ -103,36 +103,25 @@ class SearchSourceSwitch extends StatelessWidget {
       child: InkWell(
         key: key,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(homePanelRadius),
         child: SizedBox(
           height: tapHeight,
           child: Center(
             child: Container(
               height: segmentHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 11),
+              padding: const EdgeInsets.symmetric(horizontal: 9),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: selected
-                    ? (palette.dark ? palette.line : palette.surface)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: selected
-                    ? [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.12),
-                          blurRadius: 2,
-                          offset: const Offset(0, 1),
-                        ),
-                      ]
-                    : null,
+                color: selected ? palette.ink : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
               ),
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   height: 1.2,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? palette.ink : palette.muted,
+                  color: selected ? palette.canvas : palette.muted,
                 ),
               ),
             ),

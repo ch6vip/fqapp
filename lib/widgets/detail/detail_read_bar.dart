@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 import 'detail_style.dart';
 
 /// Bottom action bar: secondary actions (听书 / 下载) on the left and the
-/// primary read / play call to action as a filled pill on the right.
-///
-/// Mockup: surface fill with a 1px top line, 8/12/14 padding, two 54dp
-/// icon+label items (20dp icon, 10dp muted label) and a 42dp accent pill.
+/// primary read / play action on the right.
 /// The bar is always mounted — while loading it renders disabled instead of
 /// disappearing, so the page never jumps when data arrives.
 class DetailReadBar extends StatelessWidget {
@@ -105,18 +103,29 @@ class DetailReadBar extends StatelessWidget {
                           child: HomePressable(
                             key: const Key('detail_read_button'),
                             onTap: onRead,
-                            borderRadius: BorderRadius.circular(999),
+                            borderRadius: BorderRadius.circular(
+                              homeControlRadius,
+                            ),
                             child: Container(
-                              height: 42,
+                              // Scaffold gives its bottom bar a finite maximum
+                              // height; alignment alone would fill that space.
+                              height:
+                                  (MediaQuery.textScalerOf(context).scale(14) *
+                                              1.35 +
+                                          24)
+                                      .clamp(48.0, double.infinity),
                               alignment: Alignment.center,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
+                                vertical: 12,
                               ),
                               decoration: BoxDecoration(
                                 color: active
                                     ? detailAccentFill(palette)
                                     : palette.soft,
-                                borderRadius: BorderRadius.circular(999),
+                                borderRadius: BorderRadius.circular(
+                                  homeControlRadius,
+                                ),
                               ),
                               child: Text(
                                 opening ? '正在打开' : label,
@@ -128,7 +137,7 @@ class DetailReadBar extends StatelessWidget {
                                       ? detailOnAccent(palette)
                                       : palette.muted,
                                   fontSize: 14,
-                                  fontWeight: FontWeight.w500,
+                                  fontWeight: FontWeight.w600,
                                   height: 1.35,
                                 ),
                               ),
@@ -185,8 +194,15 @@ class _SecondaryAction extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         child: SizedBox(
           width: 54,
+          height: compact
+              ? 48
+              : (20 + MediaQuery.textScalerOf(context).scale(10) * 1.4).clamp(
+                  48.0,
+                  double.infinity,
+                ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (progress == null)
                 Icon(icon, size: 20, color: color)

@@ -7,6 +7,7 @@ import '../../models/book_comment.dart';
 import '../../services/api_client.dart';
 import '../home/home_design.dart';
 import '../home/home_feed_states.dart';
+import '../home/home_sheet.dart';
 import '../home/home_stream_footer.dart';
 import 'detail_reviews.dart';
 
@@ -27,8 +28,9 @@ Future<void> showDetailReviewsSheet(
   backgroundColor: homeSheetColor(HomePalette.of(context)),
   barrierColor: Colors.black.withValues(alpha: 0.45),
   clipBehavior: Clip.antiAlias,
-  shape: homeSheetShape(HomePalette.of(context), top: 24),
-  sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+  shape: homeSheetShape(HomePalette.of(context), top: HomeSheetFrame.radius),
+  sheetAnimationStyle:
+      HomePalette.of(context).eink || MediaQuery.disableAnimationsOf(context)
       ? AnimationStyle.noAnimation
       : const AnimationStyle(
           duration: Duration(milliseconds: 300),
@@ -140,87 +142,49 @@ class _DetailReviewsSheetState extends State<DetailReviewsSheet> {
 
     return SizedBox(
       height: height,
-      child: Column(
-        children: [
-          // 顶部拖拽指示条
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 8),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: palette.line,
-                borderRadius: BorderRadius.circular(2),
+      child: CustomScrollView(
+        controller: _scroll,
+        slivers: [
+          SliverToBoxAdapter(
+            child: HomeSheetHeader(
+              title: _total > 0 ? '全部书评 · $_total' : '全部书评',
+              subtitle: widget.title,
+            ),
+          ),
+          if (_comments.isEmpty && !_loading)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: HomeStateView(
+                key: const Key('detail_reviews_state'),
+                icon: LucideIcons.message_square,
+                title: _error ?? '暂无书评',
+                actionLabel: _error != null ? '重试' : null,
+                actionIcon: _error != null ? LucideIcons.refresh_cw : null,
+                onAction: _error != null ? _loadMore : null,
+              ),
+            )
+          else
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                8,
+                20,
+                24 + MediaQuery.paddingOf(context).bottom,
+              ),
+              sliver: SliverList.separated(
+                itemCount: _comments.length + 1,
+                separatorBuilder: (context, index) =>
+                    Divider(height: 1, color: palette.line),
+                itemBuilder: (context, index) {
+                  if (index >= _comments.length) return _footer(palette);
+                  return DetailCommentTile(
+                    key: ValueKey('sheet_review_${_comments[index].id}'),
+                    comment: _comments[index],
+                    replyLoader: widget.replyLoader,
+                  );
+                },
               ),
             ),
-          ),
-          // 标题栏
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 12, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _total > 0 ? '全部书评 · $_total' : '全部书评',
-                        style: TextStyle(
-                          color: palette.ink,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      if (widget.title.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          widget.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: palette.muted, fontSize: 12),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.pop(context),
-                  icon: Icon(LucideIcons.x, color: palette.muted, size: 20),
-                ),
-              ],
-            ),
-          ),
-          Divider(height: 1, color: palette.line),
-          // 虚拟化评论列表
-          Expanded(
-            child: _comments.isEmpty && !_loading
-                ? HomeStateView(
-                    key: const Key('detail_reviews_state'),
-                    icon: LucideIcons.message_square,
-                    title: _error ?? '暂无书评',
-                    actionLabel: _error != null ? '重试' : null,
-                    actionIcon: _error != null ? LucideIcons.refresh_cw : null,
-                    onAction: _error != null ? _loadMore : null,
-                    scrollable: true,
-                  )
-                : ListView.separated(
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    itemCount: _comments.length + 1,
-                    separatorBuilder: (context, index) =>
-                        Divider(height: 1, color: palette.line),
-                    itemBuilder: (context, index) {
-                      if (index >= _comments.length) return _footer(palette);
-                      return DetailCommentTile(
-                        key: ValueKey('sheet_review_${_comments[index].id}'),
-                        comment: _comments[index],
-                        replyLoader: widget.replyLoader,
-                      );
-                    },
-                  ),
-          ),
         ],
       ),
     );

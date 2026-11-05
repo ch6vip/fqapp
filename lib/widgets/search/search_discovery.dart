@@ -4,14 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/search_discovery.dart';
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 
 // 搜索页的发现区：联想词、热搜榜、搜索历史。
 //
-// 2026-10-30 与首页统一：不再用「白卡 + 描边 + 阴影」的模板盒子，改成分区
-// 头 + 16dp 栏距的裸排；热搜仍是可点的胶囊，但去掉彩色图标底和边框，
-// 前三名只留一个强调色数字。
+// Archive sections keep titles separate from badges and popularity metadata.
 
 /// Suggestion list shown while the query is being typed.
 ///
@@ -48,8 +47,8 @@ class SearchSuggestionList extends StatelessWidget {
         return InkWell(
           key: ValueKey('search_suggestion_${suggestion.text}'),
           onTap: () => onSelect(suggestion.text),
-          child: SizedBox(
-            height: 48,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: homeGutter),
               child: Row(
@@ -155,7 +154,7 @@ class HotSearchBoard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const HomeSectionHeader(title: '热搜榜'),
+        const HomeSectionLabel(code: 'TRENDING', title: '热搜榜'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: Column(
@@ -190,53 +189,62 @@ class _HotRow extends StatelessWidget {
       key: ValueKey('search_hot_${entry.title}'),
       semanticLabel: '搜索 ${entry.title}',
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: SizedBox(
-        height: 44,
+      borderRadius: BorderRadius.circular(homePanelRadius),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 64),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: palette.line)),
+        ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 22,
-              child: Text(
-                '$rank',
-                style: TextStyle(
-                  color: top ? HomePalette.accent : palette.muted,
-                  fontSize: top ? 14 : 12.5,
-                  height: 1.1,
-                  fontWeight: top ? FontWeight.w800 : FontWeight.w500,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
+              width: 36,
+              child: HomeCode(
+                rank.toString().padLeft(2, '0'),
+                size: 14,
+                color: top ? palette.accentText : palette.muted,
               ),
             ),
             Expanded(
-              child: Text(
-                entry.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: 13.5,
-                  height: 1.3,
-                  fontWeight: top ? FontWeight.w600 : FontWeight.w500,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.ink,
+                      fontSize: 14,
+                      height: 1.4,
+                      fontWeight: top ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                  ),
+                  if (entry.badge.isNotEmpty || entry.hotValue.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (entry.badge.isNotEmpty)
+                          _HotBadge(text: entry.badge),
+                        if (entry.hotValue.isNotEmpty)
+                          Text(
+                            entry.hotValue,
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
-            if (entry.badge.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              _HotBadge(text: entry.badge),
-            ],
-            if (entry.hotValue.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Text(
-                entry.hotValue,
-                style: TextStyle(
-                  color: palette.muted,
-                  fontSize: 11,
-                  height: 1.2,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -323,23 +331,14 @@ class SearchDiscoveryView extends StatelessWidget {
     );
   }
 
-  /// 分区头复用 [HomeSectionHeader]，「清空」的点击区单独撑到 44 高，
-  /// 但不改变标题和按钮的视觉位置。
   Widget _historyHeader(BuildContext context) {
     final palette = HomePalette.of(context);
-    final titleHeight = MediaQuery.textScalerOf(context).scale(19) * 1.25;
-    final headerHeight = homeSectionGap + titleHeight + homeHeaderGap;
-    final desired = homeSectionGap + titleHeight / 2 - 22;
-    final top = desired.clamp(0.0, math.max(0.0, headerHeight - 44));
-    return Stack(
-      children: [
-        const HomeSectionHeader(title: '搜索历史'),
-        if (history.isNotEmpty)
-          Positioned(
-            right: homeGutter - 4,
-            top: top.toDouble(),
-            height: 44,
-            child: TextButton(
+    return HomeSectionLabel(
+      code: 'HISTORY',
+      title: '搜索历史',
+      action: history.isEmpty
+          ? null
+          : TextButton(
               onPressed: onClearHistory,
               style: TextButton.styleFrom(
                 minimumSize: const Size(0, 44),
@@ -356,8 +355,6 @@ class SearchDiscoveryView extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-      ],
     );
   }
 
@@ -387,31 +384,34 @@ class SearchDiscoveryView extends StatelessWidget {
     );
   }
 
-  /// 一条搜索记录：整块可点重新搜索，右端 × 只删这一条。
-  ///
-  /// 胶囊 36 高、左内边距 14、× 的点击区 32×32、图标 13——按样稿的密度
-  /// 比原版更宽松，手指更容易点中删除。
+  /// Search and removal retain separate, full-height hit targets.
   Widget _historyChip(BuildContext context, String query) {
     final palette = HomePalette.of(context);
     return Container(
       key: ValueKey('search_history_$query'),
-      height: 36,
+      height: math.max(
+        44,
+        MediaQuery.textScalerOf(context).scale(12.5) * 1.2 + 16,
+      ),
       decoration: BoxDecoration(
-        color: palette.soft,
-        borderRadius: BorderRadius.circular(999),
+        color: palette.surface,
+        border: Border.all(color: palette.line),
+        borderRadius: BorderRadius.circular(homePanelRadius),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 220),
+            constraints: BoxConstraints(
+              maxWidth: math.min(220, MediaQuery.sizeOf(context).width - 88),
+            ),
             child: InkWell(
               onTap: () => onSearch(query),
               borderRadius: const BorderRadius.horizontal(
-                left: Radius.circular(999),
+                left: Radius.circular(homePanelRadius),
               ),
               child: Padding(
-                padding: const EdgeInsets.only(left: 14),
+                padding: const EdgeInsets.only(left: 12),
                 child: Center(
                   widthFactor: 1,
                   child: Text(
@@ -430,20 +430,21 @@ class SearchDiscoveryView extends StatelessWidget {
           ),
           const SizedBox(width: 2),
           SizedBox(
-            width: 32,
-            height: 32,
+            width: 44,
+            height: double.infinity,
             child: Tooltip(
               message: '删除 $query',
               child: InkWell(
                 onTap: () => onRemoveHistory(query),
-                customBorder: const CircleBorder(),
+                borderRadius: const BorderRadius.horizontal(
+                  right: Radius.circular(homePanelRadius),
+                ),
                 child: Center(
                   child: Icon(LucideIcons.x, size: 13, color: palette.muted),
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 4),
         ],
       ),
     );

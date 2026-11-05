@@ -6,12 +6,8 @@ import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import 'search_source_switch.dart';
 
-/// 搜索页的范围条：分类页签 + 右缘渐隐 + 来源切换。
-///
-/// 这是固定顶栏的第二层（第一层是 AppBar 里的搜索框）。分类页签沿用原来的
-/// [ChoiceChip] 样式，横向滚动；右缘 24dp 渐隐后接一根 1×20 的竖线，再往右
-/// 是固定的「番茄 | 书旗」两段切换。选中书旗时分类页签降到 0.4 透明度并停止
-/// 响应点击，退出书旗只能点「番茄」。
+/// Underlined categories and a separate source switch. Source selection keeps
+/// its existing behavior; Shuqi disables both touch and semantic category actions.
 class SearchScopeBar extends StatelessWidget {
   static const double fadeWidth = 24;
 
@@ -41,14 +37,17 @@ class SearchScopeBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final height = heightFor(context);
-    return SizedBox(
+    return Container(
       height: height,
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: palette.line)),
+      ),
       child: Row(
         children: [
           Expanded(child: _categories(palette)),
           Container(width: 1, height: 20, color: palette.line),
           Padding(
-            padding: const EdgeInsets.only(left: 12, right: homeGutter),
+            padding: const EdgeInsets.only(left: 8, right: homeGutter),
             child: SearchSourceSwitch(
               shuqi: shuqi,
               tapHeight: height,
@@ -64,27 +63,24 @@ class SearchScopeBar extends StatelessWidget {
     final list = ListView(
       key: const Key('search-category-tabs'),
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.only(
-        left: homeGutter - 4,
-        right: homeGutter - 8,
-      ),
+      padding: const EdgeInsets.only(left: homeGutter - 8, right: homeGutter),
       children: [
         for (var i = 0; i < categories.length; i++)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Center(child: _chip(palette, i)),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: _tab(palette, i),
           ),
       ],
     );
     return IgnorePointer(
       ignoring: shuqi,
       child: Opacity(
-        opacity: shuqi ? 0.4 : 1,
+        opacity: shuqi && !palette.eink ? 0.4 : 1,
         child: ShaderMask(
           blendMode: BlendMode.dstIn,
           shaderCallback: (bounds) {
             // 最后 24dp 渐隐；内容宽度不足 24dp 时直接保持不透明。
-            final fadeStart = bounds.width > fadeWidth
+            final fadeStart = !palette.eink && bounds.width > fadeWidth
                 ? (bounds.width - fadeWidth) / bounds.width
                 : 1.0;
             return LinearGradient(
@@ -100,25 +96,35 @@ class SearchScopeBar extends StatelessWidget {
     );
   }
 
-  Widget _chip(HomePalette palette, int index) {
+  Widget _tab(HomePalette palette, int index) {
     final category = categories[index];
     final isSelected = !shuqi && index == selectedIndex;
-    return ChoiceChip(
-      label: Text(category),
+    return Semantics(
+      button: true,
       selected: isSelected,
-      onSelected: (_) => onSelectCategory(index),
-      showCheckmark: false,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      visualDensity: VisualDensity.compact,
-      shape: const StadiumBorder(),
-      side: BorderSide.none,
-      backgroundColor: palette.soft,
-      selectedColor: palette.ink,
-      labelPadding: const EdgeInsets.symmetric(horizontal: 8),
-      labelStyle: TextStyle(
-        fontSize: 13,
-        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-        color: isSelected ? palette.canvas : palette.ink,
+      enabled: !shuqi,
+      child: InkWell(
+        onTap: shuqi ? null : () => onSelectCategory(index),
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: isSelected ? palette.ink : Colors.transparent,
+                width: 2,
+              ),
+            ),
+          ),
+          child: Text(
+            category,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+              color: isSelected ? palette.ink : palette.muted,
+            ),
+          ),
+        ),
       ),
     );
   }

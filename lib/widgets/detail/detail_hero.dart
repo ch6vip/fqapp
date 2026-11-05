@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import '../../models/book_detail.dart';
 import '../../models/media_item.dart';
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 import 'detail_cover_tile.dart';
 import 'detail_style.dart';
@@ -9,10 +11,7 @@ import 'detail_style.dart';
 /// category meta line, the single rating, the rank pill, the update line and
 /// the tags stacked to its right.
 ///
-/// Mockup: 6/16 padding, a 14 gap, a 19/1.3 title, and a 5dp gap between the
-/// rows of `.hcol`. Each row appears only when it has data. The title
-/// deliberately has no `maxLines` so it always wraps in full rather than
-/// truncating.
+/// The title wraps in full; metadata is optional and never fabricated.
 class DetailHero extends StatelessWidget {
   final MediaItem item;
   final BookDetail? detail;
@@ -52,17 +51,14 @@ class DetailHero extends StatelessWidget {
           ? CrossAxisAlignment.center
           : CrossAxisAlignment.start,
       children: [
+        HomeCode(homeFileCode(item)),
+        const SizedBox(height: 6),
         Padding(
           padding: const EdgeInsets.only(top: 2, bottom: 1),
           child: Text(
             title,
             key: const Key('detail_book_title'),
-            style: TextStyle(
-              color: palette.ink,
-              fontSize: desktop ? 22 : 19,
-              fontWeight: FontWeight.w700,
-              height: 1.3,
-            ),
+            style: homeSerifStyle(color: palette.ink, size: 22, height: 1.3),
           ),
         ),
         for (var i = 0; i < rows.length; i++) ...[
@@ -80,7 +76,7 @@ class DetailHero extends StatelessWidget {
     return Padding(
       padding: desktop
           ? const EdgeInsets.fromLTRB(0, 16, 0, 0)
-          : const EdgeInsets.fromLTRB(16, 6, 16, 0),
+          : const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: (stacked || centered)
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -162,7 +158,7 @@ class _RankPill extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
         decoration: BoxDecoration(
           color: detailRankFill(palette),
-          borderRadius: BorderRadius.circular(99),
+          borderRadius: BorderRadius.circular(homePanelRadius),
           border: palette.eink
               ? Border.all(color: palette.line, width: 1)
               : null,
@@ -183,8 +179,7 @@ class _RankPill extends StatelessWidget {
   }
 }
 
-/// Genre tags in the hero: one clipped line on phones, a centred wrap on the
-/// wide desktop masthead.
+/// Tags wrap instead of clipping at large text sizes.
 class _HeroTags extends StatelessWidget {
   final List<String> tags;
   final bool centered;
@@ -198,7 +193,7 @@ class _HeroTags extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
       decoration: BoxDecoration(
         color: palette.soft,
-        borderRadius: BorderRadius.circular(99),
+        borderRadius: BorderRadius.circular(homePanelRadius),
         border: palette.eink ? Border.all(color: palette.line) : null,
       ),
       child: Text(
@@ -207,27 +202,12 @@ class _HeroTags extends StatelessWidget {
         style: TextStyle(color: palette.muted, fontSize: 11, height: 1.5),
       ),
     );
-    final row = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < tags.length; i++) ...[
-          if (i > 0) const SizedBox(width: 6),
-          pill(tags[i]),
-        ],
-      ],
-    );
-    return SizedBox(
+    return Wrap(
       key: const Key('detail_hero_tags'),
-      height: 20.5,
-      child: centered
-          ? Center(child: row)
-          : ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.centerLeft,
-                maxWidth: double.infinity,
-                child: row,
-              ),
-            ),
+      spacing: 6,
+      runSpacing: 6,
+      alignment: centered ? WrapAlignment.center : WrapAlignment.start,
+      children: tags.map(pill).toList(),
     );
   }
 }
@@ -326,14 +306,7 @@ class _RatingLine extends StatelessWidget {
         mainAxisSize: centered ? MainAxisSize.min : MainAxisSize.max,
         children: [
           if (score.isNotEmpty) ...[
-            Text(
-              '★',
-              style: TextStyle(
-                color: detailStarColor(palette),
-                fontSize: 12,
-                height: 1.5,
-              ),
-            ),
+            Icon(LucideIcons.star, color: detailStarColor(palette), size: 14),
             const SizedBox(width: 4),
             Text(
               score,

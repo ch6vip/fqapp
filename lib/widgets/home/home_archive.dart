@@ -15,6 +15,9 @@ const double homeCoverRadius = 3;
 /// 面板（继续阅读条、空态块）的圆角。
 const double homePanelRadius = 4;
 
+/// Interactive fields and primary actions; distinct from the floating dock.
+const double homeControlRadius = 8;
+
 /// 网格卡片的字号。卡片和网格行高都从这里取，改一处两边同步。
 const double homeCardTitleSize = 14.5;
 const double homeCardCodeSize = 9;
@@ -113,18 +116,20 @@ class HomeSectionLabel extends StatelessWidget {
     required this.title,
     this.action,
     this.gutter = 16,
+    this.bottomGap = 8,
   });
 
   final String code;
   final String title;
   final Widget? action;
   final double gutter;
+  final double bottomGap;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(gutter, 16, gutter, 8),
+      padding: EdgeInsets.fromLTRB(gutter, 16, gutter, bottomGap),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -139,7 +144,7 @@ class HomeSectionLabel extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Text(
@@ -155,7 +160,15 @@ class HomeSectionLabel extends StatelessWidget {
                   ),
                 ),
               ),
-              if (action != null) ...[const SizedBox(width: 12), action!],
+              if (action != null) ...[
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: action!,
+                  ),
+                ),
+              ],
             ],
           ),
         ],

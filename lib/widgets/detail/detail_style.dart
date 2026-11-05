@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
 
 /// The one accent fill the detail page uses for primary actions.
@@ -18,9 +19,7 @@ Color detailStarColor(HomePalette palette) =>
 
 /// Tabular figures for the score, ID and progress (`font-variant-numeric`).
 /// No font family is set: the detail page keeps the app's own font.
-const List<FontFeature> detailNumericFeatures = [
-  FontFeature.tabularFigures(),
-];
+const List<FontFeature> detailNumericFeatures = [FontFeature.tabularFigures()];
 
 /// Rank pill fill (`--m-cur`): the current-chapter tint, black/white on e-ink.
 Color detailRankFill(HomePalette palette) {
@@ -47,7 +46,9 @@ ButtonStyle detailPrimaryButtonStyle(
   disabledForegroundColor: palette.muted,
   minimumSize: minimumSize,
   visualDensity: VisualDensity.standard,
-  shape: const StadiumBorder(),
+  shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(homeControlRadius),
+  ),
 );
 
 /// Secondary action: a hairline outline on the page surface.
@@ -59,5 +60,7 @@ ButtonStyle detailOutlineButtonStyle(
   side: BorderSide(color: palette.line),
   minimumSize: minimumSize,
   visualDensity: VisualDensity.standard,
-  shape: const StadiumBorder(),
+  shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(homeControlRadius),
+  ),
 );

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../home/home_archive.dart';
 import '../home/home_design.dart';
+import '../home/home_sheet.dart';
 import 'detail_chapter_row.dart';
 
 Future<Chapter?> showDetailDirectory(
@@ -19,8 +21,9 @@ Future<Chapter?> showDetailDirectory(
   backgroundColor: homeSheetColor(HomePalette.of(context)),
   barrierColor: Colors.black.withValues(alpha: 0.42),
   clipBehavior: Clip.antiAlias,
-  shape: homeSheetShape(HomePalette.of(context), top: 28),
-  sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+  shape: homeSheetShape(HomePalette.of(context), top: HomeSheetFrame.radius),
+  sheetAnimationStyle:
+      HomePalette.of(context).eink || MediaQuery.disableAnimationsOf(context)
       ? AnimationStyle.noAnimation
       : const AnimationStyle(
           duration: Duration(milliseconds: 320),
@@ -107,55 +110,22 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
           controller: controller,
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           slivers: [
+            SliverToBoxAdapter(
+              child: HomeSheetHeader(
+                title: '目录',
+                subtitle: '共 ${widget.chapters.length} ${widget.chapterUnit}',
+                closeKey: const Key('detail_directory_close'),
+                closeTooltip: '关闭目录',
+              ),
+            ),
             // The heading and search also scroll. Even with a large keyboard
             // and accessibility fonts they cannot overflow a fixed header.
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Center(
-                      child: Container(
-                        width: 32,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: palette.line,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '目录',
-                            style: TextStyle(
-                              color: palette.ink,
-                              fontSize: 25,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          key: const Key('detail_directory_close'),
-                          tooltip: '关闭目录',
-                          onPressed: () => Navigator.pop(context),
-                          style: IconButton.styleFrom(
-                            backgroundColor: palette.soft,
-                            foregroundColor: palette.ink,
-                          ),
-                          icon: const Icon(LucideIcons.x, size: 20),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '共 ${widget.chapters.length} ${widget.chapterUnit}',
-                      style: TextStyle(color: palette.muted, fontSize: 12),
-                    ),
-                    const SizedBox(height: 20),
                     TextField(
                       key: const Key('detail_directory_search'),
                       controller: _search,
@@ -167,7 +137,7 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
                         hintText: '搜索章节名称或序号',
                         hintStyle: TextStyle(color: palette.muted),
                         filled: true,
-                        fillColor: palette.soft,
+                        fillColor: palette.surface,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14,
                           vertical: 16,
@@ -189,12 +159,22 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
                                 ),
                               ),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide.none,
+                          borderRadius: BorderRadius.circular(
+                            homeControlRadius,
+                          ),
+                          borderSide: BorderSide(color: palette.line),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(
+                            homeControlRadius,
+                          ),
+                          borderSide: BorderSide(color: palette.line),
                         ),
                         focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide(color: palette.accentText),
+                          borderRadius: BorderRadius.circular(
+                            homeControlRadius,
+                          ),
+                          borderSide: BorderSide(color: palette.ink),
                         ),
                       ),
                     ),
