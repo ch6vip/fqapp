@@ -84,7 +84,9 @@ void main() {
         );
         expect(tester.takeException(), isNull);
         if (sample.layout == 'mobile') {
-          expect(find.byType(DetailReadBar), findsOneWidget);
+          // The ported phone page uses the shared glass action dock.
+          expect(find.byKey(const Key('detail_read_button')), findsOneWidget);
+          expect(find.byType(DetailReadBar), findsNothing);
         } else {
           expect(find.byType(AppBar), findsNothing);
           expect(find.byType(DetailReadBar), findsNothing);
