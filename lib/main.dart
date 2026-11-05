@@ -25,6 +25,7 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/ai_reading/ai_controller.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
@@ -171,6 +172,8 @@ Future<void> _initializeLocalData() async {
     optional(HiveDramaDownloadStore.instance.warmUp),
     // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
     optional(HiveAudioDownloadStore.instance.warmUp),
+    // AI 设置/缓存/反馈箱：失败只让 AI 功能退化，不能拖住阅读。
+    optional(AiReadingController.instance.init),
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());

@@ -9,6 +9,7 @@ import '../services/library_backup_service.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/data_transfer_widgets.dart';
 import '../widgets/settings/settings_widgets.dart';
+import 'ai_reading/settings/ai_settings_widgets.dart';
 import 'fanqie_history_import_page.dart';
 
 class LibraryBackupPage extends StatefulWidget {
@@ -76,19 +77,73 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
     }
   }
 
-  Future<void> _export() => _run('正在导出，请在系统窗口选择保存位置…', () async {
-    final backup = await _service.capture();
-    if (!mounted) return;
-    final saved = await _service.export(backup);
-    if (!mounted) return;
-    setState(() {
-      _message = saved
-          ? '备份文件已保存：${_counts(backup)}。\n'
-                '将这个文件传到新手机，在本页选择导入即可。'
-                '${backup.excludedLocalRecords > 0 ? '\n已排除 ${backup.excludedLocalRecords} 条本地书籍相关记录。' : ''}'
-          : '已取消导出';
+  Future<void> _export() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('备份包含哪些 AI 数据？'),
+        content: const Text(
+          '会包含四类校对反馈及其修订历史、认可改法与原文保护、提示词与候选、'
+          '试验摘要、用量聚合，以及反馈引用到的正文片段。\n\n'
+          '不会包含 API Key、原始请求行、运行明细和试验原始输出。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('继续导出'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _run('正在导出，请在系统窗口选择保存位置…', () async {
+      final backup = await _service.capture();
+      if (!mounted) return;
+      final saved = await _service.export(backup);
+      if (!mounted) return;
+      setState(() {
+        _message = saved
+            ? '备份文件已保存：${_counts(backup)}。\n'
+                  'AI 反馈、保护、提示词和用量已一并导出，API Key 不在文件中。\n'
+                  '将这个文件传到新手机，在本页选择导入即可。'
+                  '${_service.lastAiExportNote == null ? '' : '\n${_service.lastAiExportNote}'}'
+                  '${backup.excludedLocalRecords > 0 ? '\n已排除 ${backup.excludedLocalRecords} 条本地书籍相关记录。' : ''}'
+            : '已取消导出';
+      });
     });
-  });
+  }
+
+  Future<void> _exportBook() async {
+    final ids = await _service.aiBookIds();
+    if (!mounted) return;
+    if (ids.isEmpty) {
+      aiShowSnack(context, '本机还没有可导出的 AI 资产');
+      return;
+    }
+    final sorted = ids.toList()..sort();
+    final selected = await showAiChoiceDialog(
+      context,
+      title: '按书导出 AI 资产',
+      message: '每本书一个备份文件；文件仍包含书架和进度，导入时按顺序恢复即可。',
+      options: [for (final id in sorted) (key: id, label: id, selected: false)],
+    );
+    if (selected == null || !mounted) return;
+    await _run('正在按书导出…', () async {
+      final backup = await _service.capture(aiBookId: selected);
+      if (!mounted) return;
+      final saved = await _service.export(backup);
+      if (!mounted) return;
+      setState(() {
+        _message = saved
+            ? '已按书导出：$selected。${_service.lastAiExportNote == null ? '' : '\n${_service.lastAiExportNote}'}'
+            : '已取消导出';
+      });
+    });
+  }
 
   Future<void> _pick() => _run('请选择备份文件，读取后会显示预览…', () async {
     setState(() => _preview = null);
@@ -108,11 +163,13 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       if (!mounted) return;
       setState(() {
         _preview = null;
+        final ai = _service.lastAiRestore;
         _message =
             '恢复完成：新增 ${result.shelf} 条收藏、${result.history} 条进度、'
             '${result.episodes} 集已看标记。\n'
             '保留本机已有收藏/进度 '
-            '${backup.shelf.length + backup.history.length - result.shelf - result.history} 条。';
+            '${backup.shelf.length + backup.history.length - result.shelf - result.history} 条。'
+            '${ai == null ? '' : '\n${ai.summary}'}';
       });
     }, restoring: true);
   }
@@ -155,6 +212,14 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                         subtitle: '保存收藏、阅读进度与已看剧集',
                         enabled: enabled,
                         onTap: enabled ? _export : null,
+                      ),
+                      SettingsRow(
+                        icon: LucideIcons.files,
+                        iconTile: true,
+                        title: '按书导出 AI 资产',
+                        subtitle: '单个备份仍超 16 MB 时使用；每本书一个文件',
+                        enabled: enabled,
+                        onTap: enabled ? _exportBook : null,
                       ),
                       SettingsRow(
                         icon: LucideIcons.file_input,

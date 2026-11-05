@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 /// What the reader can do with a long-pressed paragraph.
-enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
+enum ReaderParagraphAction {
+  copy,
+  listen,
+  underline,
+  removeUnderline,
+  missedChange,
+}
 
 /// Floating action bar for a long-pressed paragraph or a dragged selection,
 /// matching the official one.
@@ -69,6 +75,10 @@ class ReaderParagraphMenu extends StatelessWidget {
   final bool paragraphScoped;
   final bool showListening;
 
+  /// Adds the AI-only 「漏改了」 action. False keeps the original bar exactly
+  /// as it was before the AI feature was enabled.
+  final bool showAi;
+
   /// True when the bar sits below the touched line, so its tip points up at the
   /// paragraph (`m.java` shows downArrow instead once the popup flips above).
   final bool belowAnchor;
@@ -85,6 +95,7 @@ class ReaderParagraphMenu extends StatelessWidget {
     this.isDark = false,
     this.paragraphScoped = true,
     this.showListening = true,
+    this.showAi = false,
     this.belowAnchor = true,
   });
 
@@ -95,7 +106,11 @@ class ReaderParagraphMenu extends StatelessWidget {
     required bool underlined,
     required bool paragraphScoped,
     bool showListening = true,
-  }) => paragraphScoped ? (showListening ? 3 : 2) : 2;
+    bool showAi = false,
+  }) {
+    final base = paragraphScoped ? (showListening ? 3 : 2) : 2;
+    return base + (showAi ? 1 : 0);
+  }
 
   /// Clamped top-left for the bar anchored at [anchor] (window coordinates),
   /// plus which side of the anchor it ended up on — the geometry
@@ -118,6 +133,7 @@ class ReaderParagraphMenu extends StatelessWidget {
     required EdgeInsets safeArea,
     required bool underlined,
     bool showListening = true,
+    bool showAi = false,
     double avoidBottom = 0,
   }) {
     const flipClearance = 10.0;
@@ -125,6 +141,7 @@ class ReaderParagraphMenu extends StatelessWidget {
       underlined: underlined,
       paragraphScoped: paragraphScoped,
       showListening: showListening,
+      showAi: showAi,
     );
     final barWidth = count * _itemWidth + _multiPadding * 2;
     // Only the tip facing the paragraph is laid out, exactly like `m.java`:
@@ -148,7 +165,8 @@ class ReaderParagraphMenu extends StatelessWidget {
     // Flipped above a selection: the bar's bottom (its down arrow) must sit
     // above the selection's first line top — the start caret's dot protrudes
     // 6dp above it, hence the extra clearance.
-    final flippedTop = (topAnchor?.dy ?? anchor.dy) -
+    final flippedTop =
+        (topAnchor?.dy ?? anchor.dy) -
         barHeight -
         _arrowHeight -
         (topAnchor == null ? 0 : flipClearance);
@@ -197,18 +215,21 @@ class ReaderParagraphMenu extends StatelessWidget {
               ),
               _Item(
                 key: const ValueKey('reader-action-underline'),
-                icon: underlined
-                    ? LucideIcons.eraser
-                    : LucideIcons.highlighter,
-                label: underlined
-                    ? (paragraphScoped ? '取消划线' : '删除划线')
-                    : '划线',
+                icon: underlined ? LucideIcons.eraser : LucideIcons.highlighter,
+                label: underlined ? (paragraphScoped ? '取消划线' : '删除划线') : '划线',
                 onTap: () => onAction(
                   underlined
                       ? ReaderParagraphAction.removeUnderline
                       : ReaderParagraphAction.underline,
                 ),
               ),
+              if (showAi)
+                _Item(
+                  key: const ValueKey('reader-action-missed'),
+                  icon: LucideIcons.sparkles,
+                  label: '漏改了',
+                  onTap: () => onAction(ReaderParagraphAction.missedChange),
+                ),
             ],
           ),
         ),
@@ -294,8 +315,11 @@ class _Item extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: ReaderParagraphMenu._iconSize,
-              color: ReaderParagraphMenu._foreground),
+          Icon(
+            icon,
+            size: ReaderParagraphMenu._iconSize,
+            color: ReaderParagraphMenu._foreground,
+          ),
           const SizedBox(height: ReaderParagraphMenu._labelTopGap),
           Text(
             label,

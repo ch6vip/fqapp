@@ -4,8 +4,8 @@ part of '../reader_page.dart';
 extension _ReaderPageSelection on _ReaderPageState {
   List<ReaderRangeUnderline> get _displayRangeUnderlines {
     final layout = _chapterLayout;
-    if (layout == null || _replacement == null) return _rangeUnderlines;
-    return [
+    if (layout == null) return _rangeUnderlines;
+    final marks = <ReaderRangeUnderline>[
       for (final mark in _rangeUnderlines)
         if (layout.displayOffsetForSource(
               mark.end,
@@ -22,8 +22,45 @@ extension _ReaderPageSelection on _ReaderPageState {
             ),
             text: mark.text,
             createdAt: mark.createdAt,
+            dashed: mark.dashed,
           ),
     ];
+    // AI changes are display-only marks, not user underlines. They live in
+    // final display coordinates and never enter the underline store.
+    final markStyle = AiReadingController.instance.settings
+        .resolve(widget.bookId)
+        .markStyle;
+    final composition = _aiView?.composition;
+    final spans = composition?.displaySpans.isNotEmpty == true
+        ? composition!.displaySpans
+        : composition?.applied?.spans ?? const <AiEditSpan>[];
+    // AI spans are body-relative; ReaderChapterLayout prepends the chapter
+    // title, so shift them to the layout's display coordinates.
+    final bodyStart = layout.blocks.length > 1 ? layout.blocks[1].start : 0;
+    if (!_aiTemporaryOriginal && markStyle != 'off' && spans.isNotEmpty) {
+      for (final span in spans) {
+        final range = _minimalChangeRange(
+          span,
+          layout.textLength - bodyStart,
+          bodyStart,
+        );
+        if (range == null) continue;
+        marks.add(
+          ReaderRangeUnderline(
+            bookId: widget.bookId,
+            chapterId: _chapter.itemId,
+            start: range.start,
+            end: range.end,
+            text: span.replacement,
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+            dashed: markStyle == 'dotted',
+            deletion: range.deletion,
+            payload: span,
+          ),
+        );
+      }
+    }
+    return marks;
   }
 
   Future<void> _onParagraphLongPress(
@@ -171,8 +208,9 @@ extension _ReaderPageSelection on _ReaderPageState {
     var topAnchor = _selectionBarTopAnchor;
     var view = media.size;
     var safeArea = media.padding;
-    var avoidBottom =
-        _controlsVisible ? _ReaderPageState._bottomBarHeight : 0.0;
+    var avoidBottom = _controlsVisible
+        ? _ReaderPageState._bottomBarHeight
+        : 0.0;
     final overlayBox =
         _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox != null && overlayBox.attached) {
@@ -203,6 +241,7 @@ extension _ReaderPageSelection on _ReaderPageState {
       safeArea: safeArea,
       underlined: underlined,
       showListening: true,
+      showAi: _aiView?.aiEnabled == true,
       avoidBottom: avoidBottom,
     );
     return Positioned(
@@ -213,6 +252,7 @@ extension _ReaderPageSelection on _ReaderPageState {
         underlined: underlined,
         paragraphScoped: selection.isWholeParagraph,
         showListening: true,
+        showAi: _aiView?.aiEnabled == true,
         isDark: preset.isDark,
         belowAnchor: below,
         onAction: (action) {
@@ -280,7 +320,44 @@ extension _ReaderPageSelection on _ReaderPageState {
         await _toggleSelectionUnderline(
           add: action == ReaderParagraphAction.underline,
         );
+      case ReaderParagraphAction.missedChange:
+        await _markMissedSelection();
     }
+  }
+
+  Future<void> _markMissedSelection() async {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    final snapshot = _aiView?.snapshot;
+    if (selection == null || layout == null || snapshot == null) return;
+    final start = layout.sourceOffsetForDisplay(
+      selection.start,
+      bias: TextBoundaryBias.start,
+    );
+    final end = layout.sourceOffsetForDisplay(
+      selection.end,
+      bias: TextBoundaryBias.end,
+    );
+    final paragraph = snapshot.paragraphIndexAt(start);
+    if (paragraph == null ||
+        end <= start ||
+        end > snapshot.paragraphEnd(paragraph)) {
+      _showMessage('漏改了只能标在单个段落内');
+      return;
+    }
+    final created = await showAiMissedSheet(
+      context,
+      bookId: widget.bookId,
+      chapterId: _chapter.itemId,
+      snapshot: snapshot,
+      sourceStart: start,
+      sourceEnd: end,
+      onChanged: () {
+        _aiRevision = -1;
+        unawaited(_onAiChanged());
+      },
+    );
+    if (created && mounted) _showMessage('已记录漏改了');
   }
 
   /// 划线 on the current selection. A whole-paragraph selection keeps the
@@ -449,4 +526,51 @@ extension _ReaderPageSelection on _ReaderPageState {
       ++_underlineRevision;
     });
   }
+}
+
+/// Returns the changed sub-range in final display coordinates. Prefix/suffix
+/// common to the original and replacement are not marked, so a one-character
+/// typo fix does not paint the whole paragraph.
+({int start, int end, bool deletion})? _minimalChangeRange(
+  AiEditSpan span,
+  int displayLength,
+  int offset,
+) {
+  if (span.displayEnd < span.displayStart) return null;
+  final displayStart = span.displayStart + offset;
+  final displayEnd = span.displayEnd + offset;
+  if (span.replacement.isEmpty) {
+    // Deletion has no glyph to underline. Keep a zero-width caret position so
+    // the painter can draw a small vertical mark at the real deletion point.
+    final position = displayStart.clamp(0, displayLength);
+    return (start: position, end: position, deletion: true);
+  }
+  var prefix = 0;
+  final maxPrefix = math.min(span.original.length, span.replacement.length);
+  while (prefix < maxPrefix &&
+      span.original.codeUnitAt(prefix) == span.replacement.codeUnitAt(prefix)) {
+    prefix++;
+  }
+  var suffix = 0;
+  final maxSuffix = math.min(
+    span.original.length - prefix,
+    span.replacement.length - prefix,
+  );
+  while (suffix < maxSuffix &&
+      span.original.codeUnitAt(span.original.length - 1 - suffix) ==
+          span.replacement.codeUnitAt(span.replacement.length - 1 - suffix)) {
+    suffix++;
+  }
+  final start = (displayStart + prefix).clamp(0, displayLength);
+  final end = (displayEnd - suffix).clamp(start, displayLength);
+  if (end <= start) {
+    if (displayLength <= 0) return null;
+    final fallback = start.clamp(0, displayLength - 1);
+    return (
+      start: fallback,
+      end: (fallback + 1).clamp(fallback + 1, displayLength),
+      deletion: false,
+    );
+  }
+  return (start: start, end: end, deletion: false);
 }

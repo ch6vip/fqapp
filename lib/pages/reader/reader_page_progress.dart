@@ -15,7 +15,8 @@ extension _ReaderPageProgress on _ReaderPageState {
         _layoutMode == _preferences.pageMode &&
         _layoutIdeasRevision == _ideasRevision &&
         _layoutUnderlineRevision == _underlineRevision &&
-        _layoutBubblesVisible == _preferences.showParagraphBubbles) {
+        _layoutBubblesVisible == _preferences.showParagraphBubbles &&
+        _layoutDisplayRevision == _aiRevision) {
       return _chapterLayout!;
     }
     // Reuse the measured text layout only when nothing that feeds it changed.
@@ -29,7 +30,8 @@ extension _ReaderPageProgress on _ReaderPageState {
         _chapterLayout?.spec == spec &&
         _layoutIdeasRevision == _ideasRevision &&
         _layoutUnderlineRevision == _underlineRevision &&
-        _layoutBubblesVisible == bubblesVisible;
+        _layoutBubblesVisible == bubblesVisible &&
+        _layoutDisplayRevision == _aiRevision;
     final layoutChapter = _chapter;
     final layoutIdeas = _ideas;
     final layout = reusable
@@ -57,6 +59,7 @@ extension _ReaderPageProgress on _ReaderPageState {
     _layoutIdeasRevision = _ideasRevision;
     _layoutUnderlineRevision = _underlineRevision;
     _layoutBubblesVisible = bubblesVisible;
+    _layoutDisplayRevision = _aiRevision;
     final initialRestore = _needsRestore;
     // Joined content preserves its visible anchor during layout. Restoring a
     // second time after paint would cancel the user's ongoing drag or fling.
@@ -132,6 +135,7 @@ extension _ReaderPageProgress on _ReaderPageState {
       }
     }
     _captureScrollProgress(updateTextOffset: true);
+    unawaited(_maybeAiPrefetch());
     _saveTimer = Timer(const Duration(milliseconds: 500), () {
       _settleReadTime();
       unawaited(_persistProgress());
@@ -186,6 +190,7 @@ extension _ReaderPageProgress on _ReaderPageState {
     });
     _settleReadTime();
     unawaited(_persistProgress());
+    unawaited(_maybeAiPrefetch());
     // 分页模式的实际翻页：累加墨水屏刷新计数（覆盖音量键/自动翻页/点按翻页）。
     _recordEinkPageTurn();
   }
@@ -246,6 +251,67 @@ extension _ReaderPageProgress on _ReaderPageState {
   void _onChapterTurnCompleted() {
     if (!mounted || _chapterTurnRequest == null) return;
     _setState(() => _chapterTurnRequest = null);
+  }
+
+  Future<void> _maybeAiPrefetch() async {
+    if (!_progressReady || _loading || _error != null) return;
+    final controller = AiReadingController.instance;
+    final effective = controller.settings.resolve(widget.bookId);
+    if (!effective.enabled || !effective.prefetchEnabled) return;
+    // Turning AI display off is also a signal to stop spending on chapters
+    // the reader may never display in optimized mode.
+    if (effective.displayMode != AiDisplayMode.aiOptimized) return;
+    if (_index + 1 >= widget.chapters.length) return;
+    final progress = _paged
+        ? ((_chapterLayout?.pages.length ?? 1) > 1
+              ? _pageIndex / ((_chapterLayout?.pages.length ?? 1) - 1)
+              : 0.0)
+        : (_lastMaxScroll > 0
+              ? (_lastPosition / _lastMaxScroll).clamp(0.0, 1.0)
+              : 0.0);
+    final sourceIndex = _index;
+    final ahead = effective.maxPrefetchChapters.clamp(1, 3);
+    for (var offset = 1; offset <= ahead; offset++) {
+      if (!mounted || _index != sourceIndex || !_routeCurrent) return;
+      final index = _index + offset;
+      if (index >= widget.chapters.length) break;
+      final next = widget.chapters[index];
+      final key = '${widget.bookId}\u0000${next.itemId}';
+      if (!_aiPrefetchScheduled.add(key)) continue;
+      unawaited(
+        _prefetchOne(
+          key: key,
+          sourceIndex: sourceIndex,
+          chapter: next,
+          progress: progress,
+        ),
+      );
+    }
+  }
+
+  Future<void> _prefetchOne({
+    required String key,
+    required int sourceIndex,
+    required Chapter chapter,
+    required double progress,
+  }) async {
+    try {
+      final loaded = await _chapterText(chapter);
+      if (!mounted || _index != sourceIndex || !_routeCurrent) return;
+      final content = ChapterContent.fromCacheText(loaded.text);
+      await AiReadingController.instance.maybePrefetch(
+        bookId: widget.bookId,
+        nextChapterId: chapter.itemId,
+        nextChapterTitle: chapter.title,
+        nextContent: content,
+        nextChapterVersion: chapter.version,
+        chapterProgress: progress,
+      );
+    } catch (_) {
+      // Prefetch is opportunistic; reading stays on the current chapter.
+    } finally {
+      _aiPrefetchScheduled.remove(key);
+    }
   }
 
   Future<void> _persistProgress({bool createHistory = false}) async {

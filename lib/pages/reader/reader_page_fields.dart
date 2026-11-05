@@ -23,6 +23,19 @@ mixin _ReaderPageFields on State<ReaderPage> {
   String _content = '';
   ChapterContent _chapterContent = ChapterContent(blocks: const []);
   TextReplacementResult? _replacement;
+  AiChapterView? _aiView;
+  int _aiRevision = -1;
+  bool _aiChangeRunning = false;
+  bool _aiChangeQueued = false;
+  bool _aiTemporaryOriginal = false;
+  int? _aiPreviewSourceStart;
+  int? _aiPreviewSourceEnd;
+  String? _aiAutoRequestedKey;
+  final _aiPrefetchScheduled = <String>{};
+  Timer? _aiRefreshTimer;
+  Timer? _aiDeferTimer;
+  Timer? _joinedAiRefreshTimer;
+  bool _aiDeferredForListening = false;
   TextReplacementCancellation? _replacementCancellation;
   int _replacementGeneration = 0;
 
@@ -151,6 +164,7 @@ mixin _ReaderPageFields on State<ReaderPage> {
   final _viewportKey = GlobalKey();
   final _pagedKey = GlobalKey<ReaderPagedViewState>();
   ReaderChapterLayout? _chapterLayout;
+  int _layoutDisplayRevision = -1;
   ReaderPageMode? _layoutMode;
   int _layoutRevision = 0;
 

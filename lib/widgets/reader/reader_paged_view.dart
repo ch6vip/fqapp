@@ -280,6 +280,15 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     return width > 0 ? width : 1;
   }
 
+  /// True while a tap/drag/curl/boundary turn is still committing. The host
+  /// must not replace the layout under an in-flight PageView animation.
+  bool get isTurning =>
+      _turning ||
+      _boundaryPending ||
+      _pageDrag != null ||
+      _chapterTurnAnimation.isAnimating ||
+      _curlAnimation.isAnimating;
+
   bool get _hasEndPage => !widget.hasNextChapter && widget.endPage != null;
   int get _itemCount => widget.layout.pages.length + (_hasEndPage ? 1 : 0);
 

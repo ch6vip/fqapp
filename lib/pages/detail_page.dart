@@ -46,6 +46,7 @@ import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
 import 'shuqi_detail_page.dart';
+import 'ai_reading/settings/ai_book_settings_page.dart';
 
 /// Optional decorations for the detail page (currently the review block).
 /// Kept as one injected bundle so callers that already stub the detail and
@@ -545,6 +546,21 @@ class _DetailPageState extends State<DetailPage> {
                 ),
                 titleSpacing: 0,
                 actions: [
+                  if (_isBook && _allChapters.isNotEmpty)
+                    IconButton(
+                      tooltip: '本书 AI 阅读优化',
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AiBookSettingsPage(
+                            bookId: _contentId,
+                            title: widget.item.title,
+                            chapters: _allChapters,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(LucideIcons.sparkles, size: 20),
+                    ),
                   Padding(
                     padding: const EdgeInsets.only(right: 10),
                     child: ValueListenableBuilder<int>(
