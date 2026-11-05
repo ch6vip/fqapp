@@ -34,6 +34,11 @@
 // - `didUpdateWidget` stores a pending lane jump instead of jumping during
 //   build; the jump is clamped against the new extents in a post-frame
 //   callback (design C-M3). `_active` stores the raw lane (C-M2).
+// - Under `repeatFill`, a count change realigns the lane to the same loop
+//   cycle (`_alignedLane`) so `lane % count` still selects the focused book.
+// - `_FlatArchiveCarousel` applies the same identity rule: equal-length
+//   reorders, count changes and `repeatFill` switches rebuild its
+//   `PageController` at the matching page.
 // - The narrow caption's second line uses `entry.detailLine`, so reading
 //   progress is visible in every mode (design C-M4).
 
@@ -183,32 +188,44 @@ class ArchiveFileCarouselState extends State<ArchiveFileCarousel>
   @override
   void didUpdateWidget(ArchiveFileCarousel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Capture the old lane before the count changes: under `repeatFill` the
+    // lane is unbounded, so the focused book is `lane % oldCount`.
+    final oldLane = _pose.logicalFocus;
+    final oldCount = oldWidget.entries.length;
+    final newCount = widget.entries.length;
     final repeatChanged = oldWidget.repeatFill != widget.repeatFill;
-    final oldIndex = oldWidget.entries.isEmpty
-        ? 0
-        : _pose.logicalFocus.round() % oldWidget.entries.length;
-    final oldEntry = oldWidget.entries.isEmpty
-        ? null
-        : oldWidget.entries[oldIndex];
+    final oldIndex = oldCount == 0 ? 0 : oldLane.round() % oldCount;
+    final oldEntry = oldCount == 0 ? null : oldWidget.entries[oldIndex];
     _pose.repeatFill = widget.repeatFill;
-    _pose.count = widget.entries.length;
+    _pose.count = newCount;
     final nextIndex = oldEntry == null
         ? 0
         : widget.entries.indexWhere(
             (entry) => entry.identity == oldEntry.identity,
           );
     final target = nextIndex < 0 ? 0 : nextIndex;
-    final moved =
-        repeatChanged ||
-        (oldEntry != null && nextIndex >= 0 && nextIndex != oldIndex);
+    // A changed count is a move even when the focused book keeps its index:
+    // under `repeatFill` the same lane maps to `lane % count`, so 15 % 10 -> 5
+    // becomes 15 % 6 -> 3 and silently switches books (design C-M3, decision
+    // #9: the shelf follows filtering/sorting).
+    final countChanged = oldCount != newCount;
+    final indexMoved =
+        oldEntry != null && nextIndex >= 0 && nextIndex != oldIndex;
+    final moved = repeatChanged || countChanged || indexMoved;
     if (moved) {
-      _pose.move(target.toDouble());
+      // Keep the same loop cycle under `repeatFill` so the jump lands on the
+      // nearest congruent lane instead of the start of the bank.
+      final lane = widget.repeatFill && newCount > 1
+          ? _alignedLane(target, newCount, oldLane.round())
+          : target;
+      _pose.move(lane.toDouble());
+      _lastDetent = lane;
       _command++;
       _targetIndex = null;
       _hapticGesture = false;
       // The next layout derives a new extent/pool from the scroll pixels. Jump
       // after that frame, clamped against the final extents (design C-M3).
-      _pendingJumpIndex = target;
+      _pendingJumpIndex = lane;
       _schedulePendingJump();
     } else {
       _pose.move(_pose.logicalFocus);
@@ -217,13 +234,19 @@ class ArchiveFileCarouselState extends State<ArchiveFileCarousel>
     if (widget.reduceMotion) _finishEntrance();
   }
 
+  /// The lane congruent to [target] modulo [count] that is closest to [lane].
+  static int _alignedLane(int target, int count, int lane) {
+    final cycles = ((lane - target) / count).round();
+    return target + cycles * count;
+  }
+
   void _schedulePendingJump() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final index = _pendingJumpIndex;
-      if (!mounted || index == null || _scroll?.hasClients != true) return;
+      final lane = _pendingJumpIndex;
+      if (!mounted || lane == null || _scroll?.hasClients != true) return;
       _pendingJumpIndex = null;
       final position = _scroll!.position;
-      final target = (index * _pose.pitch).clamp(
+      final target = (lane * _pose.pitch).clamp(
         position.minScrollExtent,
         position.maxScrollExtent,
       );
@@ -947,7 +970,9 @@ class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
   late var _pages = PageController(
     initialPage:
         (widget.repeatFill ? widget.entries.length * 10000 : 0) +
-        widget.initialIndex.clamp(0, widget.entries.length - 1).toInt(),
+        (widget.entries.isEmpty
+            ? 0
+            : widget.initialIndex.clamp(0, widget.entries.length - 1).toInt()),
     viewportFraction: .62,
     keepPage: false,
   );
@@ -955,25 +980,29 @@ class _FlatArchiveCarouselState extends State<_FlatArchiveCarousel> {
   @override
   void didUpdateWidget(_FlatArchiveCarousel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.repeatFill == widget.repeatFill &&
-        (widget.repeatFill ||
-            oldWidget.entries.length == widget.entries.length)) {
-      return;
-    }
-    final oldPage = _pages.hasClients
-        ? _pages.page?.round() ?? 0
+    final oldEntries = oldWidget.entries;
+    final oldCount = oldEntries.length;
+    final newCount = widget.entries.length;
+    final page = _pages.hasClients
+        ? _pages.page?.round() ?? _pages.initialPage
         : _pages.initialPage;
-    final oldId = oldWidget.entries.isEmpty
-        ? null
-        : oldWidget.entries[oldPage % oldWidget.entries.length].identity;
-    final matching = widget.entries.indexWhere(
-      (entry) => entry.identity == oldId,
-    );
+    final oldIndex = oldCount == 0 ? 0 : page % oldCount;
+    final oldId = oldCount == 0 ? null : oldEntries[oldIndex].identity;
+    final matching = oldId == null
+        ? -1
+        : widget.entries.indexWhere((entry) => entry.identity == oldId);
     final next = matching < 0 ? 0 : matching;
+    // The filtered/reordered list must move the PageView with it. Comparing the
+    // visible identity covers equal-length reorders; count and repeatFill
+    // changes cover filtering and the mode switch.
+    final moved =
+        oldWidget.repeatFill != widget.repeatFill ||
+        oldCount != newCount ||
+        (matching >= 0 && next != oldIndex);
+    if (!moved) return;
     final previous = _pages;
     _pages = PageController(
-      initialPage:
-          (widget.repeatFill ? widget.entries.length * 10000 : 0) + next,
+      initialPage: (widget.repeatFill ? newCount * 10000 : 0) + next,
       viewportFraction: .62,
       // A finite bank must not restore a previously saved unbounded lane.
       keepPage: false,

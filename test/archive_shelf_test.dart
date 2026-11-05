@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/shelf/shelf_cover_image.dart';
+import 'package:fqapp/widgets/tab_swipe_area.dart';
 import 'package:fqapp/widgets/wenku/archive_shelf.dart';
 import 'package:fqapp/widgets/wenku/src/archive_shelf_entry.dart';
 import 'package:fqapp/widgets/wenku/src/performance_preferences.dart';
+import 'package:fqapp/widgets/wenku/wenku_glass.dart' show JellyTapSurface;
 
 ArchiveShelfEntry _entry(
   String id, {
@@ -198,6 +200,130 @@ void main() {
     expect(find.byKey(const ValueKey('archive-file-carousel')), findsNothing);
   });
 
+  testWidgets('shelf3d=false 等长重排按 identity 跟随', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    final a = _entry('a');
+    final b = _entry('b');
+    final c = _entry('c');
+
+    Widget host(List<ArchiveShelfEntry> entries) => _app(
+      ArchiveFileCarousel(
+        entries: entries,
+        directReading: false,
+        onOpen: (_) {},
+        initialIndex: 1,
+      ),
+      preferences: const PerformancePreferences(enabled: true),
+      disableAnimations: true,
+    );
+
+    PageController controller() =>
+        tester.widget<PageView>(find.byType(PageView)).controller!;
+
+    await tester.pumpWidget(host([a, b, c]));
+    await tester.pump();
+    expect(controller().page!.round() % 3, 1);
+
+    await tester.pumpWidget(host([c, a, b]));
+    await tester.pump();
+    expect(controller().page!.round() % 3, 2);
+  });
+
+  testWidgets('shelf3d=false 且 repeatFill=true 过滤后跟随焦点', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    final entries = [for (var i = 0; i < 10; i++) _entry('$i')];
+
+    Widget host(List<ArchiveShelfEntry> items, {int initialIndex = 5}) => _app(
+      ArchiveFileCarousel(
+        entries: items,
+        directReading: false,
+        onOpen: (_) {},
+        initialIndex: initialIndex,
+      ),
+      preferences: const PerformancePreferences(enabled: true),
+      disableAnimations: true,
+    );
+
+    PageController controller() =>
+        tester.widget<PageView>(find.byType(PageView)).controller!;
+
+    await tester.pumpWidget(host(entries));
+    await tester.pump();
+    expect(controller().page!.round() % 10, 5);
+
+    await tester.pumpWidget(host(entries.sublist(0, 6)));
+    await tester.pump();
+    expect(controller().page!.round() % 6, 5);
+  });
+
+  testWidgets('shelf3d=false 编辑态禁止拖动、显示选中并点按直开', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    final entries = [_entry('a'), _entry('b'), _entry('c')];
+    ArchiveShelfEntry? opened;
+
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: entries,
+          directReading: false,
+          onOpen: (entry) => opened = entry,
+          initialIndex: 1,
+          interactive: false,
+          selecting: true,
+          selected: const {'book:b'},
+        ),
+        preferences: const PerformancePreferences(enabled: true),
+        disableAnimations: true,
+      ),
+    );
+    expect(
+      tester.widget<PageView>(find.byType(PageView)).physics,
+      isA<NeverScrollableScrollPhysics>(),
+    );
+    expect(find.byIcon(CupertinoIcons.check_mark), findsOneWidget);
+
+    final surface = find
+        .ancestor(of: find.text('书b'), matching: find.byType(JellyTapSurface))
+        .first;
+    await tester.tap(surface);
+    await tester.pump();
+    expect(opened?.identity, 'book:b');
+  });
+
+  testWidgets('书架带内横滑滚动书带而不切换 TabSwipeArea', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    var tab = 0;
+    await tester.pumpWidget(
+      _app(
+        SizedBox(
+          height: 600,
+          child: TabSwipeArea(
+            index: tab,
+            count: 2,
+            onSelect: (next) => tab = next,
+            child: ArchiveFileCarousel(
+              entries: [for (var i = 0; i < 6; i++) _entry('$i')],
+              directReading: false,
+              onOpen: (_) {},
+              repeatFill: false,
+            ),
+          ),
+        ),
+        disableAnimations: true,
+      ),
+    );
+    final state = tester.state<ArchiveFileCarouselState>(
+      find.byType(ArchiveFileCarousel),
+    );
+    await tester.drag(
+      find.byKey(const ValueKey('archive-file-carousel')),
+      const Offset(-160, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(tab, 0);
+    expect(state.debugFocus, greaterThan(0));
+  });
+
   testWidgets('TickerMode 关闭时入场直接完成，切回不重播', (tester) async {
     await _setSurface(tester, const Size(400, 800));
     final entries = [_entry('a'), _entry('b')];
@@ -326,6 +452,137 @@ void main() {
     await tester.pump();
     expect(state.focusedIdentity, 'book:b');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('repeatFill=true 筛选缩减后仍按 identity 保持焦点', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    final entries = [for (var i = 0; i < 10; i++) _entry('$i')];
+
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: entries,
+          directReading: false,
+          onOpen: (_) {},
+          initialIndex: 5,
+        ),
+        disableAnimations: true,
+      ),
+    );
+    final state = tester.state<ArchiveFileCarouselState>(
+      find.byType(ArchiveFileCarousel),
+    );
+    // Lane 15 still shows book 5 (15 % 10), which is the case the old
+    // `nextIndex == oldIndex` check missed when the list shrinks to 6.
+    for (var i = 0; i < 10; i++) {
+      await tester.tap(find.byIcon(CupertinoIcons.chevron_right));
+      await tester.pump();
+    }
+    expect(state.debugFocus, 15);
+    expect(state.focusedIdentity, 'book:5');
+
+    final filtered = entries.sublist(0, 6);
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: filtered,
+          directReading: false,
+          onOpen: (_) {},
+        ),
+        disableAnimations: true,
+      ),
+    );
+    await tester.pump();
+    expect(state.focusedIdentity, 'book:5');
+    // Nearest congruent lane: 5 + round((15 - 5) / 6) * 6.
+    expect(state.debugFocus, 17);
+    expect(state.debugCentreSlot, 5);
+    expect(find.text('06 / 06'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('repeatFill=true 增长后仍按 identity 保持焦点', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    final small = [for (var i = 0; i < 6; i++) _entry('$i')];
+
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: small,
+          directReading: false,
+          onOpen: (_) {},
+          initialIndex: 5,
+        ),
+        disableAnimations: true,
+      ),
+    );
+    final state = tester.state<ArchiveFileCarouselState>(
+      find.byType(ArchiveFileCarousel),
+    );
+    for (var i = 0; i < 12; i++) {
+      await tester.tap(find.byIcon(CupertinoIcons.chevron_right));
+      await tester.pump();
+    }
+    expect(state.debugFocus, 17);
+    expect(state.focusedIdentity, 'book:5');
+
+    final grown = [...small, for (var i = 6; i < 10; i++) _entry('$i')];
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: grown,
+          directReading: false,
+          onOpen: (_) {},
+        ),
+        disableAnimations: true,
+      ),
+    );
+    await tester.pump();
+    expect(state.focusedIdentity, 'book:5');
+    // Nearest congruent lane: 5 + round((17 - 5) / 10) * 10.
+    expect(state.debugFocus, 15);
+    expect(find.text('06 / 10'), findsOneWidget);
+  });
+
+  testWidgets('repeatFill 开关切换保持当前条目', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    final entries = [_entry('a'), _entry('b'), _entry('c')];
+
+    Widget host({required bool repeatFill}) => _app(
+      ArchiveFileCarousel(
+        entries: entries,
+        directReading: false,
+        onOpen: (_) {},
+        repeatFill: repeatFill,
+        initialIndex: 1,
+      ),
+      disableAnimations: true,
+    );
+
+    await tester.pumpWidget(host(repeatFill: true));
+    final state = tester.state<ArchiveFileCarouselState>(
+      find.byType(ArchiveFileCarousel),
+    );
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byIcon(CupertinoIcons.chevron_right));
+      await tester.pump();
+    }
+    expect(state.debugFocus, 3);
+    expect(state.focusedIdentity, 'book:a');
+
+    await tester.pumpWidget(host(repeatFill: false));
+    await tester.pump();
+    expect(state.focusedIdentity, 'book:a');
+    expect(state.debugFocus, 0);
+    expect(_iconButton(tester, CupertinoIcons.chevron_left).onPressed, isNull);
+
+    await tester.pumpWidget(host(repeatFill: true));
+    await tester.pump();
+    expect(state.focusedIdentity, 'book:a');
+    expect(
+      _iconButton(tester, CupertinoIcons.chevron_left).onPressed,
+      isNotNull,
+    );
   });
 
   testWidgets('编辑态 interactive=false 禁止拖动且点按直接打开条目', (tester) async {
@@ -478,7 +735,16 @@ void main() {
         disableAnimations: true,
       ),
     );
-    expect(find.byType(ShelfCoverImage), findsNWidgets(2));
+    // Finite bank at lane 0: only slots 0 and 1 (books 0 and 1) are mounted,
+    // and their keys carry both identity and slot.
+    final keys = tester
+        .widgetList<ShelfCoverImage>(find.byType(ShelfCoverImage))
+        .map((widget) => widget.key)
+        .toSet();
+    expect(keys, {
+      const ValueKey('archive-cover-image-book:0-0'),
+      const ValueKey('archive-cover-image-book:1-1'),
+    });
   });
 
   testWidgets('lane 超过条目数后仍按取模显示序号', (tester) async {
