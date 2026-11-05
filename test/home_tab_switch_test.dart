@@ -9,7 +9,7 @@ import 'package:fqapp/pages/home_page.dart';
 import 'package:fqapp/pages/home_provider.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/widgets/home/home_feed_states.dart';
-import 'package:fqapp/widgets/home/home_hero.dart';
+import 'package:fqapp/widgets/home/home_masthead.dart';
 import 'package:fqapp/widgets/home/home_skeleton.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
 
@@ -95,9 +95,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
-  testWidgets('横滑时搜索行和分类条不跟着走，只有内容在滑', (tester) async {
+  testWidgets('横滑时顶栏和分类条不跟着走，只有内容在滑', (tester) async {
     await pumpHome(tester);
-    final hero = tester.getRect(find.byType(HomeHero));
+    final hero = tester.getRect(find.byType(HomeMasthead));
     final firstTab = tester.getRect(
       find.byKey(const ValueKey('home_category_0')),
     );
@@ -111,9 +111,9 @@ void main() {
       // 顶栏属于「页面」，不属于「内容」：它跟着动的话，屏幕上就是整页
       // 被换掉（短剧页的顶栏在滑动区外面，所以从来不这样）。
       expect(
-        tester.getRect(find.byType(HomeHero)).left,
+        tester.getRect(find.byType(HomeMasthead)).left,
         hero.left,
-        reason: '第 $frame 帧：搜索行跟着横滑走了',
+        reason: '第 $frame 帧：顶栏跟着横滑走了',
       );
       expect(
         tester.getRect(find.byKey(const ValueKey('home_category_0'))).left,
@@ -134,7 +134,7 @@ void main() {
     );
     expect(
       find.ancestor(
-        of: find.byType(HomeHero),
+        of: find.byType(HomeMasthead),
         matching: find.byType(TabSwipeArea),
       ),
       findsNothing,
@@ -162,32 +162,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('搜索行还在屏幕上时切分类：位置一点不动', (tester) async {
+  testWidgets('顶栏还在屏幕上时切分类：位置一点不动', (tester) async {
     await pumpHome(tester);
     final position = positionOf(tester);
     expect(position.pixels, 0);
 
     await swipeTab(tester, -260);
 
-    // 换内容，但视口原地不动，搜索行仍然在。
+    // 换内容，但视口原地不动，顶栏仍然在。
     expect(position.pixels, 0);
-    expect(tester.getRect(find.byType(HomeHero)).top, greaterThanOrEqualTo(0));
+    expect(tester.getRect(find.byType(HomeMasthead)).top, greaterThanOrEqualTo(0));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('滚动内容后切分类：内容回到首行，搜索行保持固定', (tester) async {
+  testWidgets('滚动内容后切分类：内容回到首行，顶栏保持固定', (tester) async {
     await pumpHome(tester);
     final position = positionOf(tester);
-    final hero = tester.getRect(find.byType(HomeHero));
+    final hero = tester.getRect(find.byType(HomeMasthead));
 
     await scrollDown(tester, -600);
     expect(position.pixels, greaterThan(0));
-    expect(tester.getRect(find.byType(HomeHero)), hero);
+    expect(tester.getRect(find.byType(HomeMasthead)), hero);
 
     await swipeTab(tester, -260);
 
     expect(position.pixels, 0);
-    expect(tester.getRect(find.byType(HomeHero)), hero);
+    expect(tester.getRect(find.byType(HomeMasthead)), hero);
     expect(tester.takeException(), isNull);
   });
 

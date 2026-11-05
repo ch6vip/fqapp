@@ -323,6 +323,19 @@ $serial = '127.0.0.1:16384' # 仅为已验证示例，必须按本次 info 输�
 
 官方参考：[ADB 连接说明](https://mumu.163.com/help/20240807/40912_1073151.html)、[MuMuManager 命令行说明](https://mumu.163.com/help/20240726/35047_1170006.html)。
 
+**本地 Flutter 工具链一致性**：`pubspec.lock` 与 CI（`FLUTTER_VERSION: '3.47.9'`）已升到 3.47.9，`.dart_tool/package_config.json` 也指向 `E:\ctf-aaa\.toolchains\flutter-3.47.9`；PATH 上的 `C:\Users\ch6vip\flutter\bin` 仍是 3.44.6 / Dart 3.12.2。混用会让 `flutter test` 报 `petitparser` 语言版本 3.13 过高及 `ui.HitTest*` 类型缺失；切到 3.47.9 后若出现 `Invalid kernel binary format version (expected 138, found 130)`，是 `.dart_tool/hooks_runner` 里旧 SDK 编译的 `hook.dill`，删除该生成目录即可，不必改动源码。
+
+会话级临时指定（不修改全局 PATH）：
+
+```powershell
+$env:PATH = 'E:\ctf-aaa\.toolchains\flutter-3.47.9\flutter\bin;' + $env:PATH
+Remove-Item -Recurse -Force .dart_tool\hooks_runner  # 仅在出现 kernel 版本冲突时
+flutter analyze --no-pub
+bash scripts/test_quick.sh home
+```
+
+构建 MuMu 验证包用 `flutter build apk --release --target-platform android-arm64 --split-per-abi --no-pub`；不带 `--split-per-abi` 的 fat APK 的 versionCode 低于已装包，安装会报 `INSTALL_FAILED_VERSION_DOWNGRADE`。
+
 #### 2026-11-04 听书复核
 
 在上述实例安装 `1.0.200` arm64 release 包，安装后核对 APK SHA-256 为 `ab40ff2a2bfac46e1863ae78311f003f140fd0442915a720ae20e6f765f89bd7`。以下是该包的实际界面操作和 Android 媒体会话观察，不是自动化测试结论：
@@ -346,6 +359,25 @@ $serial = '127.0.0.1:16384' # 仅为已验证示例，必须按本次 info 输�
 本机 `qemu.hw.mainkeys=1`，窗口没有系统导航栏的 InsetsSource，因此上述记录只证明设置保存及原生窗口显隐请求，不证明小白条已实际显示、内容避让或一次上滑即可回桌面。这些交互在本实例仍未验证；未改模拟器系统属性、导航模式或系统镜像来制造通过结果。截图、窗口状态与报告位于仓库外 `%TEMP%\fqapp-mumu-nav-jb1dhjos`。
 
 验证结束恢复“系统状态栏”开启、“底部导航栏”关闭和第 1 章首页，返回应用首页，保留安装的新包与原应用数据；本次未继续听书验证。
+
+#### 2026-11-05 首页档案化改版复核
+
+同一 MuMu 实例（本次 `MuMuManager info -v all` 查得实例 `0` / Android 12 / `127.0.0.1:16384`）安装当前分支重建的 arm64 release 包：Flutter 3.47.9 / Dart 3.13.7、`--split-per-abi`、versionName `1.0.200` / versionCode `2205`，APK SHA-256 为 `e719dad17865afe76a8f46ab9208308d08af0938a24fb15d446f46f52e60da5a`，安装后设备侧 hash 一致。旧包 `ee9409e3…`（11-04 18:21 构建，对应 `e615e2b`）留作界面对照基线。以下是实际界面操作、语义树与 logcat 观察，不是自动化测试结论：
+
+| 路径 | 实际结果 | 限制 |
+|---|---|---|
+| 冷启动 | `am start -W` TotalTime 约 9.0s，`fqapi_core: core init: port=18921`；启动后约 20s 内显示「正在启动本地服务…」，随后进入完整首页 | 后端服务就绪前的加载态属正常初始化 |
+| 首页档案化 | 什锦铺 / SHIJINPU STORY ARCHIVE、01 / RANKING、排行榜、榜单胶囊、书脊阵列、信息行、翻页器、悬浮 dock 全部呈现，与旧包基线一致 | 仅在本实例分辨率与字体下观察 |
+| 翻页器 | NO.001 → NO.002，第 2 本 / 共 16 本，书名、作者、在读人数与书脊焦点同步 | 未验证点击书脊画布的命中换算 |
+| 切换榜单 | 「完本榜」选中并刷新为 30 本 / NO.001 / 19.2 万人在读 | 上游数据，不作内容正确性断言 |
+| 切换顶部 tab | 「小说」下划线正确移动，内容区仍显示同一排行榜区块；切回「推荐」正常 | 各 tab 内容差异未验证 |
+| 短屏 + 大字号 | 720x900 + `font_scale 1.3`：首屏信息行被压到 `[32,896][688,900]`，翻页器在首屏外；4 段小滚动后翻页器到 `y=552..624`（dock 上沿 754），点击成功翻到第 2 本 | 滚动中间态 `y=824..896` 时点击会命中 dock 的「我的」并跳转；功能可用，属首屏密度与中间态误触的体验取舍 |
+
+短屏组合的「滚动后可命中」已固化为 `test/home_rank_shelf_geometry_test.dart` 的回归用例（`bfd63a2`）；未因此改动 `Scaffold(extendBody: true)`、悬浮 dock 或 `HomeRankShelf._geometryFor`。logcat 无 FATAL EXCEPTION、ANR 或应用崩溃。
+
+本机 `x86_64` 主 ABI 经 ARM 转译运行 arm64 包；媒体流静音且无 TTS 服务，本轮未验证听书发声、物理设备性能、硬件解码、16 KiB 页设备，以及自动降级 flat 态。截图、UI dump 与 logcat 位于仓库外 `%TEMP%\fqapp-mumu-home-20261105`。
+
+验证结束恢复 `wm size` 为 720x1280、`font_scale` 为未设置、首页「推荐榜」NO.001 / 共 16 本，保留安装的新包与原应用数据；未卸载、清空数据或改装调试包。
 
 ### 分层跑测试
 

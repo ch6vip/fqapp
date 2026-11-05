@@ -1444,11 +1444,7 @@ void main() {
     await _flush(tester);
     expect(find.text('推荐'), findsOneWidget);
     expect(find.text('独家'), findsOneWidget);
-    expect(
-      find.text('看剧'),
-      findsOneWidget,
-      reason: '前一条同身份的被名字拦下后，这一条不该被连带吞掉',
-    );
+    expect(find.text('看剧'), findsOneWidget, reason: '前一条同身份的被名字拦下后，这一条不该被连带吞掉');
     expect(tester.takeException(), isNull);
   });
 
@@ -1709,11 +1705,11 @@ void main() {
     // 海报格页以前恒为白底黑字，深色主题下整页会刺眼——现在跟随色板。
     expect(
       tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
-      const Color(0xFF151517),
+      const Color(0xFF191919),
     );
     expect(
       tester.widget<Text>(find.text('8-0 作品')).style?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     expect(tester.takeException(), isNull);
   });
@@ -1933,9 +1929,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('桌面 feed：手动暂停后切窗口/最小化再回来都不许自动恢复', (
-    tester,
-  ) async {
+  testWidgets('桌面 feed：手动暂停后切窗口/最小化再回来都不许自动恢复', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -1997,9 +1991,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('桌面 feed：播放中被最小化是可见性暂停，切回自动恢复', (
-    tester,
-  ) async {
+  testWidgets('桌面 feed：播放中被最小化是可见性暂停，切回自动恢复', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -2097,9 +2089,7 @@ void main() {
     expect(find.text('1 / 2'), findsNothing);
   });
 
-  testWidgets('桌面 feed 顶栏只剩频道条一行，搜索入口收敛到频道条图标', (
-    tester,
-  ) async {
+  testWidgets('桌面 feed 顶栏只剩频道条一行，搜索入口收敛到频道条图标', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -2112,10 +2102,7 @@ void main() {
 
     // 搜索行不渲染；分区搜索只剩频道条右端的图标一处。
     expect(find.byKey(const Key('drama_search_button')), findsNothing);
-    expect(
-      find.byKey(const Key('drama_strip_search_button')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('drama_strip_search_button')), findsOneWidget);
     // 播放器顶端只让出频道条一行（38），不再是搜索行 + 频道条的 76。
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('desktop-feed-player'))).dy,
