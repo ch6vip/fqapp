@@ -32,6 +32,8 @@ import 'package:fqapp/services/swipe_guide_store.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
+import 'package:fqapp/widgets/shell_dock.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'support/controlled_player.dart';
 
 MediaItem _item(
@@ -1097,10 +1099,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Scoped to the bar: the home page's own category strip also has a 短剧 entry.
-    Finder navLabel(String label) => find.descendant(
-      of: find.byType(NavigationBar),
-      matching: find.text(label),
-    );
+    Finder navLabel(String label) =>
+        find.descendant(of: find.byType(GlassDock), matching: find.text(label));
 
     final home = tester.getCenter(navLabel('首页')).dx;
     final drama = tester.getCenter(navLabel('短剧')).dx;
@@ -1121,25 +1121,20 @@ void main() {
 
     // 浅色外观下：推荐是视频流，dock 仍是深色玻璃；切到看剧（浅色页）后
     // dock 跟着回浅色，不能页面是奶白、dock 还是一条黑的。
-    Color dockColor() {
-      final container = tester.widget<Container>(
-        find
-            .ancestor(
-              of: find.byType(NavigationBar),
-              matching: find.byType(Container),
-            )
-            .first,
-      );
-      return (container.decoration! as BoxDecoration).color!;
-    }
+    Brightness dockBrightness() =>
+        Theme.of(tester.element(find.byType(GlassDock))).brightness;
+    ShellDock shellDock() => tester.widget<ShellDock>(find.byType(ShellDock));
 
-    expect(dockColor(), const Color(0xFF161619).withValues(alpha: 0.72));
+    expect(dockBrightness(), Brightness.dark);
+    expect(shellDock().staticMaterial, isTrue, reason: '视频流上不做实时折射');
     await tester.tap(find.text('看剧'));
     await tester.pumpAndSettle();
-    expect(dockColor(), Colors.white.withValues(alpha: 0.82));
+    expect(dockBrightness(), Brightness.light);
+    expect(shellDock().staticMaterial, isFalse);
     await tester.tap(find.text('推荐'));
     await tester.pumpAndSettle();
-    expect(dockColor(), const Color(0xFF161619).withValues(alpha: 0.72));
+    expect(dockBrightness(), Brightness.dark);
+    expect(shellDock().staticMaterial, isTrue);
     // The shell mounts its own DramaPage without seams, so its inline session
     // starts a real directory request here. Advance past the client timeout to
     // drain that timer, which would otherwise outlive the test.

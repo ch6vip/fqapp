@@ -9,7 +9,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 
 import 'package:fqapp/pages/library_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
-import 'package:fqapp/pages/mine_page.dart';
+import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
@@ -149,7 +149,11 @@ void main() {
       _failPreferenceWrites(failLoad: true);
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
       await tester.pumpWidget(
-        MaterialApp(home: statistics ? const MinePage() : const LibraryPage()),
+        MaterialApp(
+          home: statistics
+              ? const ReadingStatisticsPage()
+              : const LibraryPage(),
+        ),
       );
       for (var frame = 0; frame < 5; frame++) {
         await tester.pump(const Duration(milliseconds: 100));

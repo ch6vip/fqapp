@@ -85,7 +85,7 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
   void _openSearch() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SearchPage()),
+      SearchRoute(builder: (_) => const SearchPage()),
     );
   }
 

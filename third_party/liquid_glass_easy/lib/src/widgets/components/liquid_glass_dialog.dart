@@ -1,0 +1,381 @@
+import 'package:flutter/material.dart';
+
+import '../lens/liquid_glass_batch.dart';
+import '../lens/liquid_glass_lens.dart';
+import '../liquid_glass_style.dart';
+import '../utils/liquid_glass_light.dart';
+import '../utils/liquid_glass_shape.dart';
+import 'liquid_glass_scaffold.dart';
+
+/// Displays a liquid glass dialog over the current route.
+///
+/// Uses [showGeneralDialog] with a tuned scale + fade modal animation
+/// to present [LiquidGlassAlertDialog] or custom [LiquidGlassDialog] widgets.
+///
+/// ```dart
+/// showLiquidGlassDialog(
+///   context: context,
+///   builder: (context) => LiquidGlassAlertDialog(
+///     title: const Text('Delete Item?'),
+///     content: const Text('This action cannot be undone.'),
+///     actions: [
+///       LiquidGlassButton(
+///         label: 'Cancel',
+///         onPressed: () => Navigator.of(context).pop(),
+///       ),
+///       LiquidGlassButton(
+///         label: 'Delete',
+///         style: LiquidGlassButton.defaultStyle.copyWith(
+///           color: const Color(0x60FF3B30),
+///         ),
+///         onPressed: () => Navigator.of(context).pop(true),
+///       ),
+///     ],
+///   ),
+/// );
+/// ```
+///
+/// **On Impeller** the dialog takes a backdrop read of its own, even
+/// inside a `LiquidGlassScaffold`: the route sits outside the scaffold's
+/// tree, where no batch reaches it. Pass [batch] to have it join the
+/// scaffold's chrome batch instead — the read its tab bar's capsule
+/// already takes — so the dialog costs no read beyond that one. The batch
+/// then covers the whole dialog, its own glass and its buttons alike, and
+/// the copy they all sample was taken before the tab bar and the route
+/// painted: the dialog refracts the page as it lay under the bar, with no
+/// tab bar glass in it and no barrier scrim, and glass **inside** it — its
+/// buttons — reads that page rather than the dialog's surface; wrap it in
+/// `LiquidGlassBatch.exclude` to get that back. Outside a scaffold, or
+/// with the scaffold's `batch` off, the flag does nothing. On the Skia /
+/// Web capture path there is no shared key and it does nothing either.
+Future<T?> showLiquidGlassDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+  Color barrierColor = const Color(0x80000000),
+  String? barrierLabel,
+  bool useSafeArea = true,
+  bool useRootNavigator = true,
+  RouteSettings? routeSettings,
+  Offset? anchorPoint,
+  Duration transitionDuration = const Duration(milliseconds: 350),
+  Curve transitionCurve = const Cubic(0.16, 1.0, 0.3, 1.0),
+  Curve reverseTransitionCurve = const Cubic(0.7, 0.0, 0.84, 0.0),
+  bool batch = false,
+}) {
+  assert(debugCheckHasMaterialLocalizations(context));
+
+  final CapturedThemes themes = InheritedTheme.capture(
+    from: context,
+    to: Navigator.of(
+      context,
+      rootNavigator: useRootNavigator,
+    ).context,
+  );
+
+  // Asked to, and presented from inside a LiquidGlassScaffold, the dialog
+  // joins the scaffold's chrome batch — the read its tab bar takes — so it
+  // costs no read of its own. See `LiquidGlassScaffold.batch`.
+  final int? batchId =
+      batch ? LiquidGlassScaffold.chromeBatchIdOf(context) : null;
+
+  return showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierColor: barrierColor,
+    barrierLabel: barrierLabel ??
+        MaterialLocalizations.of(context).modalBarrierDismissLabel,
+    useRootNavigator: useRootNavigator,
+    routeSettings: routeSettings,
+    anchorPoint: anchorPoint,
+    transitionDuration: transitionDuration,
+    pageBuilder: (buildContext, animation, secondaryAnimation) {
+      final Widget page = builder(buildContext);
+      Widget dialog = themes.wrap(page);
+      if (batchId != null) {
+        dialog = LiquidGlassBatchScope(backdropId: batchId, child: dialog);
+      }
+      if (useSafeArea) {
+        dialog = SafeArea(child: dialog);
+      }
+      return dialog;
+    },
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final CurvedAnimation curvedAnimation = CurvedAnimation(
+        parent: animation,
+        curve: transitionCurve,
+        reverseCurve: reverseTransitionCurve,
+      );
+
+      // Scale only — deliberately no Fade/Opacity around the dialog. An
+      // Opacity layer isolates the lenses' backdrop, so the glass loses
+      // the page behind it mid-flight (no frost, dark buttons) and snaps
+      // in when the layer drops. The barrier fades on its own; the glass
+      // condenses over it by scale alone, live the whole way.
+      return ScaleTransition(
+        scale: Tween<double>(begin: 0.84, end: 1.0).animate(curvedAnimation),
+        child: child,
+      );
+    },
+  );
+}
+
+/// A generic dialog container rendered as a liquid glass surface.
+class LiquidGlassDialog extends StatelessWidget {
+  /// Custom inner content widget.
+  final Widget child;
+
+  /// Maximum width of the dialog card.
+  final double width;
+
+  /// Inner padding surrounding the child.
+  final EdgeInsetsGeometry padding;
+
+  /// Glass style (shape + appearance + refraction).
+  final LiquidGlassStyle? style;
+
+  /// Whether the dialog lens is visible.
+  final bool visibility;
+
+  /// Alignment of the dialog on screen.
+  final AlignmentGeometry alignment;
+
+  /// Default glass look for dialogs.
+  static const LiquidGlassStyle defaultStyle = LiquidGlassStyle(
+    specular: LiquidGlassLight.specular(),
+    // white frost, alpha 40
+    color: Color(0x28FFFFFF),
+    blur: 3,
+    refractionIndex: 1.1,
+    refractionWidth: 12,
+  );
+
+  const LiquidGlassDialog({
+    super.key,
+    required this.child,
+    this.width = 340.0,
+    this.padding = const EdgeInsets.all(24.0),
+    this.style,
+    this.visibility = true,
+    this.alignment = Alignment.center,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final LiquidGlassStyle resolved = defaultStyle.merge(style);
+    final LiquidGlassShape effectiveShape = resolved.shape ??
+        LiquidGlassShape.roundedRectangle(
+          cornerRadius: 28,
+        );
+
+    return Align(
+      alignment: alignment,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: width),
+        child: LiquidGlassLens(
+          style: LiquidGlassStyle(
+            shape: effectiveShape,
+            specular: resolved.specular,
+            glow: resolved.glow,
+            saturation: resolved.saturation,
+            blur: resolved.blur,
+            color: resolved.color,
+            shadow: resolved.shadow,
+            refractionIndex: resolved.refractionIndex,
+            refractionWidth: resolved.refractionWidth,
+            magnification: resolved.magnification,
+            dispersion: resolved.dispersion,
+            liteGlass: resolved.liteGlass,
+          ),
+          visibility: visibility,
+          child: Material(
+            color: Colors.transparent,
+            child: Padding(
+              padding: padding,
+              child: DefaultTextStyle(
+                style: const TextStyle(
+                  color: Colors.white,
+                  decoration: TextDecoration.none,
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// An alert dialog rendered with a liquid glass surface.
+///
+/// Features standard Material 3 dialog slots (`icon`, `title`, `content`, `actions`)
+/// elevated on top of a frosted refractive liquid glass lens.
+class LiquidGlassAlertDialog extends StatelessWidget {
+  /// Optional leading icon above the title.
+  final Widget? icon;
+
+  /// Icon color if a plain Icon is provided.
+  final Color? iconColor;
+
+  /// Padding around the icon.
+  final EdgeInsetsGeometry iconPadding;
+
+  /// Title widget (or Text).
+  final Widget? title;
+
+  /// Padding around the title.
+  final EdgeInsetsGeometry titlePadding;
+
+  /// Default text style for title.
+  final TextStyle? titleTextStyle;
+
+  /// Content widget (body).
+  final Widget? content;
+
+  /// Padding around content widget.
+  final EdgeInsetsGeometry contentPadding;
+
+  /// Default text style for content.
+  final TextStyle? contentTextStyle;
+
+  /// List of action widgets (e.g. [LiquidGlassButton] or standard buttons).
+  final List<Widget>? actions;
+
+  /// Padding around action buttons row/column.
+  final EdgeInsetsGeometry actionsPadding;
+
+  /// Horizontal alignment of actions.
+  final MainAxisAlignment actionsAlignment;
+
+  /// Overflow alignment when actions do not fit horizontally.
+  final OverflowBarAlignment actionsOverflowAlignment;
+
+  /// Direction of actions when overflowing.
+  final VerticalDirection actionsOverflowDirection;
+
+  /// Spacing between action buttons when overflowing.
+  final double? actionsOverflowButtonSpacing;
+
+  /// Glass style descriptor.
+  final LiquidGlassStyle? style;
+
+  /// Dialog max width.
+  final double width;
+
+  /// Whether title and content should be scrollable.
+  final bool scrollable;
+
+  /// Whether the dialog lens is visible.
+  final bool visibility;
+
+  const LiquidGlassAlertDialog({
+    super.key,
+    this.icon,
+    this.iconColor,
+    this.iconPadding = const EdgeInsets.only(bottom: 16.0),
+    this.title,
+    this.titlePadding = const EdgeInsets.only(bottom: 12.0),
+    this.titleTextStyle,
+    this.content,
+    this.contentPadding = const EdgeInsets.only(bottom: 24.0),
+    this.contentTextStyle,
+    this.actions,
+    this.actionsPadding = EdgeInsets.zero,
+    this.actionsAlignment = MainAxisAlignment.end,
+    this.actionsOverflowAlignment = OverflowBarAlignment.end,
+    this.actionsOverflowDirection = VerticalDirection.down,
+    this.actionsOverflowButtonSpacing,
+    this.style,
+    this.width = 340.0,
+    this.scrollable = false,
+    this.visibility = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    final TextStyle effectiveTitleStyle = titleTextStyle ??
+        theme.textTheme.headlineSmall?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+        ) ??
+        const TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        );
+
+    final TextStyle effectiveContentStyle = contentTextStyle ??
+        theme.textTheme.bodyMedium?.copyWith(
+          color: Colors.white.withAlpha(220),
+          fontSize: 14.5,
+          height: 1.4,
+        ) ??
+        TextStyle(
+          color: Colors.white.withAlpha(220),
+          fontSize: 14.5,
+          height: 1.4,
+        );
+
+    Widget dialogContent = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (icon != null)
+          Padding(
+            padding: iconPadding,
+            child: IconTheme.merge(
+              data: IconThemeData(
+                color: iconColor ?? Colors.white,
+                size: 28.0,
+              ),
+              child: Center(child: icon),
+            ),
+          ),
+        if (title != null)
+          Padding(
+            padding: titlePadding,
+            child: DefaultTextStyle(
+              style: effectiveTitleStyle,
+              textAlign: icon == null ? TextAlign.start : TextAlign.center,
+              child: title!,
+            ),
+          ),
+        if (content != null)
+          Padding(
+            padding: contentPadding,
+            child: DefaultTextStyle(
+              style: effectiveContentStyle,
+              textAlign: icon == null ? TextAlign.start : TextAlign.center,
+              child: content!,
+            ),
+          ),
+        if (actions != null && actions!.isNotEmpty)
+          Padding(
+            padding: actionsPadding,
+            child: OverflowBar(
+              alignment: actionsAlignment,
+              overflowAlignment: actionsOverflowAlignment,
+              overflowDirection: actionsOverflowDirection,
+              overflowSpacing: actionsOverflowButtonSpacing ?? 8.0,
+              spacing: 12.0,
+              children: actions!,
+            ),
+          ),
+      ],
+    );
+
+    if (scrollable) {
+      dialogContent = SingleChildScrollView(child: dialogContent);
+    }
+
+    return LiquidGlassDialog(
+      width: width,
+      style: style,
+      visibility: visibility,
+      child: dialogContent,
+    );
+  }
+}

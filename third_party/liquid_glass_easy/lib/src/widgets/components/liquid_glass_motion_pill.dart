@@ -1,0 +1,459 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+
+import '../lens/liquid_glass_lens.dart';
+import '../lens/liquid_glass_lens_scope.dart';
+import '../lens/render_liquid_glass_lens.dart' show LiquidGlassShaderClip;
+import '../liquid_glass_style.dart';
+import '../utils/liquid_glass_light.dart';
+import '../utils/liquid_glass_flex.dart' show LiquidGlassFlexDeform;
+import '../utils/liquid_glass_spring.dart' show liquidGlassSpringStep;
+import '../utils/liquid_glass_lens_motion.dart';
+import '../utils/liquid_glass_shape.dart';
+import 'liquid_glass_shadow.dart';
+
+/// The sliding thumb's whole thumb effect as one
+/// isolated, reusable component: the two-state morph (contracted ↔
+/// expanded glass), the acceleration squash / stretch
+/// ([LiquidGlassLensMotion]), and the driven-lens rendering — so the
+/// same living glass pill can ride a slider track, a bottom nav bar, or
+/// anything else that moves it.
+///
+/// ## Division of labour
+///
+/// The HOST owns position and gesture: where the pill's centre is each
+/// frame (drags, glide springs, rubber bands — whatever its own model
+/// produces) and when the pill is grabbed. This widget owns everything
+/// the thumb itself did:
+///
+///  * **Morph.** While [active], the pill spring-grows from [restSize]
+///    to [activeSize] (0.4 s, ζ 0.6 — overshoot included); on
+///    deactivation it contracts on the softer spring (0.6 s, ζ 0.7).
+///    The optional [cover] (e.g. the slider's white rest pill) fades
+///    out as the glass arrives, so the two read as one crossfade.
+///  * **Squash/stretch.** While [active], [center] is sampled every
+///    frame into the acceleration model; the resulting deviation scales
+///    the pill oppositely on the two axes. Tracking starts on
+///    activation and resets instantly when the contract-back begins.
+///  * **Rendering.** The deformation is not a rebuilt capsule: the
+///    lens renders at its REST (morph) size and the size change rides
+///    the shader's `u_shapeScale` + matching clip scale via
+///    [LiquidGlassLens], so the end caps go elliptical instead of
+///    the shape being re-rounded at each new size — with the refraction
+///    band counter-scaled so it keeps its authored width at stretched
+///    caps.
+///
+/// ## Embedding
+///
+/// The widget fills whatever box the host gives it and positions the
+/// (overflowing) pill at [center] in that box's coordinates — place it
+/// as the `child` of a `LiquidGlassView`, or anywhere a
+/// [LiquidGlassLens] can render. The host just rebuilds with the
+/// new [center]; this widget's own ticker does the sampling.
+class LiquidGlassMotionPill extends StatefulWidget {
+  /// The pill's centre in this widget's local coordinates. Update it
+  /// every frame however the host moves — set directly from a drag,
+  /// driven by a glide spring, anything.
+  final Offset center;
+
+  /// Whether the pill is "lifted": expanded to [activeSize] and
+  /// tracking its own motion. Flip on grab, off when the pill should
+  /// contract back to rest.
+  final bool active;
+  final bool reduceMotion;
+
+  /// Size of the contracted rest pill.
+  final Size restSize;
+
+  /// Size of the expanded (lifted) glass pill.
+  final Size activeSize;
+
+  /// Glass look; null keeps the tuned slider default. The default
+  /// shape is a circular-cornered capsule tracking the morph height.
+  final LiquidGlassStyle? style;
+
+  /// Tuning of the acceleration squash/stretch.
+  final LiquidGlassLensMotionSpec motion;
+
+  /// Expand spring, mapped as ω₀ = 2π / duration (0.4 s, ζ 0.6).
+  final double expandStiffness;
+  final double expandDamping;
+
+  /// Contract spring (0.6 s, ζ 0.7).
+  final double contractStiffness;
+  final double contractDamping;
+
+  /// Widget drawn over the glass at rest and faded out as the morph
+  /// expands — the slider passes its solid white pill here. It is its
+  /// own layer above the lens, sized to the glass's VISIBLE extent (the
+  /// deformed box plus the shader's edge-AA reach on the Impeller
+  /// backdrop path) and clipped to the matching outline with the same
+  /// stretch, so at rest it hides the glass completely and deforms as
+  /// one body with it. Takes no pointers.
+  ///
+  /// It is **clipped to the pill's own outline**, so pass a plain fill: a
+  /// rounded rectangle of its own would only cut back inside that outline
+  /// at the caps, which is exactly the mismatch the clip removes.
+  final Widget? cover;
+
+  /// Contact shadow drawn around the pill — the soft dark band that hugs
+  /// the rim and pools underneath.
+  ///
+  /// Normally left `null`: the shadow travels with the rest of the look,
+  /// in `style.shadow`, and this is the override for a caller
+  /// that has to state it apart from the style. `null` on both draws
+  /// none.
+  ///
+  /// Either way it wraps the lens rather than living inside it, so the
+  /// half that falls BELOW the pill survives instead of being clipped
+  /// away; the pill also hands it the current outline stretch so the ring
+  /// tracks an elliptical cap while the glass is squashed. That wrap is
+  /// why the style's shadow is lifted out of the style before the
+  /// lens sees it. See [LiquidGlassShadow].
+  ///
+  /// It paints behind the glass, so an opaque [cover] at rest covers the
+  /// shadow along with the glass beneath it.
+  final LiquidGlassShadow? shadow;
+
+  /// Whether the shader folds the captured backdrop's alpha into its
+  /// coverage — required over an authored-transparent capture (a
+  /// slider's track, a demo bar). Skia capture path only.
+  final bool honorBackdropAlpha;
+
+  /// Fired when the glass leaves rest (`true`) and when the contraction
+  /// lands back at rest and an opaque [cover] hides it again (`false`).
+  ///
+  /// The host owns [active], but not this: the glass keeps rendering for
+  /// the whole contract spring after [active] flips off. Lets the host
+  /// drop work that only pays off while the glass shows — the slider
+  /// runs its background capture exactly across this window.
+  final ValueChanged<bool>? onGlassVisibilityChanged;
+
+  const LiquidGlassMotionPill({
+    super.key,
+    required this.center,
+    required this.active,
+    required this.restSize,
+    required this.activeSize,
+    this.style,
+    this.motion = const LiquidGlassLensMotionSpec(),
+    this.expandStiffness = 247,
+    this.expandDamping = 18.9,
+    this.contractStiffness = 110,
+    this.contractDamping = 14.7,
+    this.cover,
+    this.shadow,
+    this.honorBackdropAlpha = true,
+    this.onGlassVisibilityChanged,
+    this.reduceMotion = false,
+  });
+
+  @override
+  State<LiquidGlassMotionPill> createState() => _LiquidGlassMotionPillState();
+}
+
+class _LiquidGlassMotionPillState extends State<LiquidGlassMotionPill>
+    with SingleTickerProviderStateMixin {
+  /// Morph progress: 0 = contracted, 1 = expanded. The expand spring
+  /// overshoots past 1 on purpose — that is the bounce.
+  double _morph = 0;
+  double _morphVel = 0;
+
+  /// Last reported glass visibility, so the callback fires on the edges
+  /// only. The cover is fully opaque at morph 0 and nowhere above it.
+  bool _glassVisible = false;
+
+  /// Which glass path the host's view runs, read in build. On Skia the
+  /// contract-back stops dead at rest: the cover is opaque there, and the
+  /// spring's dip under it only kept the glass on, breathing, for most of
+  /// a second.
+  bool _impellerGlass = true;
+
+  late final LiquidGlassLensMotion _motion =
+      LiquidGlassLensMotion(spec: widget.motion);
+
+  Ticker? _ticker;
+  Duration? _tickerLast;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.reduceMotion) {
+      _morph = widget.active ? 1 : 0;
+    } else if (widget.active) {
+      _motion.start();
+      _ensureTicking();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker?.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(LiquidGlassMotionPill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _motion.spec = widget.motion;
+    if (widget.reduceMotion) {
+      _ticker?.stop();
+      _motion.stop();
+      _morph = widget.active ? 1 : 0;
+      _morphVel = 0;
+      if (_glassVisible != widget.active) {
+        _glassVisible = widget.active;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onGlassVisibilityChanged?.call(_glassVisible);
+        });
+      }
+      return;
+    }
+    if (widget.active != oldWidget.active) {
+      if (widget.active) {
+        _motion.start();
+      } else {
+        // Contract-back begins: instant reset, masked by the morph.
+        _motion.stop();
+      }
+      _ensureTicking();
+    }
+  }
+
+  void _ensureTicking() {
+    final ticker = _ticker ??= createTicker(_onTick);
+    if (!ticker.isActive) {
+      _tickerLast = null;
+      ticker.start();
+    }
+  }
+
+  void _onTick(Duration elapsed) {
+    final last = _tickerLast ?? elapsed;
+    final dt = (elapsed - last).inMicroseconds / 1e6;
+    _tickerLast = elapsed;
+    if (dt <= 0) return;
+
+    bool busy = false;
+
+    // The morph — expand and contract carry two different springs,
+    // chosen by which way the target points.
+    final double target = widget.active ? 1 : 0;
+    final (m, mv) = liquidGlassSpringStep(
+      x: _morph,
+      vel: _morphVel,
+      target: target,
+      dt: dt,
+      stiffness:
+          widget.active ? widget.expandStiffness : widget.contractStiffness,
+      damping: widget.active ? widget.expandDamping : widget.contractDamping,
+    );
+    _morph = m;
+    _morphVel = mv;
+    if (!_impellerGlass && !widget.active && _morph <= 0) {
+      // Skia: covered is covered. The undershoot below rest is dropped.
+      _morph = 0;
+      _morphVel = 0;
+    } else if ((_morph - target).abs() < 0.001 && _morphVel.abs() < 0.01) {
+      _morph = target;
+      _morphVel = 0;
+    } else {
+      busy = true;
+    }
+
+    // Ticker phase, never paint: reporting from here is safe for hosts
+    // that answer with setState.
+    final bool visible = _morph != 0;
+    if (visible != _glassVisible) {
+      _glassVisible = visible;
+      widget.onGlassVisibilityChanged?.call(visible);
+    }
+
+    // Sample the host-supplied centre — real per-frame positions feed
+    // the model (drags AND glides), so a glide's launch stretches and
+    // its arrival squashes.
+    if (_motion.isTracking) {
+      _motion.track(widget.center, now: elapsed.inMicroseconds / 1e6, dt: dt);
+      busy = true;
+    }
+
+    if (!busy) _ticker?.stop();
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Size rest = widget.restSize;
+    final Size active = widget.activeSize;
+
+    // Morph size, then the lens deviation on top of it: opposite scales
+    // on the two axes, the frame re-centred so the deformation grows
+    // about the middle.
+    final morphW = rest.width + (active.width - rest.width) * _morph;
+    final morphH = rest.height + (active.height - rest.height) * _morph;
+    final deviation = _motion.deviation;
+    final pillW = morphW * (1 + deviation);
+    final pillH = morphH * (1 - deviation);
+    final coverOpacity = (1.0 - _morph).clamp(0.0, 1.0);
+
+    // The deformed box's top-left in the host's coordinates.
+    final Offset deformedTopLeft =
+        Offset(widget.center.dx - pillW / 2, widget.center.dy - pillH / 2);
+    final double scaleX = morphW > 0 ? pillW / morphW : 1.0;
+    final double scaleY = morphH > 0 ? pillH / morphH : 1.0;
+
+    final Widget? cover = widget.cover;
+
+    final LiquidGlassLensScope? scope = LiquidGlassLensScope.maybeOf(context);
+    _impellerGlass = (scope?.useImpellerBackdrop ?? true) &&
+        ui.ImageFilter.isShaderFilterSupported;
+
+    final LiquidGlassStyle style = _resolveStyle(morphH, scaleX);
+
+    Widget pill = LiquidGlassLens(
+      style: style,
+      honorBackdropAlpha: widget.honorBackdropAlpha,
+      // Off at rest: the cover is opaque there and the glass under it
+      // would only cost its backdrop pass. Same edge the host is told.
+      visibility: _morph != 0,
+      // The 4.1.0 clip, like the tab bar's pills: a padded rect on the
+      // pixel grid, whose rounding never re-frames the content in flight.
+      shaderClip: LiquidGlassShaderClip.snapped,
+      restSize: Size(morphW, morphH),
+      deform: LiquidGlassFlexDeform(
+        left: (pillW - morphW) / 2,
+        right: (pillW - morphW) / 2,
+        top: (pillH - morphH) / 2,
+        bottom: (pillH - morphH) / 2,
+        childScaleX: scaleX,
+        childScaleY: scaleY,
+        childTranslateX: 0,
+        childTranslateY: 0,
+        pressAmount: 0,
+      ),
+    );
+
+    // The cover is the pill's own face at rest, so it has to hide the
+    // glass completely. On the Impeller backdrop path the snapped clip
+    // leaves the shader's edge-AA ramp half a logical px PAST the outline,
+    // so the cover reaches the same distance and the two silhouettes
+    // coincide. The Skia path trims the glass at the outline with a canvas
+    // clip, but two anti-aliased edges on one outline never add up to full
+    // coverage, and the refracted rim showed through the seam while the
+    // cover faded in — so it reaches the same half px there. It is a layer
+    // of its own above the lens rather than its child: the lens clips a
+    // child to its box, and the lens can be switched off under it at rest.
+    Widget? coverLayer;
+    if (cover != null) {
+      const double outset = 0.5;
+      final LiquidGlassShape shape = style.shape!;
+      coverLayer = Positioned(
+        left: deformedTopLeft.dx - outset,
+        top: deformedTopLeft.dy - outset,
+        width: math.max(1.0, pillW + 2 * outset),
+        height: math.max(1.0, pillH + 2 * outset),
+        child: IgnorePointer(
+          child: Opacity(
+            opacity: coverOpacity,
+            child: liquidGlassClip(
+              // The glass's outline instead of a capsule of its own — the
+              // continuous corner leaves the edge a third of a radius
+              // further out than a circular one, and the two silhouettes
+              // disagree at the caps otherwise. Exact: CUT to the curve the
+              // shader draws rather than approximated by an RRect; pushed
+              // out by the same reach as the box. Only the outline fields
+              // matter to a clip. The live stretch goes in as the clip's
+              // scale, so the caps stay elliptical with the glass.
+              shape: LiquidGlassShape(
+                cornerStyle: shape.cornerStyle,
+                cornerRadius: shape.cornerRadius + outset,
+                clipQuality: LiquidGlassClipQuality.exact,
+              ),
+              shapeScale: Offset(scaleX, scaleY),
+              child: cover,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // The shadow WRAPS the glass instead of riding inside it, so the arc
+    // that pools below the pill is not clipped off at the outline. It is
+    // handed the morph's own corner and the live stretch, so the ring
+    // stays on the rim while the pill squashes. It paints BEHIND, so the
+    // glass — and the solid cover at rest — sit over it.
+    final LiquidGlassShadow? shadow =
+        widget.shadow ?? (widget.style ?? _defaultStyle).appearance.shadow;
+    if (shadow != null) {
+      pill = LiquidGlassShadow(
+        blur: shadow.blur,
+        opacity: shadow.opacity,
+        color: shadow.color,
+        offset: shadow.offset,
+        cornerRadius: shadow.cornerRadius ?? morphH / 2,
+        scale: Offset(scaleX, scaleY),
+        inset: shadow.inset,
+        visible: shadow.visible,
+        insideGlass: shadow.insideGlass,
+        child: pill,
+      );
+    }
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned(
+          left: deformedTopLeft.dx,
+          top: deformedTopLeft.dy,
+          width: math.max(1.0, pillW),
+          height: math.max(1.0, pillH),
+          child: pill,
+        ),
+        // Above the glass and its shadow, as the lens child was.
+        if (coverLayer != null) coverLayer,
+      ],
+    );
+  }
+
+  /// The pill's glass style at the current morph size: the caller's
+  /// style (or the tuned default look) with a height-tracking capsule
+  /// shape when none is set, the refraction band kept proportional
+  /// below full size — and counter-scaled against the outline's
+  /// horizontal stretch ([stretchX]).
+  LiquidGlassStyle _resolveStyle(double morphH, double stretchX) {
+    final LiquidGlassStyle base = widget.style ?? _defaultStyle;
+    final LiquidGlassShape shape = base.shape ??
+        LiquidGlassShape.roundedRectangle(cornerRadius: morphH / 2);
+    final double bandScale =
+        (morphH / widget.activeSize.height).clamp(0.0, 1.0);
+    // The band lives in REST space, so the outline stretch multiplies
+    // its screen width by scaleX at the end caps; dividing the authored
+    // width back out pins the caps' band at its authored visual width.
+    final double comp = stretchX > 0 ? 1.0 / stretchX : 1.0;
+    return LiquidGlassStyle(
+      shape: shape,
+      // A thin bright rim unless the caller's style names its own lights.
+      specular: base.specular ?? const LiquidGlassLight.specular(),
+      glow: base.glow,
+      saturation: base.saturation,
+      blur: base.blur,
+      color: base.color,
+      refractionIndex: base.refractionIndex,
+      refractionWidth: base.refractionWidth * bandScale * comp,
+      magnification: base.magnification,
+      dispersion: base.dispersion,
+      liteGlass: base.liteGlass,
+    );
+  }
+
+  /// The tuned default glass carried over from the stretch slider.
+  static const LiquidGlassStyle _defaultStyle = LiquidGlassStyle(
+    color: Color(0x1CFFFFFF),
+    blur: 1.5,
+    refractionIndex: 1.021,
+    refractionWidth: 18,
+  );
+}
