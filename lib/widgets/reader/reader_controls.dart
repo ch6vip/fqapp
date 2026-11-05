@@ -18,6 +18,8 @@ class ReaderControls extends StatelessWidget {
   final VoidCallback onDirectory;
   final VoidCallback onNight;
   final VoidCallback onAppearance;
+  final VoidCallback? onAi;
+  final String aiLabel;
 
   const ReaderControls({
     super.key,
@@ -33,6 +35,8 @@ class ReaderControls extends StatelessWidget {
     required this.onDirectory,
     required this.onNight,
     required this.onAppearance,
+    this.onAi,
+    this.aiLabel = 'AI 校对',
   });
 
   @override
@@ -84,6 +88,13 @@ class ReaderControls extends StatelessWidget {
                           label: preset.isDark ? '日间' : '夜间',
                           onTap: onNight,
                         ),
+                        if (onAi != null)
+                          _Action(
+                            key: const ValueKey('reader-ai'),
+                            icon: LucideIcons.sparkles,
+                            label: aiLabel,
+                            onTap: onAi!,
+                          ),
                         _Action(
                           key: const ValueKey('reader-settings'),
                           icon: LucideIcons.sliders_horizontal,

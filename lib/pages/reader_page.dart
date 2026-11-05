@@ -4,6 +4,7 @@ import '../services/audio_floating_routes.dart';
 import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -25,6 +26,9 @@ import '../services/api_client.dart';
 import '../services/app_theme.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_request_tracker.dart';
+import '../services/ai_reading/ai_controller.dart';
+import '../services/ai_reading/ai_coordinator.dart';
+import '../services/ai_reading/ai_models.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
@@ -61,6 +65,10 @@ import '../widgets/reader/reader_illustration.dart';
 import '../widgets/reader/reader_ideas_sheet.dart';
 import '../widgets/reader/reader_paged_view.dart';
 import '../widgets/reader/reader_paragraph_menu.dart';
+import 'ai_reading/ai_edit_detail_sheet.dart';
+import 'ai_reading/feedback/ai_missed_sheet.dart';
+import 'ai_reading/ai_reader_sheet.dart';
+import '../widgets/ai_reading/ai_ui.dart';
 import '../widgets/reader/reader_status_bar.dart';
 import '../widgets/reader/reader_text_selection.dart';
 import '../widgets/reader/reader_theme.dart';
@@ -246,6 +254,15 @@ class _ReaderPageState extends State<ReaderPage>
   void _onListeningTick() {
     if (!mounted) return;
     final session = ListeningSession.instance;
+    // A visual update deferred during system TTS should land as soon as the
+    // voice stops or pauses; otherwise the page silently stays on old text.
+    if (_aiDeferredForListening &&
+        (!session.playing ||
+            !session.matchesBook(widget.bookId) ||
+            !session.matchesChapter(_chapter.itemId))) {
+      _aiDeferredForListening = false;
+      unawaited(_onAiChanged());
+    }
     final playing = session.playing && session.matchesBook(widget.bookId);
     if (playing && !_listenWasPlaying) {
       // 官方 onPlayResume（AudioSyncReaderController.java:381）恢复播放时
@@ -323,6 +340,7 @@ class _ReaderPageState extends State<ReaderPage>
     // 跟随用 10Hz 轮询，不走 ListeningSession 的 1Hz 通知（只在结构性变化时
     // 才来，而且不管翻页）；会话/前台变化时由 [_followPoll.sync] 启停定时器。
     _replacementStore.changes.addListener(_onReplacementChanged);
+    AiReadingController.instance.addListener(_onAiChanged);
     WidgetsBinding.instance.addObserver(this);
     // 小米公平运行内存：KILL 广播到达时刷一次阅读进度，避免被杀丢进度。
     _unregisterFairMemoryFlush = FairMemoryService.instance
@@ -410,6 +428,10 @@ class _ReaderPageState extends State<ReaderPage>
       ListeningSession.instance.jumpToPlaybackHandler = null;
     }
     _replacementStore.changes.removeListener(_onReplacementChanged);
+    AiReadingController.instance.removeListener(_onAiChanged);
+    _aiRefreshTimer?.cancel();
+    _aiDeferTimer?.cancel();
+    _joinedAiRefreshTimer?.cancel();
     _replacementCancellation?.cancel();
     ++_replacementGeneration;
     _unregisterFairMemoryFlush?.call();
