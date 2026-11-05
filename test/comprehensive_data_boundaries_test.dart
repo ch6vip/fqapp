@@ -11,6 +11,7 @@ import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/player_style_config.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/services/drama_download_store.dart';
+import 'package:fqapp/services/shelf_group_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 import 'package:hive_ce/hive.dart';
@@ -51,6 +52,9 @@ void main() {
           // that openBox off the widget test's fake-async file I/O path, which
           // would never complete.
           await ShelfStore.instance.init();
+          // 书架分组 box 同样在 bootstrap 里开箱（U1 起随书架数据装配）；
+          // 不预开的话，开箱的异步 I/O 会卡在 widget 测试的 fake-async 路径上。
+          await ShelfGroupStore.instance.init();
           // 同理，短剧 feed 的 点赞 box 也在 bootstrap 里开箱。
           await DiggStore.instance.init();
           // 「上滑查看更多视频」引导同样在 bootstrap 里开箱；这里预置「已显示」，
