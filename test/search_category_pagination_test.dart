@@ -5,7 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/services/search_history_store.dart';
-import 'package:fqapp/widgets/home/home_media_card.dart';
+
+import 'support/search_finders.dart';
 
 /// 分类分页与范围条横向滚动。
 ///
@@ -57,9 +58,9 @@ void main() {
       expect(requests, [(1, 0)]);
 
       // 范围条右端固定给来源切换后，420dp 宽里「漫画」需要横向滚动才露出来。
-      await tester.ensureVisible(find.widgetWithText(ChoiceChip, '漫画'));
+      await tester.ensureVisible(searchSegment('漫画'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '漫画'));
+      await tester.tap(searchSegment('漫画'));
       await tester.pumpAndSettle();
       expect(requests, [(1, 0), (8, 0), (8, 23)]);
       expect(find.text('漫画 23'), findsOneWidget);
@@ -71,7 +72,7 @@ void main() {
         const Offset(300, 0),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '综合'));
+      await tester.tap(searchSegment('综合'));
       await tester.pumpAndSettle();
       expect(requests, hasLength(3));
       await tester.drag(find.byType(CustomScrollView), const Offset(0, -3000));
@@ -91,10 +92,7 @@ Widget _app(SearchPageLoader loader) => MaterialApp(
   ),
 );
 
-List<String> _visibleKinds(WidgetTester tester) => tester
-    .widgetList<HomeMediaCard>(find.byType(HomeMediaCard))
-    .map((card) => card.item.kind)
-    .toList();
+List<String> _visibleKinds(WidgetTester tester) => searchVisibleKinds(tester);
 
 MediaItem _item(String id, String title, {String kind = 'book'}) => MediaItem(
   id: id,
