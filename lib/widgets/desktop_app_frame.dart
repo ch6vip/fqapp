@@ -18,7 +18,7 @@ class DesktopAppFrame extends StatelessWidget {
 
   void _search(String query) {
     DesktopPlatform.navigatorKey.currentState?.push(
-      MaterialPageRoute<void>(
+      SearchRoute<void>(
         builder: (_) => SearchPage(initialQuery: query.isEmpty ? null : query),
       ),
     );

@@ -7,11 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/mine_page.dart';
+import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/library_store.dart';
-import 'package:fqapp/widgets/home/home_shelf.dart';
 import 'package:fqapp/widgets/home/home_sheet.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
+
+import 'support/mine_navigation.dart';
 
 void main() {
   late Directory directory;
@@ -54,6 +57,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await openMineStatistics(tester);
       expect(find.text('今日阅读'), findsOneWidget);
       expect(find.text('阅读热力图'), findsOneWidget);
       for (final weekday in {0: '周一', 2: '周三', 4: '周五'}.entries) {
@@ -89,14 +93,14 @@ void main() {
     }
   });
 
-  testWidgets('the title-bar gear opens app settings', (tester) async {
+  testWidgets('the 设置 entry opens app settings', (tester) async {
     final observer = _RouteObserver();
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(
       MaterialApp(navigatorObservers: [observer], home: const MinePage()),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('应用设置'));
+    await tester.tap(find.text('设置'));
     final context = tester.element(find.byType(MinePage));
     final route = observer.lastRoute! as MaterialPageRoute;
     expect(route.builder(context), isA<SettingsPage>());
@@ -124,8 +128,8 @@ void main() {
     final context = tester.element(find.byType(MinePage));
     final list = tester.widget<ListView>(find.byType(ListView).first);
     expect(
-      list.padding,
-      EdgeInsets.only(bottom: homeBottomClearance(context)),
+      (list.padding! as EdgeInsets).bottom,
+      DockLayout.scrollPaddingOf(context),
       reason: '底部留白跟随悬浮导航栏高度与系统手势条，而不是写死 88',
     );
   });
@@ -135,6 +139,7 @@ void main() {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(const MaterialApp(home: MinePage()));
     await tester.pumpAndSettle();
+    await openMineStatistics(tester);
     final readout = find.byKey(const ValueKey('reading-heatmap-day'));
     expect(tester.widget<Text>(readout).data, '今天 · 1分钟');
     // Column 0 is fifteen weeks back, so its Monday is never today.
@@ -153,6 +158,7 @@ void main() {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     await tester.pumpWidget(const MaterialApp(home: MinePage()));
     await tester.pumpAndSettle();
+    await openMineStatistics(tester);
     final empty = tester.widget<DecoratedBox>(
       find.descendant(
         of: find.byKey(const ValueKey('reading-heatmap-cell-0')),
@@ -197,8 +203,13 @@ void main() {
       MaterialApp(navigatorObservers: [observer], home: const MinePage()),
     );
     await tester.pumpAndSettle();
+    await openMineStatistics(tester);
     final showAll = find.text('全部');
-    await tester.scrollUntilVisible(showAll, 200);
+    await tester.scrollUntilVisible(
+      showAll,
+      200,
+      scrollable: statisticsScrollable,
+    );
     expect(find.text('听书 book6'), findsNothing, reason: 'preview stops at 5');
     await tester.tap(showAll);
     await tester.pumpAndSettle();
@@ -214,7 +225,7 @@ void main() {
           .descendant(of: sheet, matching: find.byType(Scrollable))
           .first,
     );
-    final context = tester.element(find.byType(MinePage));
+    final context = tester.element(find.byType(ReadingStatisticsPage));
     await tester.tap(last);
     await tester.pump();
     final page =
@@ -233,9 +244,10 @@ Future<DetailPage> _openRankedTitle(WidgetTester tester, String title) async {
     MaterialApp(navigatorObservers: [observer], home: const MinePage()),
   );
   await tester.pumpAndSettle();
+  await openMineStatistics(tester);
   final row = find.text(title);
-  await tester.scrollUntilVisible(row, 200);
-  final context = tester.element(find.byType(MinePage));
+  await tester.scrollUntilVisible(row, 200, scrollable: statisticsScrollable);
+  final context = tester.element(find.byType(ReadingStatisticsPage));
   await tester.tap(row);
   await tester.pump();
   return (observer.lastRoute! as MaterialPageRoute).builder(context)

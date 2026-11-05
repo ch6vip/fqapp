@@ -7,7 +7,7 @@ import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/library_page.dart';
-import 'package:fqapp/pages/mine_page.dart';
+import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/widgets/lazy_indexed_stack.dart';
 
@@ -42,7 +42,7 @@ void main() {
             index: value,
             children: const [
               LibraryPage(),
-              MinePage(),
+              ReadingStatisticsPage(),
               SizedBox.expand(child: Text('其他页面')),
             ],
           ),
@@ -86,7 +86,7 @@ void main() {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     final navigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
-      MaterialApp(navigatorKey: navigator, home: const MinePage()),
+      MaterialApp(navigatorKey: navigator, home: const ReadingStatisticsPage()),
     );
     await tester.pumpAndSettle();
     await _saveProgress(tester, 0);
@@ -123,7 +123,7 @@ Future<void> _showRankedBook(WidgetTester tester, String title) async {
     200,
     scrollable: find
         .descendant(
-          of: find.byType(MinePage),
+          of: find.byType(ReadingStatisticsPage),
           matching: find.byType(Scrollable),
         )
         .first,
@@ -149,7 +149,8 @@ Future<void> _saveProgress(WidgetTester tester, int update) async {
 Map<String, int> _recordBuilds() {
   final builds = <String, int>{};
   debugOnRebuildDirtyWidget = (element, builtOnce) {
-    if (element.widget is LibraryPage || element.widget is MinePage) {
+    if (element.widget is LibraryPage ||
+        element.widget is ReadingStatisticsPage) {
       final name = element.widget.runtimeType.toString();
       builds.update(name, (count) => count + 1, ifAbsent: () => 1);
     }
