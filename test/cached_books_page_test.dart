@@ -10,6 +10,7 @@ import 'package:fqapp/pages/cached_books_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
@@ -72,13 +73,7 @@ void main() {
     final surface = tester.widget<Material>(
       find.descendant(of: panel, matching: find.byType(Material)).first,
     );
-    final expected = Theme.of(tester.element(panel)).colorScheme.surface;
-    expect(surface.color, expected);
-    expect(
-      expected.computeLuminance(),
-      lessThan(0.1),
-      reason: '深色 OLED 下卡片不得回退到浅色底',
-    );
+    expect(surface.color, const HomePalette(true, oled: true).surface);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

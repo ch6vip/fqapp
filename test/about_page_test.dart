@@ -43,9 +43,25 @@ void main() {
     expect(find.text('源代码'), findsOneWidget);
     expect(find.text('问题反馈'), findsOneWidget);
     // 信息行统一走档案面板，不再使用设置卡片或 Material ListTile。
-    expect(find.byType(ContentPanel), findsWidgets);
+    final panel = find.byType(ContentPanel);
+    expect(panel, findsOneWidget);
     expect(find.byType(SettingsRow), findsNothing);
     expect(find.byType(ListTile), findsNothing);
+    // Five tappable rows, in the documented order. ContentPanel owns one
+    // InkWell of its own, so the panel subtree has six in total.
+    expect(
+      find.descendant(of: panel, matching: find.byType(InkWell)),
+      findsNWidgets(6),
+    );
+    const infoRows = ['当前版本', '检查更新', '开源许可', '源代码', '问题反馈'];
+    var previousTop = double.negativeInfinity;
+    for (final title in infoRows) {
+      final row = find.descendant(of: panel, matching: find.text(title));
+      expect(row, findsOneWidget);
+      final top = tester.getTopLeft(row).dy;
+      expect(top, greaterThan(previousTop), reason: '$title 的行顺序');
+      previousTop = top;
+    }
 
     expect(find.text('支持作者'), findsOneWidget);
     expect(find.text('前往爱发电'), findsOneWidget);
