@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +8,8 @@ import '../../models/media_item.dart';
 import '../../services/app_theme.dart';
 import '../../services/poster_cache.dart';
 import '../home/home_archive.dart' show einkCoverFilter;
+import '../wenku/wenku_archive.dart' show ArchiveDesign;
+import '../wenku/wenku_theme.dart' show WenkuTheme;
 
 /// The cover pipeline shared by the archive carousel, the shelf tiles and the
 /// existing `bookshelf_card` cards. It keeps fqapp's single poster cache,
@@ -30,7 +31,12 @@ int shelfCoverDecodeWidth(double width, double devicePixelRatio) =>
 /// The [ImageProvider] used for remote and raster file covers.
 ///
 /// SVG covers cannot be decoded by `Image`; [ShelfCoverImage] renders those
-/// with `SvgPicture.file`. Empty values and SVGs therefore throw here.
+/// with `SvgPicture.file`.
+///
+/// Throws [ArgumentError] when [url] is empty or names an `.svg`: callers that
+/// handle arbitrary covers must use [ShelfCoverImage] (which branches first),
+/// or check [isRemoteCover]/the extension themselves. Never call this for a
+/// blank placeholder.
 ImageProvider<Object> shelfCoverImageProvider(
   String url,
   double width,
@@ -92,6 +98,12 @@ bool _isSvgPath(String value) {
 }
 
 /// Archive fallback face for books without a usable cover.
+///
+/// Matches upstream `NovelCover`'s fallback (`W/lib/app_ui.dart:1624-1662`
+/// with the `accent` container at `:1714-1733`): a flat `#202020` plate, the
+/// shared 3dp cover radius, `width * .11` padding, a white `width * .16` title
+/// and a `width * .085` author. No per-kind tint: decisions #10 asks for the
+/// upstream archive look on every shelf surface.
 class ShelfCoverFallback extends StatelessWidget {
   const ShelfCoverFallback({
     super.key,
@@ -106,46 +118,34 @@ class ShelfCoverFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = switch (item.kind) {
-      'video' => const [Color(0xFF734740), Color(0xFF242428)],
-      'manju' => const [Color(0xFF8B557E), Color(0xFF35283D)],
-      'manga' => const [Color(0xFF6F6887), Color(0xFF343349)],
-      'audio' => const [Color(0xFF426C78), Color(0xFF233B42)],
-      _ => const [Color(0xFF6A7964), Color(0xFF293C35)],
-    };
-    final titleSize = (width * .13).clamp(12.0, 22.0);
+    final title = item.title.trim();
     return SizedBox(
       key: coverKey,
       width: width,
       height: height,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: const Alignment(-0.34, -0.94),
-            end: const Alignment(0.34, 0.94),
-            colors: colors,
-          ),
-        ),
-        child: Padding(
-          padding: EdgeInsets.all(math.max(8, width * .1)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Text(
-                item.title.trim().isEmpty ? '未命名作品' : item.title.trim(),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                textScaler: TextScaler.noScaling,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: titleSize,
-                  height: 1.25,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+        child: ColoredBox(
+          color: WenkuTheme.accent,
+          child: Padding(
+            padding: EdgeInsets.all(width * .11),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text(
+                  title.isEmpty ? '未命名作品' : title,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  textScaler: TextScaler.noScaling,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: width * .16,
+                    height: 1.25,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              if (item.author.trim().isNotEmpty)
+                const SizedBox(height: 8),
                 Text(
                   item.author.trim(),
                   maxLines: 1,
@@ -156,7 +156,8 @@ class ShelfCoverFallback extends StatelessWidget {
                     fontSize: width * .085,
                   ),
                 ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
