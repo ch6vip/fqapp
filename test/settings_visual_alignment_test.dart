@@ -140,6 +140,13 @@ void main() {
     expect(find.byType(ArchiveSection), findsNWidgets(2));
     expect(find.byType(ContentPanel), findsWidgets);
     expect(find.byType(FeatureEntry), findsOneWidget);
+    // The three data rows stay individually pinned: export, restore, 番茄.
+    expect(find.byKey(const ValueKey('backup-export')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-import')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-fanqie')), findsOneWidget);
+    expect(find.text('导出备份'), findsOneWidget);
+    expect(find.text('从备份文件恢复'), findsOneWidget);
+    expect(find.text('导入番茄书架'), findsOneWidget);
     expect(find.byType(SettingsSectionHeader), findsNothing);
     expect(find.byType(SettingsGroupCard), findsNothing);
     expect(find.text('书架随你走'), findsOneWidget);
