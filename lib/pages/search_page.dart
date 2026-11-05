@@ -844,28 +844,46 @@ class _SearchPageState extends State<SearchPage> {
     final items = feed.items.where(_matchesScore).toList(growable: false);
     if (items.isEmpty) {
       final filtered = _idQuery == null && !_shuqiSource && _minimumScore > 0;
-      return _notice(
-        context,
-        ContentNotice(
-          icon: CupertinoIcons.search,
-          title: _idQuery != null
-              ? (_feeds.first.items.isEmpty ? '未找到该 ID 对应的作品' : '该分类下没有匹配的作品')
-              : filtered
-              ? '已加载结果中暂无达到评分的作品'
-              : '没有找到相关故事',
-          message: _idQuery != null
-              ? null
-              : filtered
-              ? '筛选只作用于已加载结果，未评分作品不计入。'
-              : '试试更短的名称或作者名',
-          onRetry: filtered ? () => _selectMinimumScore(0) : null,
-          actionLabel: '清除评分筛选',
-          secondaryAction: _idQuery == null && feed.hasMore
-              ? GlassTextButton(
-                  onPressed: feed.loading ? null : _loadMore,
-                  child: AppText(feed.loading ? '正在加载…' : '继续加载'),
-                )
-              : null,
+      final notice = ContentNotice(
+        icon: CupertinoIcons.search,
+        title: _idQuery != null
+            ? (_feeds.first.items.isEmpty ? '未找到该 ID 对应的作品' : '该分类下没有匹配的作品')
+            : filtered
+            ? '已加载结果中暂无达到评分的作品'
+            : '没有找到相关故事',
+        message: _idQuery != null
+            ? null
+            : filtered
+            ? '筛选只作用于已加载结果，未评分作品不计入。'
+            : '试试更短的名称或作者名',
+        onRetry: filtered ? () => _selectMinimumScore(0) : null,
+        actionLabel: '清除评分筛选',
+        secondaryAction: _idQuery != null
+            // A missing ID can still be searched as a keyword.
+            ? GlassTextButton(
+                onPressed: () => _search(_ctrl.text, asKeyword: true),
+                child: const AppText('按关键词搜索'),
+              )
+            : feed.hasMore
+            ? GlassTextButton(
+                onPressed: feed.loading ? null : _loadMore,
+                child: AppText(feed.loading ? '正在加载…' : '加载更多'),
+              )
+            : null,
+      );
+      // Keep the heading (and its rating filter) when filtering leaves no
+      // rows, so the threshold can still be changed in place.
+      if (!filtered) return _notice(context, notice);
+      return Padding(
+        padding: EdgeInsets.only(top: _bodyTopInset(context)),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              child: _resultsHeading(context, 0),
+            ),
+            Expanded(child: notice),
+          ],
         ),
       );
     }
@@ -926,7 +944,12 @@ class _SearchPageState extends State<SearchPage> {
           child: _resultsHeading(context, items.length),
         );
       }
-      if (index == items.length + 1) return _footer(context, feed);
+      // ID lookups have no pages, so they get no end marker.
+      if (index == items.length + 1) {
+        return _idQuery == null
+            ? _footer(context, feed)
+            : const SizedBox(height: 20);
+      }
       final item = items[index - 1];
       return LoadedContentItem(
         key: ValueKey((item.kind, item.id)),
