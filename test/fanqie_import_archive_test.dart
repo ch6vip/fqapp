@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/pages/fanqie_history_import_page.dart';
+import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
@@ -34,5 +35,50 @@ void main() {
     expect(find.text('从历史文件导入'), findsOneWidget);
     expect(find.byType(SettingsSectionHeader), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('墨水屏模式把 eink=true 传给番茄登录', (tester) async {
+    const account = MethodChannel('fqapp/fanqie_account');
+    const files = MethodChannel('fqapp/library_backup');
+    final loginCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      files,
+      (call) async => null,
+    );
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(account, (
+      call,
+    ) async {
+      if (call.method == 'login') loginCalls.add(call);
+      return null;
+    });
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        account,
+        null,
+      );
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        files,
+        null,
+      );
+    });
+    final original = einkModeNotifier.value;
+    einkModeNotifier.value = true;
+    addTearDown(() => einkModeNotifier.value = original);
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light, einkMode: true),
+        home: const FanqieHistoryImportPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('fanqie-collect')));
+    await tester.pumpAndSettle();
+
+    expect(loginCalls, hasLength(1));
+    final arguments = loginCalls.single.arguments as Map;
+    expect(arguments['eink'], isTrue, reason: '原生登录页要切换纯白/纯黑');
+    expect(arguments['dark'], isFalse);
   });
 }
