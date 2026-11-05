@@ -403,6 +403,36 @@ void main() {
     expect(find.text('第2章 · 共9章'), findsOneWidget);
   });
 
+  testWidgets('视频条目显示来源徽标与集数说明', (tester) async {
+    await _setSurface(tester, const Size(400, 800));
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: [
+            ArchiveShelfEntry(
+              item: MediaItem(
+                id: 'v1',
+                title: '短剧一',
+                cover: '',
+                author: '作者a',
+                badge: '',
+                ep: '20',
+                kind: 'video',
+              ),
+              sourceLabel: '短剧',
+            ),
+          ],
+          directReading: false,
+          onOpen: (_) {},
+          repeatFill: false,
+        ),
+        disableAnimations: true,
+      ),
+    );
+    expect(find.text('短剧'), findsOneWidget);
+    expect(find.text('作者a · 全20集'), findsOneWidget);
+  });
+
   testWidgets('宽屏 880dp 显示信息栏与整书进度', (tester) async {
     await _setSurface(tester, const Size(1000, 800));
     await tester.pumpWidget(
@@ -472,6 +502,24 @@ void main() {
     );
     expect(state.debugFocus, 5);
     expect(find.text('03 / 03'), findsOneWidget);
+
+    // A parent rebuild must not clamp the lane or shift the next step.
+    await tester.pumpWidget(
+      _app(
+        ArchiveFileCarousel(
+          entries: [_entry('a'), _entry('b'), _entry('c')],
+          directReading: false,
+          onOpen: (_) {},
+        ),
+        disableAnimations: true,
+      ),
+    );
+    await tester.pump();
+    expect(state.debugFocus, 5);
+    await tester.tap(find.byIcon(CupertinoIcons.chevron_right));
+    await tester.pump();
+    expect(state.debugFocus, 6);
+    expect(find.text('01 / 03'), findsOneWidget);
   });
 
   testWidgets('投影顶面长按也进入编辑态', (tester) async {
