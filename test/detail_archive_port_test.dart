@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/shuqi_detail_page.dart';
+import 'package:fqapp/services/catalogue_order_preferences.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
@@ -149,11 +152,121 @@ void main() {
     expect(find.byKey(const ValueKey('shuqi-chapter-0')), findsOneWidget);
     expect(find.text('开始阅读'), findsOneWidget);
   });
+
+  testWidgets('the header and meta source follow the content kind', (
+    tester,
+  ) async {
+    await _pumpDetail(tester, item: _drama);
+    expect(find.text('短剧详情'), findsOneWidget);
+    expect(find.text('图书详情'), findsNothing);
+    // The identity meta carries the matching 番茄 source, not 番茄小说.
+    expect(find.textContaining('番茄短剧'), findsOneWidget);
+    expect(find.textContaining('番茄小说'), findsNothing);
+  });
+
+  testWidgets('the ID row and reviews stay above the inline catalogue', (
+    tester,
+  ) async {
+    await _pumpDetail(
+      tester,
+      extras: const DetailExtras(
+        comments: BookCommentPage(
+          comments: [BookComment(id: 'c1', text: '很好看', userName: '读者')],
+          totalCount: 1,
+        ),
+      ),
+    );
+    // Built with the intro sliver, so a long catalogue cannot push it out of
+    // reach.
+    final idRow = find.byKey(const Key('detail_id_row'));
+    expect(idRow, findsOneWidget);
+    final contents = find.text('02 / CONTENTS');
+    expect(contents, findsOneWidget);
+    expect(
+      tester.getTopLeft(idRow).dy,
+      lessThan(tester.getTopLeft(contents).dy),
+    );
+    // Reviews stay above the catalogue heading as they did after the preview
+    // block in the old layout.
+    final reviews = find.text('03 / REVIEWS');
+    expect(reviews, findsOneWidget);
+    expect(
+      tester.getTopLeft(reviews).dy,
+      lessThan(tester.getTopLeft(contents).dy),
+    );
+  });
+
+  testWidgets('the catalogue order is persisted across visits', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      CatalogueOrderPreferences.key: true,
+    });
+    CatalogueOrderPreferences.instance.resetForTest();
+    addTearDown(CatalogueOrderPreferences.instance.resetForTest);
+    await _pumpDetail(tester);
+    final toggle = find.byKey(const Key('detail-catalogue-order'));
+    await _dragUntil(tester, toggle);
+    // Restored from SharedPreferences, not the default 正序.
+    expect(find.text('倒序'), findsOneWidget);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.text('正序'), findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(CatalogueOrderPreferences.key), isFalse);
+
+    // A fresh page instance reads the written order.
+    CatalogueOrderPreferences.instance.resetForTest();
+    await _pumpDetail(tester);
+    await _dragUntil(tester, toggle);
+    expect(find.text('正序'), findsOneWidget);
+    expect(find.text('倒序'), findsNothing);
+  });
+
+  testWidgets('书旗目录 only builds chapter rows near the viewport', (
+    tester,
+  ) async {
+    final chapters = List.generate(
+      400,
+      (i) => {'chapterId': 'c$i', 'title': '第 ${i + 1} 章', 'isVip': false},
+    );
+    await tester.binding.setSurfaceSize(const Size(393, 852));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShuqiDetailPage(
+          bookId: '34078',
+          bookLoader: (_) async => {
+            'data': {
+              'bookId': '34078',
+              'name': '凡人修仙传',
+              'author': '忘语',
+              'intro': '一个普通山村小子',
+            },
+          },
+          tocLoader: (_) async => {
+            'data': {'path': 'h5', 'total': 400, 'chapters': chapters},
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('shuqi-chapter-0'), skipOffstage: false),
+      findsOneWidget,
+    );
+    // A 400-chapter catalogue must not build every row on the first frame.
+    expect(
+      find.byKey(const ValueKey('shuqi-chapter-399'), skipOffstage: false),
+      findsNothing,
+    );
+  });
 }
 
 Future<void> _pumpDetail(
   WidgetTester tester, {
   MemoryChapterCache? cache,
+  MediaItem? item,
+  DetailExtras? extras,
 }) async {
   await tester.binding.setSurfaceSize(const Size(393, 852));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -161,9 +274,10 @@ Future<void> _pumpDetail(
   await tester.pumpWidget(
     MaterialApp(
       home: DetailPage(
-        item: _book,
+        item: item ?? _book,
         readerStore: MemoryReaderStore(),
         chapterCache: cache ?? MemoryChapterCache(),
+        extrasLoader: extras == null ? null : (_) async => extras,
         detailLoader: (id, {String tab = '小说'}) async => {
           'data': {'abstract': '一段关于宗门成长的故事。', 'creation_status': '1'},
         },
@@ -201,4 +315,14 @@ final _book = MediaItem(
   badge: '玄幻脑洞',
   ep: '',
   kind: 'book',
+);
+
+final _drama = MediaItem(
+  id: 'drama',
+  title: '短剧标题',
+  cover: '',
+  author: '',
+  badge: '',
+  ep: '',
+  kind: 'video',
 );

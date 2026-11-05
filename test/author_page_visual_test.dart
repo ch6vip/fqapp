@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/author_profile.dart';
 import 'package:fqapp/pages/author_page.dart';
 import 'package:fqapp/services/app_theme.dart' show einkModeNotifier;
+import 'package:fqapp/widgets/detail/detail_archive.dart';
 import 'package:fqapp/widgets/home/home_back_button.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 
@@ -68,6 +69,39 @@ void main() {
     expect(find.byType(SliverGrid), findsNothing);
     // word_number 带进 META 行，字数出现在作品行里。
     expect(find.textContaining('11.6万字'), findsOneWidget);
+    // Upstream NovelRow 的档案编号行。作者行省略：整页就是该作者的作品。
+    expect(
+      find.text(detailArchiveFileCode('7676082357077543960')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('下拉刷新会重新加载作者资料', (tester) async {
+    var calls = 0;
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthorPage(
+          authorId: _author.id,
+          fallbackName: _author.name,
+          loader: (_) async {
+            calls++;
+            return _author;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    await tester.fling(
+      find.byKey(const Key('author_scroll')),
+      const Offset(0, 320),
+      1000,
+    );
+    await tester.pumpAndSettle();
+    expect(calls, 2);
   });
 
   testWidgets('头栏是「作者作品」，作者名只在头部出现一次', (tester) async {
