@@ -67,6 +67,12 @@ class ShelfGroupStore implements ShelfCategoryMatcher {
   int _generation = 0;
   Future<void> _writes = Future<void>.value();
 
+  /// Test seam for the single atomic document write: `null` means the real
+  /// `put` + `flush`. Tests inject a failing write to prove that a failed
+  /// commit restores the previous in-memory snapshot (D-M2).
+  @visibleForTesting
+  Future<void> Function(Box<dynamic> box, String encoded)? writeOrganization;
+
   ValueListenable<int> get listenable => _revision;
 
   /// Only an open box counts as ready; `Hive.close()` must turn every read
@@ -442,7 +448,7 @@ class ShelfGroupStore implements ShelfCategoryMatcher {
       final value = entry.value;
       if (key is! String ||
           key.length > 80 ||
-          key.startsWith('_') ||
+          !_isGroupId(key) ||
           value is! Map ||
           value['name'] is! String ||
           (value['name'] as String).trim().isEmpty ||
@@ -468,6 +474,7 @@ class ShelfGroupStore implements ShelfCategoryMatcher {
           value is! Map ||
           value['group'] is! String ||
           (value['group'] as String).length > 80 ||
+          !_isAssignmentGroup(value['group'] as String) ||
           value['at'] is! int ||
           (value['at'] as int) < 0) {
         throw const FormatException('分类书籍格式有误');
@@ -526,8 +533,7 @@ class ShelfGroupStore implements ShelfCategoryMatcher {
     final previous = exportOrganization();
     final generation = _generation;
     try {
-      await box.put(documentKey, jsonEncode(next));
-      await box.flush();
+      await (writeOrganization ?? _writeDocument)(box, jsonEncode(next));
     } catch (_) {
       // The visible state never changed before the write; restore the snapshot
       // defensively so a partial Hive update cannot leak through.
@@ -537,6 +543,11 @@ class ShelfGroupStore implements ShelfCategoryMatcher {
     if (generation != _generation || !box.isOpen) return;
     _adopt(next);
     _revision.value++;
+  }
+
+  static Future<void> _writeDocument(Box<dynamic> box, String encoded) async {
+    await box.put(documentKey, encoded);
+    await box.flush();
   }
 
   void _adopt(Map<String, dynamic> valid) {
@@ -574,6 +585,17 @@ class ShelfGroupStore implements ShelfCategoryMatcher {
     final value = groups[id];
     return value is Map && value['deleted'] != true;
   }
+
+  /// A generated group id (`g<base36>-<base36>`), never one of the built-in
+  /// `_` categories. Keeps restored documents from exposing a category the UI
+  /// can list but `ShelfViewStore.setCategoryOf` would always reject.
+  static bool _isGroupId(String value) =>
+      !value.startsWith('_') && isShelfCategoryWellFormed(value);
+
+  /// Assignments point at 未分类 or a generated group id. Whether that group
+  /// still exists (or is a tombstone) is resolved later by `mergeBackup`.
+  static bool _isAssignmentGroup(String value) =>
+      value == unfiled || _isGroupId(value);
 
   void _advanceClock(int at) {
     if (at > _clock) _clock = at;

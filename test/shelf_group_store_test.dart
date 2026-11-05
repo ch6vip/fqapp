@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +20,7 @@ void main() {
     store.maxVisibleGroups = 100;
     store.maxGroupRecords = ShelfGroupStore.hardMaxGroupRecords;
     store.maxAssignments = ShelfGroupStore.hardMaxAssignments;
+    store.writeOrganization = null;
     await store.init();
   });
 
@@ -215,7 +217,7 @@ void main() {
             'book:3': {'group': 'g1b-y', 'at': 105},
             'book:local_1_ab': {'group': 'g1a-x', 'at': 106},
             'book:4': {'group': 'g1c-z', 'at': 107},
-            'book:5': {'group': 'missing', 'at': 108},
+            'book:5': {'group': 'g9z-missing', 'at': 108},
             'book:6': {'group': '_unfiled', 'at': 109},
           },
         };
@@ -255,6 +257,22 @@ void main() {
         throwsFormatException,
       );
       expect(store.exportOrganization(), before);
+    });
+
+    test('a malformed group id is rejected before any write', () {
+      final before = store.exportOrganization();
+      expect(
+        () => store.mergeBackup({
+          'version': 1,
+          'groups': {
+            'foo': {'name': 'x', 'at': 1},
+          },
+          'assignments': <String, dynamic>{},
+        }),
+        throwsFormatException,
+      );
+      expect(store.exportOrganization(), before);
+      expect(store.groups, isEmpty);
     });
 
     test('a merge that exceeds a limit writes nothing', () async {
@@ -323,6 +341,22 @@ void main() {
           },
           'assignments': <String, dynamic>{},
         },
+        // A group id must be a generated `g<base36>-<base36>` id; otherwise
+        // the UI could list a category that `setCategoryOf` always rejects.
+        {
+          'version': 1,
+          'groups': {
+            'foo': {'name': 'x', 'at': 1},
+          },
+          'assignments': <String, dynamic>{},
+        },
+        {
+          'version': 1,
+          'groups': {
+            'book:1': {'name': 'x', 'at': 1},
+          },
+          'assignments': <String, dynamic>{},
+        },
         {
           'version': 1,
           'groups': <String, dynamic>{},
@@ -335,6 +369,20 @@ void main() {
           'groups': <String, dynamic>{},
           'assignments': {
             'book:1': {'group': 1, 'at': 1},
+          },
+        },
+        {
+          'version': 1,
+          'groups': <String, dynamic>{},
+          'assignments': {
+            'book:1': {'group': '_all', 'at': 1},
+          },
+        },
+        {
+          'version': 1,
+          'groups': <String, dynamic>{},
+          'assignments': {
+            'book:1': {'group': 'foo', 'at': 1},
           },
         },
       ]) {
@@ -424,6 +472,41 @@ void main() {
         await store.reload();
         await pending;
         expect(store.groups.values.where((name) => name == '想读'), hasLength(1));
+      },
+    );
+
+    test(
+      'a failed write restores the in-memory snapshot and the queue recovers',
+      () async {
+        final id = await store.addGroup('想读');
+        final before = store.exportOrganization();
+        var notifications = 0;
+        void listener() => notifications++;
+        store.listenable.addListener(listener);
+        addTearDown(() => store.listenable.removeListener(listener));
+
+        store.writeOrganization = (box, encoded) async {
+          throw StateError('disk full');
+        };
+        addTearDown(() => store.writeOrganization = null);
+
+        await expectLater(store.addGroup('在读'), throwsStateError);
+        // Memory and the durable document both stay at the pre-write state.
+        expect(store.exportOrganization(), before);
+        expect(store.groups, {id: '想读'});
+        expect(store.groups.values, isNot(contains('在读')));
+        expect(notifications, 0, reason: 'a failed write must not notify');
+        final box = EncryptedHive.box<dynamic>(Hive, ShelfGroupStore.boxName);
+        final stored =
+            jsonDecode(box.get(ShelfGroupStore.documentKey) as String)
+                as Map<String, dynamic>;
+        expect(stored, before);
+
+        // The failed write does not poison the serialized queue.
+        store.writeOrganization = null;
+        final second = await store.addGroup('在读');
+        expect(store.groups[second], '在读');
+        expect(store.groups[id], '想读');
       },
     );
   });
