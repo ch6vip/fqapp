@@ -70,6 +70,10 @@ class ShelfViewStore extends ChangeNotifier {
   BookCollectionMode get mode => _state.mode;
   BookShelfPreferences get shelfPreferences => _state.shelfPreferences;
 
+  /// Compatibility getter used by page code (design §1.3 #8); same value as
+  /// [shelfPreferences].
+  BookShelfPreferences get preferences => _state.shelfPreferences;
+
   /// The persisted category on the shelf tab; history/collection remember
   /// their own in memory and default to 全部.
   String categoryOf(ShelfTabScope scope) => scope == ShelfTabScope.shelf
