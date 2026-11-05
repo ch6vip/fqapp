@@ -233,46 +233,69 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
       primary: chapters.isEmpty ? '暂无章节' : '开始阅读',
       secondary: '',
     );
+    // 目录条目可能上万章，只有真正进入视口的行才构建（上游目录同样是
+    // SliverList.builder）；头部/简介/目录标题放在一个 adapter sliver 里。
+    final showingChapters = _tocError == null && !_tocLoading;
     return Stack(
       children: [
         Positioned.fill(
-          child: SingleChildScrollView(
+          child: CustomScrollView(
             key: const Key('shuqi-detail-scroll'),
-            physics: const BouncingScrollPhysics(),
-            padding: EdgeInsets.fromLTRB(
-              horizontal,
-              safe.top + FrostedHeader.toolbarHeight + 24,
-              edge + safe.right,
-              geometry.extent + 20,
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _identity(context, book),
-                if (book.intro.isNotEmpty) ...[
-                  const SizedBox(height: 28),
-                  DetailArchiveSynopsis(text: book.intro),
-                ],
-                const SizedBox(height: 30),
-                _contentsHeading(context, toc, chapters),
-                if (_tocError != null)
-                  DetailInlineError(
-                    message: _tocError!,
-                    onRetry: () => unawaited(_loadToc()),
-                  )
-                else if (_tocLoading)
-                  const SizedBox(
-                    height: 40,
-                    child: LoadingSkeleton(
-                      layout: SkeletonLayout.inline,
-                      label: '正在加载目录',
-                    ),
-                  )
-                else
-                  for (var i = 0; i < chapters.length; i++)
-                    _chapterRow(context, chapters[i], i),
-              ],
-            ),
+            slivers: [
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  horizontal,
+                  safe.top + FrostedHeader.toolbarHeight + 24,
+                  edge + safe.right,
+                  0,
+                ),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _identity(context, book),
+                      if (book.intro.isNotEmpty) ...[
+                        const SizedBox(height: 28),
+                        DetailArchiveSynopsis(text: book.intro),
+                      ],
+                      const SizedBox(height: 30),
+                      _contentsHeading(context, toc, chapters),
+                      if (_tocError != null)
+                        DetailInlineError(
+                          message: _tocError!,
+                          onRetry: () => unawaited(_loadToc()),
+                        )
+                      else if (_tocLoading)
+                        const SizedBox(
+                          height: 40,
+                          child: LoadingSkeleton(
+                            layout: SkeletonLayout.inline,
+                            label: '正在加载目录',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (showingChapters)
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontal,
+                    0,
+                    edge + safe.right,
+                    0,
+                  ),
+                  sliver: SliverList.builder(
+                    itemCount: chapters.length,
+                    itemBuilder: (context, index) =>
+                        _chapterRow(context, chapters[index], index),
+                  ),
+                ),
+              SliverToBoxAdapter(child: SizedBox(height: geometry.extent + 20)),
+            ],
           ),
         ),
         Positioned(
