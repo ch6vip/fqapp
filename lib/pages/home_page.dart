@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/home_cell.dart';
 import '../models/media_item.dart';
-import '../models/search_discovery.dart';
 import '../services/api_client.dart';
 import '../services/app_log.dart';
 import '../services/book_open_preferences.dart';
@@ -14,11 +13,12 @@ import '../services/desktop_platform.dart';
 import '../services/home_continue_preferences.dart';
 import '../services/home_page_affinity.dart';
 import '../services/library_store.dart';
+import '../widgets/home/home_archive.dart';
 import '../widgets/home/home_cell_blocks.dart';
 import '../widgets/home/home_cell_renderers.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_feed_states.dart';
-import '../widgets/home/home_hero.dart';
+import '../widgets/home/home_masthead.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/home/home_reading_row.dart';
 import '../widgets/home/home_shelf.dart';
@@ -54,7 +54,6 @@ class HomePage extends ConsumerStatefulWidget {
     this.cacheStore,
     this.readerStore,
     this.scrollController,
-    this.cueLoader,
   });
 
   final ChapterCache? cacheStore;
@@ -67,12 +66,6 @@ class HomePage extends ConsumerStatefulWidget {
   /// 所以控制器要能被外面拿到。为 null 时首页自建并自行释放，测试与独立
   /// 使用不受影响。
   final ScrollController? scrollController;
-
-  /// 搜索框热搜词来源，由壳层注入（生产接 `ApiClient.searchCue`）。
-  ///
-  /// 注入而不是页内直连，与 [SearchPage] 的 `hotSearchLoader` 同一规矩：
-  /// 页面测试不落网络（ApiClient 的超时是 20s Timer，挂进测试必炸）。
-  final Future<SearchCue> Function()? cueLoader;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -276,11 +269,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             bottom: false,
             child: Column(
               children: [
-                HomeHero(
-                  onSearch: _openSearch,
-                  onCategory: _openCategory,
-                  cueLoader: widget.cueLoader,
-                ),
+                HomeMasthead(onSearch: _openSearch, onCategory: _openCategory),
                 HomeTabBar(
                   selectedIndex: state.tabIndex,
                   onSelect: _selectTab,
@@ -531,7 +520,12 @@ class _HomePageState extends ConsumerState<HomePage> {
       // 多个卡片流合并成一个网格：首页只保留一个「为你推荐」段落，块与块
       // 之间的边界对读书的人没有意义。
       slivers.add(
-        SliverToBoxAdapter(child: HomeSectionHeader(title: _gridTitle(state))),
+        SliverToBoxAdapter(
+          child: HomeSectionLabel(
+            code: _gridCode(state),
+            title: _gridTitle(state),
+          ),
+        ),
       );
       slivers.add(_gridBody(entries, gridWidth));
       rendered = true;
@@ -570,28 +564,37 @@ class _HomePageState extends ConsumerState<HomePage> {
     final scaler = MediaQuery.textScalerOf(context);
     final titleScale = scaler.scale(15);
     final metaScale = scaler.scale(11);
-    final cached = _gridSliver;
-    if (cached != null &&
-        identical(_gridItems, state.items) &&
-        _gridTabIndex == state.tabIndex &&
-        _gridWidth == gridWidth &&
-        _gridTitleScale == titleScale &&
-        _gridMetaScale == metaScale) {
-      return [
-        SliverToBoxAdapter(child: HomeSectionHeader(title: _gridTitle(state))),
-        cached,
-      ];
+    var sliver = _gridSliver;
+    if (sliver == null ||
+        !identical(_gridItems, state.items) ||
+        _gridTabIndex != state.tabIndex ||
+        _gridWidth != gridWidth ||
+        _gridTitleScale != titleScale ||
+        _gridMetaScale != metaScale) {
+      _gridItems = state.items;
+      _gridTabIndex = state.tabIndex;
+      _gridWidth = gridWidth;
+      _gridTitleScale = titleScale;
+      _gridMetaScale = metaScale;
+      sliver = _gridSliver = _gridBody(entries, gridWidth);
     }
-    _gridItems = state.items;
-    _gridTabIndex = state.tabIndex;
-    _gridWidth = gridWidth;
-    _gridTitleScale = titleScale;
-    _gridMetaScale = metaScale;
-    final sliver = _gridBody(entries, gridWidth);
     return [
-      SliverToBoxAdapter(child: HomeSectionHeader(title: _gridTitle(state))),
-      _gridSliver = sliver,
+      SliverToBoxAdapter(
+        child: HomeSectionLabel(
+          code: _gridCode(state),
+          title: _gridTitle(state),
+        ),
+      ),
+      sliver,
     ];
+  }
+
+  /// 分区编号：排行榜占了 01，网格就是 02；没有排行榜时网格自己从 01 起。
+  String _gridCode(HomeState state) {
+    final hasRank = _cellsOfCurrentTab(
+      state,
+    ).any((cell) => cell.showType == kHomeCellRank);
+    return hasRank ? '02 / FOR YOU' : '01 / FOR YOU';
   }
 
   /// One book grid: cover, title, one meta line, nothing else.
@@ -612,6 +615,9 @@ class _HomePageState extends ConsumerState<HomePage> {
             child: HomeMediaCard(
               item: item,
               coverWidth: cardWidth,
+              radius: homeCoverRadius,
+              titleSize: homeCardTitleSize,
+              archiveCode: homeFileCode(item),
               onTap: () => _openItem(item),
             ),
           );

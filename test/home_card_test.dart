@@ -4,7 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/home_cell.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/app_theme.dart' show einkModeNotifier;
+import 'package:fqapp/widgets/home/home_archive.dart';
 import 'package:fqapp/widgets/home/home_cell_blocks.dart';
+import 'package:fqapp/widgets/home/home_rank_shelf.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/home/home_reading_row.dart';
@@ -27,6 +30,7 @@ void main() {
     MediaTag? tag,
     List<String> rankTags = const [],
     List<MediaRecTag> recTags = const [],
+    int creationStatus = -1,
   }) => MediaItem(
     id: id,
     title: title,
@@ -40,6 +44,7 @@ void main() {
     tag: tag,
     rankTags: rankTags,
     recTags: recTags,
+    creationStatus: creationStatus,
   );
 
   Future<void> pump(WidgetTester tester, Widget child) async {
@@ -158,6 +163,120 @@ void main() {
       expect(find.text('暂无评分'), findsNothing);
       expect(find.textContaining('分'), findsNothing);
     });
+
+    testWidgets('a missing cover falls back to the archive title block', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        SizedBox(
+          width: 160,
+          child: HomeMediaCard(
+            item: book(title: '断图之书', author: '某人'),
+            onTap: () {},
+          ),
+        ),
+      );
+
+      // 旧兜底是圆环 + Lucide 图标；现在是渐变块上的竖排书名，没有图标。
+      expect(
+        find.descendant(
+          of: find.byType(HomeMediaCard),
+          matching: find.byType(Icon),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(HomeMediaCard),
+          matching: find.byType(CustomPaint),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('e-ink covers turn greyscale and get a black outline', (
+      tester,
+    ) async {
+      final original = einkModeNotifier.value;
+      einkModeNotifier.value = true;
+      addTearDown(() => einkModeNotifier.value = original);
+      await pump(
+        tester,
+        SizedBox(
+          width: 160,
+          child: StoryCover(item: book(title: '灰度书'), cacheWidth: 320),
+        ),
+      );
+
+      final filtered = tester.widget<ColorFiltered>(
+        find.descendant(
+          of: find.byType(StoryCover),
+          matching: find.byType(ColorFiltered),
+        ),
+      );
+      expect(filtered.colorFilter, einkCoverFilter);
+      // 过滤矩阵不能退化成恒等矩阵（否则彩色封面照样显示）。
+      expect(
+        einkCoverFilter,
+        isNot(
+          const ColorFilter.matrix(<double>[
+            1, 0, 0, 0, 0, //
+            0, 1, 0, 0, 0, //
+            0, 0, 1, 0, 0, //
+            0, 0, 0, 1, 0, //
+          ]),
+        ),
+      );
+      final outline = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byType(StoryCover),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      final border = (outline.decoration as BoxDecoration).border!;
+      expect(border.top.color, Colors.black);
+      expect(border.top.width, 1);
+    });
+
+    testWidgets('colour covers have neither the e-ink filter nor outline', (
+      tester,
+    ) async {
+      final original = einkModeNotifier.value;
+      einkModeNotifier.value = false;
+      addTearDown(() => einkModeNotifier.value = original);
+      await pump(
+        tester,
+        SizedBox(
+          width: 160,
+          child: StoryCover(item: book(title: '彩色书'), cacheWidth: 320),
+        ),
+      );
+
+      expect(
+        find.descendant(
+          of: find.byType(StoryCover),
+          matching: find.byType(ColorFiltered),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(StoryCover),
+          matching: find.byType(DecoratedBox),
+        ),
+        findsNothing,
+      );
+    });
+  });
+
+  test('archive styles use the bundled font families', () {
+    final serif = homeSerifStyle(size: 15, color: Colors.white);
+    expect(serif.fontFamily, 'Home Serif');
+    expect(serif.fontWeight, FontWeight.w700);
+    final code = homeCodeStyle(const HomePalette(false));
+    expect(code.fontFamily, 'Home Mono');
+    expect(code.fontWeight, FontWeight.w500);
   });
 
   group('HomeContinueRow', () {
@@ -182,11 +301,12 @@ void main() {
         ),
       );
 
-      expect(find.text('继续阅读'), findsOneWidget);
-      expect(find.text('在读的书 · 读到 第32章'), findsOneWidget);
+      // 档案条：编号行写动作与进度章节，书名单独一行，右端百分比。
+      expect(find.text('CONTINUE / 读到 第32章'), findsOneWidget);
+      expect(find.text('在读的书'), findsOneWidget);
       expect(find.text('78%'), findsOneWidget);
 
-      await tester.tap(find.text('继续阅读'));
+      await tester.tap(find.text('在读的书'));
       expect(taps, 1);
     });
 
@@ -236,7 +356,8 @@ void main() {
       );
 
       expect(find.textContaining('%'), findsNothing);
-      expect(find.text('在读的书 · 上次阅读'), findsOneWidget);
+      expect(find.text('CONTINUE / 上次阅读'), findsOneWidget);
+      expect(find.text('在读的书'), findsOneWidget);
     });
 
     test('fromHistory turns an audiobook entry into listen wording', () {
@@ -253,7 +374,6 @@ void main() {
       expect(now.item.id, 'a1');
     });
   });
-
 
   group('HomeSectionHeader', () {
     testWidgets('is a bare title with an optional trailing action', (
@@ -297,9 +417,7 @@ void main() {
       ],
     );
 
-    testWidgets('badges only the top three covers, with real ranks', (
-      tester,
-    ) async {
+    testWidgets('pages through the real rank order', (tester) async {
       await pump(
         tester,
         HomeRankCell(
@@ -312,31 +430,41 @@ void main() {
       );
 
       expect(find.text('排行榜'), findsOneWidget);
+      expect(find.byType(HomeRankShelf), findsOneWidget);
+      // 书架下面的信息行和翻页器跟着当前那本走。
+      expect(find.text('01 / 04'), findsOneWidget);
       expect(find.text('榜书1'), findsOneWidget);
-      for (final rank in [1, 2, 3]) {
-        final badge = tester.widget<Text>(find.text('TOP $rank'));
-        expect(badge.style!.fontSize, 10);
-        expect(badge.style!.color, Colors.white);
-      }
-      // 第四名以后不标数字，封面保持干净。
-      expect(find.text('TOP 4'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('home_rank_next')));
+      await tester.pumpAndSettle();
+      expect(find.text('02 / 04'), findsOneWidget);
+      expect(find.text('榜书2'), findsOneWidget);
     });
 
-    testWidgets('puts the rank subtitle under the title', (tester) async {
+    testWidgets('puts author and status under the title', (tester) async {
       await pump(
         tester,
         HomeRankCell(
           cell: cellWith([
-            book(title: '榜书一', rankTags: const ['多人二刷', '9320万热度']),
+            book(
+              title: '榜书一',
+              author: '云中客',
+              creationStatus: 1,
+              rankTags: const ['多人二刷', '9320万热度'],
+            ),
           ]),
           onOpen: (_) {},
           onMore: () {},
         ),
       );
 
-      final subtitle = tester.widget<Text>(find.text('多人二刷'));
+      final subtitle = tester.widget<Text>(find.text('云中客 · 连载中'));
       expect(subtitle.maxLines, 1);
-      expect(subtitle.style!.fontSize, 11);
+      // e615e2b 给档案控件减重：标题 19→17、信息行 12.5→12、行高 1.3→1.4。
+      expect(subtitle.style!.fontSize, 12);
+      expect(subtitle.style!.height, 1.4);
+      // 信息行换成「作者 · 状态」，榜首标签和评分不再重复堆在这里。
+      expect(find.text('多人二刷'), findsNothing);
     });
   });
 
