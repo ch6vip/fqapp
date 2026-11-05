@@ -23,6 +23,7 @@ import '../services/backend_transport.dart';
 import '../services/fanqie_history_import_service.dart';
 import '../services/fanqie_library_capture_service.dart';
 import '../services/fanqie_library_import_service.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
 class FanqieHistoryImportPage extends StatefulWidget {
@@ -130,7 +131,10 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
         if (mounted) setState(() => _captureProgress = message);
       },
       dark: scheme.brightness == Brightness.dark,
-      eink: Theme.of(context).extension<WenkuAppearance>()?.eink ?? false,
+      // Read the app-level e-ink flag, not the page's WenkuAppearance: this
+      // State sits above the ArchiveFeaturePage/WenkuScope that registers the
+      // extension, and the native login page needs the real global setting.
+      eink: HomePalette.of(context).eink,
     );
     if (mounted) {
       setState(() {
