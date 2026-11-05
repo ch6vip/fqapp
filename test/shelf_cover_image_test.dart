@@ -108,6 +108,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('fallback 对齐上游 NovelCover：平色 #202020 与 3dp 圆角', (tester) async {
+    await tester.pumpWidget(
+      _host(ShelfCoverFallback(item: _item(), width: 120, height: 160)),
+    );
+    final box = tester.widget<ColoredBox>(
+      find.descendant(
+        of: find.byType(ShelfCoverFallback),
+        matching: find.byType(ColoredBox),
+      ),
+    );
+    expect(box.color, const Color(0xFF202020));
+    final clip = tester.widget<ClipRRect>(
+      find.descendant(
+        of: find.byType(ShelfCoverFallback),
+        matching: find.byType(ClipRRect),
+      ),
+    );
+    expect(clip.borderRadius, BorderRadius.circular(3));
+    final padding = tester.widget<Padding>(
+      find.descendant(
+        of: find.byType(ShelfCoverFallback),
+        matching: find.byType(Padding),
+      ),
+    );
+    expect(padding.padding, const EdgeInsets.all(120 * .11));
+    final title = tester.widget<Text>(find.text('封面书'));
+    expect(title.style?.fontSize, 120 * .16);
+    expect(title.style?.color, Colors.white);
+    final author = tester.widget<Text>(find.text('作者'));
+    expect(author.style?.fontSize, 120 * .085);
+  });
+
   testWidgets('远程封面：PosterCache、memCacheWidth、placeholder/error 回调', (
     tester,
   ) async {
