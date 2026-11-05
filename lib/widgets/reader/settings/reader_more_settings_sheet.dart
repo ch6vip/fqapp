@@ -84,13 +84,13 @@ class _ReaderMoreSettingsSheetState
   }
 
   void _apply(ReaderPreferences Function(ReaderPreferences) change) =>
-      updatePreferences(change(value));
+      commitPreferences(change(value));
 
   bool get _noAnimation =>
       value.pageTurnStyle == ReaderPageTurnStyle.none || value.instantSwipeTurn;
 
   void _setNoAnimation(bool enabled) {
-    updatePreferences(
+    commitPreferences(
       value.copyWith(
         pageTurnStyle: enabled
             ? ReaderPageTurnStyle.none
@@ -126,7 +126,7 @@ class _ReaderMoreSettingsSheetState
         const ReaderSettingsSectionHeader(title: '排版'),
         ReaderTypographySettings(
           value: value,
-          onChanged: updatePreferences,
+          onChanged: commitPreferences,
           backgroundLocked: widget.backgroundLocked,
         ),
         const ReaderSettingsDivider(),

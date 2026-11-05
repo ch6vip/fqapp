@@ -234,7 +234,20 @@ extension _ReaderPageBuild on _ReaderPageState {
               begin: Offset(0, top ? -1 : 1),
               end: Offset.zero,
             ).animate(animation),
-            child: FadeTransition(opacity: animation, child: child),
+            child: FadeTransition(
+              opacity: animation,
+              // 上游 ReaderChromeLayer 的入场是「滑入 + 轻微放大」；这里保留
+              // fqapp 的 AnimatedSwitcher 路由行为，补上同样的缩放。
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.96, end: 1).animate(
+                  CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  ),
+                ),
+                child: child,
+              ),
+            ),
           ),
           layoutBuilder: (currentChild, previousChildren) => Stack(
             alignment: top ? Alignment.topCenter : Alignment.bottomCenter,
@@ -246,85 +259,92 @@ extension _ReaderPageBuild on _ReaderPageState {
     ),
   );
 
+  /// 上游阅读页顶栏：左右玻璃圆钮夹一条居中的书名。fqapp 的缓存 / 本章评论 /
+  /// 书架 / 收起动作都保留成右侧玻璃钮。
   Widget _buildToolbar(ReaderThemePreset preset) => Material(
     key: const ValueKey('reader-toolbar'),
     color: preset.panelColor,
-    elevation: 2,
-    shadowColor: Colors.black12,
-    child: SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: '返回书籍',
-              onPressed: () => Navigator.of(context).pop(),
-              icon: Icon(LucideIcons.arrow_left, color: preset.textColor),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
+    elevation: 0,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: preset.borderColor)),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 46,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: GlassIconButton(
+                    key: const ValueKey('reader-back-entry'),
+                    icon: CupertinoIcons.back,
+                    label: '返回书籍',
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
                     widget.title,
+                    key: const ValueKey('reader-header-book-title'),
+                    textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: preset.textColor,
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      height: 1.25,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '正在阅读 · 第 ${_index + 1} 章',
-                    style: TextStyle(
-                      color: preset.mutedTextColor,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (!widget.localOnly)
-              ReaderCacheButton(preset: preset, onTap: _showCache),
-            if (!_loading &&
-                _error == null &&
-                _ideas.total > 0 &&
-                _chapterEndParagraph() != null)
-              IconButton(
-                key: const ValueKey('reader-toolbar-chapter-comments'),
-                tooltip: '本章评论',
-                onPressed: () => unawaited(
-                  _showIdeas(focusParaIndex: _chapterEndParagraph()),
                 ),
-                icon: Icon(LucideIcons.message_circle, color: preset.textColor),
               ),
-            ValueListenableBuilder<int>(
-              valueListenable: ShelfStore.instance.listenable,
-              builder: (context, _, _) {
-                final inShelfNow = inShelf(_shelfEntry);
-                return IconButton(
-                  key: const ValueKey('reader-shelf-button'),
-                  tooltip: inShelfNow ? '已在书架' : '加入书架',
-                  onPressed: () => unawaited(toggleShelf(context, _shelfEntry)),
-                  icon: Icon(
-                    inShelfNow
-                        ? LucideIcons.bookmark_check
-                        : LucideIcons.bookmark_plus,
-                    color: preset.textColor,
+              if (!widget.localOnly)
+                ReaderCacheButton(preset: preset, onTap: _showCache),
+              if (!_loading &&
+                  _error == null &&
+                  _ideas.total > 0 &&
+                  _chapterEndParagraph() != null)
+                GlassIconButton(
+                  key: const ValueKey('reader-toolbar-chapter-comments'),
+                  icon: CupertinoIcons.chat_bubble,
+                  label: '本章评论',
+                  color: preset.textColor,
+                  onPressed: () => unawaited(
+                    _showIdeas(focusParaIndex: _chapterEndParagraph()),
                   ),
-                );
-              },
-            ),
-            IconButton(
-              tooltip: '收起阅读菜单',
-              onPressed: _toggleControls,
-              icon: Icon(LucideIcons.chevron_up, color: preset.textColor),
-            ),
-          ],
+                ),
+              ValueListenableBuilder<int>(
+                valueListenable: ShelfStore.instance.listenable,
+                builder: (context, _, _) {
+                  final inShelfNow = inShelf(_shelfEntry);
+                  return GlassIconButton(
+                    key: const ValueKey('reader-shelf-button'),
+                    icon: inShelfNow
+                        ? CupertinoIcons.bookmark_fill
+                        : CupertinoIcons.bookmark,
+                    label: inShelfNow ? '已在书架' : '加入书架',
+                    color: preset.textColor,
+                    onPressed: () =>
+                        unawaited(toggleShelf(context, _shelfEntry)),
+                  );
+                },
+              ),
+              GlassIconButton(
+                key: const ValueKey('reader-collapse-menu'),
+                icon: CupertinoIcons.chevron_up,
+                label: '收起阅读菜单',
+                color: preset.textColor,
+                onPressed: _toggleControls,
+              ),
+            ],
+          ),
         ),
       ),
     ),

@@ -12,6 +12,7 @@ import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/chapter_ideas.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/widgets/wenku/reader_glass_controls.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_bubble.dart';
@@ -421,13 +422,17 @@ void main() {
 
       // Open the appearance sheet: centre tap → controls → 设置.
       await tester.tapAt(
-        tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+        tester
+            .getRect(find.byKey(const ValueKey('reader-page-surface')))
+            .center,
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-settings')));
       await tester.pumpAndSettle();
       expect(find.text('阅读设置'), findsOneWidget);
-      await tester.ensureVisible(find.byKey(const ValueKey('reader-more-appearance')));
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('reader-more-appearance')),
+      );
       await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
       await tester.pumpAndSettle();
       final toggleRow = find
@@ -435,7 +440,7 @@ void main() {
           .first;
       final bubbleSwitch = find.descendant(
         of: toggleRow,
-        matching: find.byType(Switch),
+        matching: find.byType(ReaderGlassSwitch),
       );
       await tester.ensureVisible(bubbleSwitch);
       await tester.tap(bubbleSwitch);
