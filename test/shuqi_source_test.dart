@@ -169,14 +169,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'xiuxian');
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pumpAndSettle();
 
-    expect(find.text('无结果'), findsOneWidget);
-    expect(find.text('加载失败，请稍后重试'), findsNothing);
+    expect(find.text('没有找到相关故事'), findsOneWidget);
+    expect(find.text('搜索失败，请稍后重试'), findsNothing);
   });
 
   testWidgets('a restored rating filter does not hide shuqi results', (
