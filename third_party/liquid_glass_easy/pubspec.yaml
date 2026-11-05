@@ -1,0 +1,41 @@
+name: liquid_glass_easy
+description: "Apple iOS Liquid Glass for Flutter: a shader lens that refracts what is behind it, with blending, morph, adaptive chrome, controls, batching and lite glass."
+version: 5.0.0
+
+homepage: https://github.com/AhmeedGamil/liquid_glass_easy
+repository: https://github.com/AhmeedGamil/liquid_glass_easy
+issue_tracker: https://github.com/AhmeedGamil/liquid_glass_easy/issues
+documentation: https://github.com/AhmeedGamil/liquid_glass_easy#readme
+
+topics:
+  - liquid-glass
+  - glass
+  - shaders
+  - effects
+  - flutter
+
+environment:
+  sdk: ">=3.6.2 <4.0.0"
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meta: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  shaders:
+    - lib/assets/shaders/liquid_glass.frag
+    - lib/assets/shaders/liquid_glass_unlit.frag
+    - lib/assets/shaders/liquid_glass_skia.frag
+    - lib/assets/shaders/liquid_glass_border.frag
+    - lib/assets/shaders/liquid_glass_border_skia.frag
+    - lib/assets/shaders/metaball_glass.frag
+    - lib/assets/shaders/metaball_glass_skia.frag
+    - lib/assets/shaders/liquid_glass_desktop.frag
+    - lib/assets/shaders/metaball_glass_desktop.frag
