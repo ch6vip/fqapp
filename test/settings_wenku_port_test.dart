@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/settings/settings_archive_rows.dart';
@@ -121,6 +124,84 @@ void main() {
     await tester.tap(find.text('测试开关'));
     await tester.pumpAndSettle();
     expect(changed, isTrue);
+  });
+
+  testWidgets('禁用态玻璃开关只由控件降一次透明度', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light),
+        home: WenkuScope(
+          child: Scaffold(
+            body: Builder(
+              builder: (context) => Column(
+                children: [
+                  SettingsGlassControls.toggle(
+                    context,
+                    value: false,
+                    onChanged: (_) {},
+                  ),
+                  SettingsGlassControls.toggle(
+                    context,
+                    value: false,
+                    onChanged: null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final switches = tester
+        .widgetList<AppGlassSwitch>(find.byType(AppGlassSwitch))
+        .toList();
+    expect(switches, hasLength(2));
+    // 适配器传原值；禁用态的 .4/.5/.55 由 AppGlassSwitch 自己叠加一次。
+    expect(switches[1].activeColor, switches[0].activeColor);
+    expect(switches[1].inactiveColor, switches[0].inactiveColor);
+    expect(switches[1].thumbColor, switches[0].thumbColor);
+  });
+
+  testWidgets('非乐观开关在回调提交前保持原值', (tester) async {
+    final gate = Completer<void>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light),
+        home: Scaffold(
+          body: SettingsToggleRow(
+            icon: Icons.tune,
+            title: '需要授权',
+            description: '权限返回后才生效',
+            value: false,
+            optimistic: false,
+            onChanged: (_) => gate.future,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(AppGlassSwitch));
+    await tester.pump();
+    await tester.pump();
+    // 回调还挂着时，传给玻璃开关的仍是持久化的 false。
+    expect(
+      tester
+          .widget<easy.LiquidGlassSwitch>(find.byType(easy.LiquidGlassSwitch))
+          .value,
+      isFalse,
+    );
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<easy.LiquidGlassSwitch>(find.byType(easy.LiquidGlassSwitch))
+          .value,
+      isFalse,
+    );
   });
 
   testWidgets('墨水屏下玻璃开关仍是黑白两态', (tester) async {

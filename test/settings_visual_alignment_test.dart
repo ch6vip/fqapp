@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/about_page.dart';
@@ -7,6 +9,7 @@ import 'package:fqapp/pages/api_service_page.dart';
 import 'package:fqapp/pages/library_backup_page.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/shelf/shelf_design.dart';
 import 'package:fqapp/widgets/wenku/settings_glass_controls.dart';
@@ -53,7 +56,7 @@ void main() {
 
     await tester.tap(find.text('外观'));
     await tester.pumpAndSettle();
-    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(find.byType(SettingsArchivePage), findsOneWidget);
     expect(find.text('主题模式'), findsOneWidget);
     expect(find.text('浅色'), findsOneWidget);
   });
@@ -76,13 +79,33 @@ void main() {
     await pumpSettings(tester, eink: true);
 
     expect(find.byType(ArchiveMasthead), findsOneWidget);
-    expect(find.text('外观'), findsOneWidget);
+    // 分类卡片白底；图标没有调色板着色，落到纯黑。
+    final entry = find
+        .ancestor(of: find.text('外观'), matching: find.byType(ContentPanel))
+        .first;
+    final panelMaterial = tester.widget<Material>(
+      find.descendant(of: entry, matching: find.byType(Material)).first,
+    );
+    expect(panelMaterial.color, Colors.white);
+    final icon = find
+        .descendant(of: entry, matching: find.byType(ArchiveIcon))
+        .first;
+    expect(tester.widget<ArchiveIcon>(icon).color, isNull);
+    final iconColor = IconTheme.of(tester.element(icon)).color!;
+    expect([iconColor.r, iconColor.g, iconColor.b], [0, 0, 0]);
+    expect(iconColor.a, greaterThan(.8));
+
     await tester.tap(find.text('外观'));
     await tester.pumpAndSettle();
 
     expect(find.text('主题模式'), findsOneWidget);
-    // 墨水屏优先级最高，主题模式的当前值显示「墨水屏」。
-    expect(find.text('墨水屏'), findsOneWidget);
+    // 墨水屏优先级最高，主题模式的当前值显示「墨水屏」；尾部值渲染为纯黑。
+    final value = find.text('墨水屏');
+    expect(value, findsOneWidget);
+    final rendered = tester.widget<RichText>(
+      find.descendant(of: value, matching: find.byType(RichText)).first,
+    );
+    expect((rendered.text as TextSpan).style?.color, Colors.black);
     expect(tester.takeException(), isNull);
   });
 
@@ -108,7 +131,7 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
   });
 
-  testWidgets('本地接口状态点存在，局域网开关走玻璃开关', (tester) async {
+  testWidgets('本地接口状态点走主题前景色，局域网开关走玻璃开关', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.createTheme(Brightness.light),
@@ -117,10 +140,113 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(find.byType(SettingsArchivePage), findsOneWidget);
     expect(find.text('已停止'), findsOneWidget);
-    expect(find.byKey(const ValueKey('api-status-dot')), findsOneWidget);
+    final dotFinder = find.byKey(const ValueKey('api-status-dot'));
+    final dot = tester.widget<Container>(dotFinder);
+    // 页面在 WenkuScope 之上构建，颜色取自页面自身的 colorScheme。
+    final scheme = Theme.of(
+      tester.element(find.byType(ApiServicePage)),
+    ).colorScheme;
+    final dotColor = (dot.decoration! as BoxDecoration).color;
+    expect(dotColor, scheme.onSurfaceVariant);
+    expect(dotColor, isNot(Colors.green), reason: '停止状态不再使用 Material 绿');
+    expect(dotColor, isNot(scheme.error), reason: '停止状态不再使用 error 红');
     expect(find.byType(AppGlassSwitch), findsOneWidget);
+    // 作为根页面时没有可返回的路由，不渲染返回键。
+    expect(find.byTooltip('返回'), findsNothing);
+  });
+
+  testWidgets('设置主页被 push 时提供返回键', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
+                ),
+                child: const Text('打开设置'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开设置'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('返回'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('返回'));
+    await tester.pumpAndSettle();
+    expect(find.text('打开设置'), findsOneWidget);
+    expect(find.byType(SettingsPage), findsNothing);
+  });
+
+  testWidgets('Windows 双栏分类页不渲染返回键，切换分类不清空右栏', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      await tester.binding.setSurfaceSize(const Size(1280, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.createTheme(Brightness.light),
+          home: const SettingsPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 右栏默认是外观分类；嵌套 Navigator 只有一条路由，所以没有返回键。
+      expect(find.text('主题模式'), findsOneWidget);
+      expect(find.byTooltip('返回'), findsNothing);
+
+      await tester.tap(find.widgetWithText(SettingsRow, '服务'));
+      await tester.pumpAndSettle();
+      expect(find.text('本地接口'), findsOneWidget);
+      expect(find.byTooltip('返回'), findsNothing);
+
+      await tester.tap(find.widgetWithText(SettingsRow, '外观'));
+      await tester.pumpAndSettle();
+      expect(find.text('主题模式'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('局域网共享在确认前不乐观打开', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light),
+        home: const ApiServicePage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final switchFinder = find.byType(AppGlassSwitch);
+    expect(tester.widget<AppGlassSwitch>(switchFinder).value, isFalse);
+
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+    expect(find.text('开启局域网共享'), findsOneWidget);
+    expect(
+      tester
+          .widget<easy.LiquidGlassSwitch>(find.byType(easy.LiquidGlassSwitch))
+          .value,
+      isFalse,
+    );
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<AppGlassSwitch>(switchFinder).value, isFalse);
+    expect(
+      tester
+          .widget<easy.LiquidGlassSwitch>(find.byType(easy.LiquidGlassSwitch))
+          .value,
+      isFalse,
+    );
   });
 
   testWidgets('备份与导入页的分区头和卡片改用 settings 组件', (tester) async {
