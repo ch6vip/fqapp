@@ -134,16 +134,10 @@ pub(super) fn handle_search<'a>(
             uniq.push(item);
         }
 
-        if uniq.is_empty() {
-            let msg = payload
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("empty result");
-            return Err(ApiError::Internal(format!(
-                "shuqi search returned no books: {msg}"
-            )));
-        }
-
+        // A successful reply without books is a legitimate empty result (for
+        // example a pinyin query); the client shows "nothing found" rather
+        // than a retryable failure. Transport and decoding errors still fail
+        // in `post_enc`.
         Ok(json!({ "source": "shuqi", "data": uniq }))
     })
 }
