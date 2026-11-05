@@ -32,6 +32,8 @@ import 'package:fqapp/services/swipe_guide_store.dart';
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
+import 'package:fqapp/widgets/shell_dock.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'support/controlled_player.dart';
 
 MediaItem _item(
@@ -1097,10 +1099,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Scoped to the bar: the home page's own category strip also has a 短剧 entry.
-    Finder navLabel(String label) => find.descendant(
-      of: find.byType(NavigationBar),
-      matching: find.text(label),
-    );
+    Finder navLabel(String label) =>
+        find.descendant(of: find.byType(GlassDock), matching: find.text(label));
 
     final home = tester.getCenter(navLabel('首页')).dx;
     final drama = tester.getCenter(navLabel('短剧')).dx;
@@ -1121,25 +1121,20 @@ void main() {
 
     // 浅色外观下：推荐是视频流，dock 仍是深色玻璃；切到看剧（浅色页）后
     // dock 跟着回浅色，不能页面是奶白、dock 还是一条黑的。
-    Color dockColor() {
-      final container = tester.widget<Container>(
-        find
-            .ancestor(
-              of: find.byType(NavigationBar),
-              matching: find.byType(Container),
-            )
-            .first,
-      );
-      return (container.decoration! as BoxDecoration).color!;
-    }
+    Brightness dockBrightness() =>
+        Theme.of(tester.element(find.byType(GlassDock))).brightness;
+    ShellDock shellDock() => tester.widget<ShellDock>(find.byType(ShellDock));
 
-    expect(dockColor(), const Color(0xFF161619).withValues(alpha: 0.72));
+    expect(dockBrightness(), Brightness.dark);
+    expect(shellDock().staticMaterial, isTrue, reason: '视频流上不做实时折射');
     await tester.tap(find.text('看剧'));
     await tester.pumpAndSettle();
-    expect(dockColor(), Colors.white.withValues(alpha: 0.82));
+    expect(dockBrightness(), Brightness.light);
+    expect(shellDock().staticMaterial, isFalse);
     await tester.tap(find.text('推荐'));
     await tester.pumpAndSettle();
-    expect(dockColor(), const Color(0xFF161619).withValues(alpha: 0.72));
+    expect(dockBrightness(), Brightness.dark);
+    expect(shellDock().staticMaterial, isTrue);
     // The shell mounts its own DramaPage without seams, so its inline session
     // starts a real directory request here. Advance past the client timeout to
     // drain that timer, which would otherwise outlive the test.
@@ -1444,11 +1439,7 @@ void main() {
     await _flush(tester);
     expect(find.text('推荐'), findsOneWidget);
     expect(find.text('独家'), findsOneWidget);
-    expect(
-      find.text('看剧'),
-      findsOneWidget,
-      reason: '前一条同身份的被名字拦下后，这一条不该被连带吞掉',
-    );
+    expect(find.text('看剧'), findsOneWidget, reason: '前一条同身份的被名字拦下后，这一条不该被连带吞掉');
     expect(tester.takeException(), isNull);
   });
 
@@ -1709,11 +1700,11 @@ void main() {
     // 海报格页以前恒为白底黑字，深色主题下整页会刺眼——现在跟随色板。
     expect(
       tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
-      const Color(0xFF151517),
+      const Color(0xFF191919),
     );
     expect(
       tester.widget<Text>(find.text('8-0 作品')).style?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     expect(tester.takeException(), isNull);
   });
@@ -1933,9 +1924,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('桌面 feed：手动暂停后切窗口/最小化再回来都不许自动恢复', (
-    tester,
-  ) async {
+  testWidgets('桌面 feed：手动暂停后切窗口/最小化再回来都不许自动恢复', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -1997,9 +1986,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('桌面 feed：播放中被最小化是可见性暂停，切回自动恢复', (
-    tester,
-  ) async {
+  testWidgets('桌面 feed：播放中被最小化是可见性暂停，切回自动恢复', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -2097,9 +2084,7 @@ void main() {
     expect(find.text('1 / 2'), findsNothing);
   });
 
-  testWidgets('桌面 feed 顶栏只剩频道条一行，搜索入口收敛到频道条图标', (
-    tester,
-  ) async {
+  testWidgets('桌面 feed 顶栏只剩频道条一行，搜索入口收敛到频道条图标', (tester) async {
     SharedPreferences.setMockInitialValues({});
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -2112,10 +2097,7 @@ void main() {
 
     // 搜索行不渲染；分区搜索只剩频道条右端的图标一处。
     expect(find.byKey(const Key('drama_search_button')), findsNothing);
-    expect(
-      find.byKey(const Key('drama_strip_search_button')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('drama_strip_search_button')), findsOneWidget);
     // 播放器顶端只让出频道条一行（38），不再是搜索行 + 频道条的 76。
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('desktop-feed-player'))).dy,

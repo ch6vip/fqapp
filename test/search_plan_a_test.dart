@@ -6,24 +6,22 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/search_discovery.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/services/search_history_store.dart';
-import 'package:fqapp/widgets/home/home_design.dart';
-import 'package:fqapp/widgets/home/home_media_card.dart';
 
-/// 方案 A（搜索页两层顶栏）的回归测试。
+import 'support/search_finders.dart';
+
+/// 搜索页范围与来源的回归测试（Wenku8 移植后的单行分段页签）。
 ///
-/// 这些用例覆盖样稿里没有画成单独状态、但编号说明里点名的行为：范围条与
-/// 来源在输入时保持可见、书旗禁用分类页签、发现区顺序、书旗不请求联想词、
-/// ID 查询切来源、书旗工具条说明、流尾配色和矮窗口默认版式。
+/// 覆盖：输入时页签保持可见、书旗与番茄分类互斥并恢复原分类、发现区顺序、
+/// 书旗不请求联想词、ID 查询切来源、书旗不提供评分、流尾配色和默认列表。
 void main() {
-  // 大部分用例检查网格 / 卡片；预置「用户选过封面视图」，避免默认测试
-  // 窗口（800×600，横屏）触发新加的「横屏默认列表」规则。
+  // 大部分用例检查封面网格；预置「用户选过封面视图」。
   setUp(
     () => SharedPreferences.setMockInitialValues({'search_list_view': false}),
   );
 
   const id = '7677801492920667198';
 
-  testWidgets('typing keeps the scope bar and source switch visible', (
+  testWidgets('typing keeps the category and source segments visible', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -39,65 +37,58 @@ void main() {
 
     expect(find.byKey(const Key('search_suggestions')), findsOneWidget);
     expect(find.byKey(const Key('search-category-tabs')), findsOneWidget);
-    expect(find.byKey(const Key('search-source-fanqie')), findsOneWidget);
-    expect(find.byKey(const Key('search-shuqi-source')), findsOneWidget);
+    expect(searchSegment('综合'), findsOneWidget);
+    expect(searchSegment('书旗'), findsOneWidget);
   });
 
-  testWidgets(
-    'shuqi disables category tabs and fanqie restores the previous category',
-    (tester) async {
-      final requests = <(String, int, int)>[];
-      final shuqiCalls = <String>[];
-      await tester.pumpWidget(
-        _app(
-          searchLoader: (query, {required int tabType, required int offset}) {
-            requests.add((query, tabType, offset));
-            return Future.value([
-              SearchTab(
-                title: tabType == 3 ? '书籍' : '综合',
-                items: [_item('$tabType-$offset', '$query 结果')],
-                hasMore: false,
-              ),
-            ]);
-          },
-          shuqiLoader: (key) async {
-            shuqiCalls.add(key);
-            return _shuqiPayload('书旗作品');
-          },
-        ),
-      );
-      await tester.pumpAndSettle();
+  testWidgets('shuqi replaces the category and a category restores fanqie', (
+    tester,
+  ) async {
+    final requests = <(String, int, int)>[];
+    final shuqiCalls = <String>[];
+    await tester.pumpWidget(
+      _app(
+        searchLoader: (query, {required int tabType, required int offset}) {
+          requests.add((query, tabType, offset));
+          return Future.value([
+            SearchTab(
+              title: tabType == 3 ? '书籍' : '综合',
+              items: [_item('$tabType-$offset', '$query 结果')],
+              hasMore: false,
+            ),
+          ]);
+        },
+        shuqiLoader: (key) async {
+          shuqiCalls.add(key);
+          return _shuqiPayload('书旗作品');
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), '测试');
-      await tester.testTextInput.receiveAction(TextInputAction.search);
-      await tester.pumpAndSettle();
-      expect(requests, [('测试', 1, 0)]);
+    await tester.enterText(find.byType(TextField), '测试');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(requests, [('测试', 1, 0)]);
 
-      await tester.tap(find.widgetWithText(ChoiceChip, '小说'));
-      await tester.pumpAndSettle();
-      expect(requests.last, ('测试', 3, 0));
+    await tester.tap(searchSegment('小说'));
+    await tester.pumpAndSettle();
+    expect(requests.last, ('测试', 3, 0));
 
-      await tester.tap(find.byKey(const Key('search-shuqi-source')));
-      await tester.pumpAndSettle();
-      expect(shuqiCalls, ['测试']);
-      expect(find.text('书旗来源暂不提供评分'), findsOneWidget);
+    final before = requests.length;
+    await tester.tap(searchSegment('书旗'));
+    await tester.pumpAndSettle();
+    expect(shuqiCalls, ['测试']);
+    expect(find.text('不提供评分'), findsOneWidget);
+    expect(requests, hasLength(before), reason: '书旗不请求番茄分类');
 
-      // 书旗来源下分类页签置灰且不可点：请求数量不变，来源也没有被切回。
-      final before = requests.length;
-      await tester.tap(
-        find.widgetWithText(ChoiceChip, '小说'),
-        warnIfMissed: false,
-      );
-      await tester.pumpAndSettle();
-      expect(requests, hasLength(before));
-      expect(find.text('书旗来源暂不提供评分'), findsOneWidget);
-
-      // 点「番茄」回到切换前的「小说」，而不是重置到综合。
-      await tester.tap(find.byKey(const Key('search-source-fanqie')));
-      await tester.pumpAndSettle();
-      expect(requests.last, ('测试', 3, 0));
-    },
-  );
+    // 书旗与番茄分类是同一行互斥分段：点「小说」回到番茄并按该分类重新
+    // 请求，而不是重置到综合。
+    await tester.tap(searchSegment('小说'));
+    await tester.pumpAndSettle();
+    expect(requests.last, ('测试', 3, 0));
+    expect(find.text('不提供评分'), findsNothing);
+  });
 
   testWidgets(
     'discovery shows history before hot and hides hot while typing or in shuqi',
@@ -112,10 +103,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('搜索历史'), findsOneWidget);
+      expect(find.text(searchRecentHeading), findsOneWidget);
       expect(find.text('热搜榜'), findsOneWidget);
       expect(
-        tester.getTopLeft(find.text('搜索历史')).dy,
+        tester.getTopLeft(find.text(searchRecentHeading)).dy,
         lessThan(tester.getTopLeft(find.text('热搜榜')).dy),
       );
 
@@ -129,10 +120,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('热搜榜'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('search-shuqi-source')));
+      await tester.tap(searchSegment('书旗'));
       await tester.pumpAndSettle();
       expect(find.text('热搜榜'), findsNothing);
-      expect(find.text('搜索历史'), findsOneWidget);
+      expect(find.text(searchRecentHeading), findsOneWidget);
     },
   );
 
@@ -150,7 +141,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '修仙');
     await tester.pump(const Duration(milliseconds: 300));
@@ -174,17 +165,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('按作品 ID 查找'), findsOneWidget);
     expect(find.text('精确作品'), findsOneWidget);
-    expect(find.text('没有更多了'), findsNothing);
+    expect(find.text(searchEndOfResults), findsNothing);
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
 
     expect(find.text('按作品 ID 查找'), findsNothing);
     expect(find.text('书旗作品'), findsOneWidget);
-    expect(find.text('没有更多了'), findsOneWidget);
+    expect(find.text(searchEndOfResults), findsOneWidget);
   });
 
-  testWidgets('the shuqi toolbar explains that ratings are unavailable', (
+  testWidgets('the shuqi heading explains that ratings are unavailable', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -192,13 +183,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.enterText(find.byType(TextField), '关键词');
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pumpAndSettle();
 
-    expect(find.text('书旗来源暂不提供评分'), findsOneWidget);
-    expect(find.byKey(const Key('search-minimum-score')), findsNothing);
+    expect(find.text('不提供评分'), findsOneWidget);
+    expect(searchScoreFilter, findsNothing);
   });
 
   testWidgets('the result footer uses the muted color', (tester) async {
@@ -219,39 +210,41 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final footer = tester.widget<Text>(find.text('没有更多了'));
-    expect(footer.style?.color, const HomePalette(false).muted);
-    expect(footer.style?.color, isNot(const HomePalette(false).body));
+    final footer = tester.widget<Text>(find.text(searchEndOfResults));
+    final scheme = Theme.of(
+      tester.element(find.text(searchEndOfResults)),
+    ).colorScheme;
+    expect(footer.style?.color, scheme.onSurfaceVariant);
+    expect(footer.style?.color, isNot(scheme.onSurface));
   });
 
-  testWidgets(
-    'a short window defaults to the list layout without a saved preference',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      await tester.binding.setSurfaceSize(const Size(420, 400));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('results default to the list layout without a saved preference', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(420, 400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(
-        _app(
-          initialQuery: '测试',
-          searchLoader:
-              (query, {required int tabType, required int offset}) async {
-                return [
-                  SearchTab(
-                    title: '综合',
-                    items: [_item('one', '列表作品')],
-                    hasMore: false,
-                  ),
-                ];
-              },
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      _app(
+        initialQuery: '测试',
+        searchLoader:
+            (query, {required int tabType, required int offset}) async {
+              return [
+                SearchTab(
+                  title: '综合',
+                  items: [_item('one', '列表作品')],
+                  hasMore: false,
+                ),
+              ];
+            },
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.byType(HomeMediaCard), findsNothing);
-      expect(find.text('列表作品'), findsOneWidget);
-    },
-  );
+    expect(searchGridTiles, findsNothing);
+    expect(find.text('列表作品'), findsOneWidget);
+  });
 }
 
 Widget _app({

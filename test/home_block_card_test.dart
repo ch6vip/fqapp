@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/widgets/home/home_shelf.dart';
 
-// `homeShelfColumns`：书架网格的列数。手机 3 列（≥360dp 内容宽），小屏和
+// `homeShelfColumns`：书架网格的列数。手机 3 列（内容宽 ≥324dp），小屏和
 // 大字号退回 2 列；平板/桌面按宽度放宽。
 void main() {
   late BuildContext context;
@@ -34,6 +34,8 @@ void main() {
 
     // 400dp 屏减去 16dp 栏距后内容宽 368。
     expect(homeShelfColumns(context, 368), 3);
+    // 360dp 手机内容宽 328：mockup 的三列基准，不能再掉成两列。
+    expect(homeShelfColumns(context, 328), 3);
     // 320dp 屏内容宽 288：三列时书名只剩四五个字，退到两列。
     expect(homeShelfColumns(context, 288), 2);
   });

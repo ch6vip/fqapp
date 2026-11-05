@@ -52,6 +52,9 @@ dependencies:
   html: 0.15.6
   xml: ^7.0.1
   flutter_lucide: 1.59.0
+  cupertino_icons: ^1.0.8
+  liquid_glass_easy:
+    path: third_party/liquid_glass_easy
   lottie: ^3.6.1
   flutter_rust_bridge: 2.13.0
   connectivity_plus: ^7.3.1
@@ -117,6 +120,28 @@ flutter:
     # 原样复制、仅把填充色改为白色——官方运行时用 LottieValueCallback 强制
     # `@color/al`=#ffffffff（见同文档 §19）。
     - assets/lottie/
+    # 字体许可文本随字体一起打包（两者都是 OFL 1.1）。
+    - assets/fonts/NotoSerifCJK-OFL.txt
+    - assets/fonts/RobotoMono-OFL.txt
+    - assets/licenses/wenku8/NOTICE
+    - assets/licenses/wenku8/LICENSE
+    - assets/licenses/wenku8/GPL-3.0.txt
+    - assets/licenses/wenku8/PORTING.md
+
+  # 首页档案版式用的衬线/等宽字体。CJK 衬线只取 GB2312 常用字（6763 个
+  # 汉字 + 标点，约 5.2MB）；超出范围的生僻字由 homeSerifFallback 的系统
+  # 衬线兜底。等宽字体只取拉丁与标点，中文按 mockup 的
+  # `"Roboto Mono", monospace` 同样走系统回退。
+  fonts:
+    - family: Home Serif
+      fonts:
+        - asset: assets/fonts/NotoSerifSC-Regular.otf
+        - asset: assets/fonts/NotoSerifSC-Bold.otf
+          weight: 700
+    - family: Home Mono
+      fonts:
+        - asset: assets/fonts/RobotoMono-Medium.ttf
+          weight: 500
 
   # To add assets to your application, add an assets section, like this:
   # assets:

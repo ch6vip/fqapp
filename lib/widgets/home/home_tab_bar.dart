@@ -4,30 +4,25 @@ import 'home_design.dart';
 
 class HomeCategory {
   final String label;
-  final IconData icon;
 
-  const HomeCategory(this.label, this.icon);
+  const HomeCategory(this.label);
 }
 
 const homeCategories = [
-  HomeCategory('推荐', Icons.circle),
-  HomeCategory('小说', Icons.circle),
-  HomeCategory('短剧', Icons.circle),
-  HomeCategory('漫剧', Icons.circle),
-  HomeCategory('漫画', Icons.circle),
-  HomeCategory('听书', Icons.circle),
+  HomeCategory('推荐'),
+  HomeCategory('小说'),
+  HomeCategory('短剧'),
+  HomeCategory('漫剧'),
+  HomeCategory('漫画'),
+  HomeCategory('听书'),
 ];
 
-/// Fixed above the swipeable feed; each label reserves its selected width.
+/// 六个媒介分类固定在顶部；保留名称和下划线，不再重复分区的编号层级。
 class HomeTabBar extends StatelessWidget {
-  static const double barHeight = 40;
-  static const double bottomPadding = 6;
-  static const double selectedSize = 17;
-  static const double unselectedSize = 15;
-  static const double tabSpacing = 8;
-  static const double labelPadding = 6;
   static const double sidePadding = 16;
-  static const double maxExtraSpacing = 12;
+  static const double tabSpacing = 22;
+  static const double selectedSize = 15;
+  static const double unselectedSize = 15;
 
   final int selectedIndex;
   final ValueChanged<int> onSelect;
@@ -46,127 +41,65 @@ class HomeTabBar extends StatelessWidget {
     final duration = palette.eink || MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 180);
-    final scaler = MediaQuery.textScalerOf(context);
-    final widths = <double>[];
-    var rowHeight = barHeight;
-    for (final category in categories) {
-      final painter = TextPainter(
-        text: TextSpan(text: category.label, style: _labelStyle(true, palette)),
-        textDirection: Directionality.of(context),
-        textScaler: scaler,
-        maxLines: 1,
-      )..layout();
-      widths.add(painter.width + labelPadding * 2);
-      if (painter.height + 20 > rowHeight) rowHeight = painter.height + 20;
-      painter.dispose();
-    }
-
-    return DecoratedBox(
-      decoration: BoxDecoration(color: palette.canvas),
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: bottomPadding),
-        child: SizedBox(
-          height: rowHeight,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final gap = _gapWidth(constraints.maxWidth, widths);
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: sidePadding),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var index = 0; index < categories.length; index++) ...[
-                      if (index > 0) SizedBox(width: gap),
-                      _tab(index, widths[index], rowHeight, duration, palette),
-                    ],
-                  ],
-                ),
-              );
-            },
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.canvas,
+        border: Border(bottom: BorderSide(color: palette.line, width: 1)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: sidePadding),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (var index = 0; index < categories.length; index++) ...[
+              if (index > 0) const SizedBox(width: tabSpacing),
+              _tab(index, duration, palette),
+            ],
+          ],
         ),
       ),
     );
   }
 
-  double _gapWidth(double availableWidth, List<double> widths) {
-    final gaps = categories.length - 1;
-    if (gaps <= 0 || !availableWidth.isFinite) return tabSpacing;
-    final contentWidth = widths.fold(0.0, (sum, width) => sum + width);
-    // Fill phone widths without spreading the six labels across a desktop.
-    final spare =
-        availableWidth - 2 * sidePadding - contentWidth - gaps * tabSpacing;
-    if (spare <= 0) return tabSpacing;
-    return tabSpacing + (spare / gaps).clamp(0.0, maxExtraSpacing);
-  }
-
-  TextStyle _labelStyle(bool selected, HomePalette palette) => TextStyle(
-    fontSize: selected ? selectedSize : unselectedSize,
-    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-    color: selected ? palette.ink : palette.muted,
-    height: 1,
-  );
-
-  Widget _tab(
-    int index,
-    double width,
-    double rowHeight,
-    Duration duration,
-    HomePalette palette,
-  ) {
+  Widget _tab(int index, Duration duration, HomePalette palette) {
     final selected = index == selectedIndex;
     final category = categories[index];
     return Semantics(
       selected: selected,
-      button: true,
-      label: category.label,
-      excludeSemantics: true,
-      onTap: () => onSelect(index),
-      child: GestureDetector(
+      child: HomePressable(
         key: ValueKey('home_category_$index'),
-        behavior: HitTestBehavior.opaque,
         onTap: () => onSelect(index),
-        child: SizedBox(
-          height: rowHeight,
-          child: AnimatedContainer(
-            duration: duration,
-            curve: Curves.easeOutCubic,
-            width: width,
-            decoration: BoxDecoration(
-              color: selected && !palette.eink
-                  ? palette.ink.withValues(alpha: palette.dark ? 0.10 : 0.055)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: selected && palette.eink
-                    ? palette.ink
-                    : Colors.transparent,
+        borderRadius: BorderRadius.zero,
+        // Stack follows the label width inside the horizontal scroll view.
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: AnimatedDefaultTextStyle(
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                style: TextStyle(
+                  fontSize: selected ? selectedSize : unselectedSize,
+                  height: 1.1,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  color: selected ? palette.ink : palette.muted,
+                ),
+                child: Text(category.label, maxLines: 1),
               ),
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AnimatedDefaultTextStyle(
-                  duration: duration,
-                  curve: Curves.easeOutCubic,
-                  style: _labelStyle(selected, palette),
-                  child: Text(category.label, maxLines: 1),
-                ),
-                const SizedBox(height: 5),
-                AnimatedContainer(
-                  duration: duration,
-                  curve: Curves.easeOutCubic,
-                  width: 16,
-                  height: 2.5,
-                  decoration: BoxDecoration(
-                    color: selected ? palette.ink : Colors.transparent,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ],
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 2,
+              child: AnimatedContainer(
+                duration: duration,
+                curve: Curves.easeOutCubic,
+                color: selected ? palette.mark : Colors.transparent,
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

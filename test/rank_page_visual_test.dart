@@ -227,7 +227,7 @@ void main() {
 
   testWidgets('已到底的榜单用共享流尾的 done 文案', (tester) async {
     await pump(tester);
-    expect(find.text('已显示全部内容'), findsOneWidget);
+    expect(find.text('已经到底了'), findsOneWidget);
   });
 
   testWidgets('还有下一页时不预先显示流尾', (tester) async {
@@ -242,7 +242,7 @@ void main() {
             required startAt,
           }) async => _board(hasMore: true),
     );
-    expect(find.text('已显示全部内容'), findsNothing);
+    expect(find.text('已经到底了'), findsNothing);
     expect(find.text('加载中...'), findsNothing);
   });
 }
