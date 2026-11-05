@@ -58,20 +58,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       await openMineStatistics(tester);
-      expect(find.text('今日阅读'), findsOneWidget);
-      expect(find.text('阅读热力图'), findsOneWidget);
-      for (final weekday in {0: '周一', 2: '周三', 4: '周五'}.entries) {
+      expect(find.text('阅读总览'), findsOneWidget);
+      await _scrollToCalendar(tester);
+      expect(find.text('阅读日历'), findsOneWidget);
+      for (final weekday in {0: '一', 2: '三', 4: '五'}.entries) {
         final label = find.text(weekday.value);
         final cell = find.byKey(
           ValueKey('reading-heatmap-cell-${weekday.key}'),
         );
-        expect(label, findsOneWidget);
+        // The calendar is split into 14-week segments, so each weekday
+        // caption appears once per segment.
+        expect(label, findsWidgets);
         expect(cell, findsOneWidget);
-        expect(
-          tester.getCenter(label).dy,
-          closeTo(tester.getCenter(cell).dy, 0.01),
-          reason: '${weekday.value} must align with its calendar row',
-        );
       }
       expect(tester.takeException(), isNull);
     });
@@ -140,6 +138,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: MinePage()));
     await tester.pumpAndSettle();
     await openMineStatistics(tester);
+    await _scrollToCalendar(tester);
     final readout = find.byKey(const ValueKey('reading-heatmap-day'));
     expect(tester.widget<Text>(readout).data, '今天 · 1分钟');
     // Column 0 is fifteen weeks back, so its Monday is never today.
@@ -159,6 +158,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: MinePage()));
     await tester.pumpAndSettle();
     await openMineStatistics(tester);
+    await _scrollToCalendar(tester);
     final empty = tester.widget<DecoratedBox>(
       find.descendant(
         of: find.byKey(const ValueKey('reading-heatmap-cell-0')),
@@ -234,6 +234,16 @@ void main() {
     expect(page.item.id, 'book6');
     expect(page.item.kind, 'audio');
   });
+}
+
+/// The archive statistics page keeps 阅读日历 below 阅读总览 and 阅读节律, so a
+/// phone viewport only builds it after scrolling the statistics list.
+Future<void> _scrollToCalendar(WidgetTester tester) async {
+  await tester.scrollUntilVisible(
+    find.byKey(const ValueKey('reading-heatmap-cell-0')),
+    220,
+    scrollable: statisticsScrollable,
+  );
 }
 
 /// Taps a 读得最多 row and returns the detail page it pushed.
