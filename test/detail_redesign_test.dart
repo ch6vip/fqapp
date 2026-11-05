@@ -93,7 +93,15 @@ void main() {
     await tester.enterText(search, '终卷');
     await tester.pumpAndSettle();
     expect(find.text('找到 73 章'), findsOneWidget);
-    expect(find.text('终卷 · 星河'), findsOneWidget);
+    // The ported page keeps the whole catalogue inline behind the sheet, so
+    // look the volume name up inside the sheet's own scroll view.
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('detail_directory_scroll')),
+        matching: find.text('终卷 · 星河'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -277,6 +285,16 @@ Future<void> _openDirectory(WidgetTester tester) async {
   // A single frame is enough to apply the jump; settling here would hang while
   // an unrelated pending action keeps its progress indicator spinning.
   await tester.pump();
+  // ensureVisible parks the row at the viewport top, which the ported frosted
+  // header covers. Drag the (already scrolled) body back down until the row is
+  // under the header's hitbox.
+  if (tester.getCenter(button).dy < 130) {
+    await tester.drag(
+      find.byKey(const Key('detail_scroll')),
+      const Offset(0, 160),
+    );
+    await tester.pump();
+  }
   await tester.tap(button);
   await tester.pumpAndSettle();
 }

@@ -12,7 +12,6 @@ import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
-import 'package:fqapp/widgets/detail/detail_read_bar.dart';
 
 import 'support/fakes.dart';
 
@@ -507,8 +506,8 @@ void main() {
     // truncates nor evicts it.
     expect(cache.pinned['book'], {'first', 'second'});
     expect(find.textContaining('缓存完成'), findsOneWidget);
-    // The action goes back to its idle label once the batch ends.
-    expect(find.text('下载'), findsOneWidget);
+    // The progress readout leaves the header once the batch ends.
+    expect(find.byKey(const Key('detail_download_progress')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -538,11 +537,8 @@ void main() {
     await tester.tap(find.byKey(const Key('detail_download_all')));
     await tester.pump();
     await tester.pump();
-    // Progress replaces the static icon while the batch runs.
-    expect(
-      tester.widget<DetailReadBar>(find.byType(DetailReadBar)).download,
-      isNotNull,
-    );
+    // A progress readout replaces the static icon while the batch runs.
+    expect(find.byKey(const Key('detail_download_progress')), findsOneWidget);
     // 再次点「下载」打开弹层，整本下载在运行中即停止。
     await tester.tap(find.byKey(const Key('detail_action_下载')));
     await tester.pumpAndSettle();
@@ -553,7 +549,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(await cache.cachedChapterIds('book'), isEmpty);
     expect(find.textContaining('已停止缓存'), findsOneWidget);
-    expect(find.text('下载'), findsOneWidget);
+    expect(find.byKey(const Key('detail_download_progress')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -687,8 +683,21 @@ class _PendingHistory extends MemoryReaderStore {
 }
 
 Future<void> _revealSecondChapter(WidgetTester tester) async {
-  await tester.ensureVisible(
-    find.byKey(const Key('detail_preview_chapter_second')),
+  // The ported page lists the whole catalogue inline; entry 1 is 第二章 because
+  // this fixture has no volume names.
+  final row = find.byKey(
+    const ValueKey('detail-directory-entry-1'),
+    skipOffstage: false,
   );
+  await tester.ensureVisible(row);
+  await tester.pump();
+  // ensureVisible parks the row under the frosted header; drag it back down.
+  if (tester.getCenter(row).dy < 130) {
+    await tester.drag(
+      find.byKey(const Key('detail_scroll')),
+      const Offset(0, 160),
+    );
+    await tester.pump();
+  }
   await tester.pumpAndSettle();
 }
