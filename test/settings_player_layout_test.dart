@@ -86,16 +86,19 @@ void main() {
       await mountSettings(tester);
       await tester.tap(find.text('外观'));
       await tester.pumpAndSettle();
-      expect(find.text('自动适配布局'), findsOneWidget);
+      // 行内保留短标签，弹层里仍是完整标签。
+      expect(find.text('自动分屏'), findsOneWidget);
 
       await tester.tap(find.text('播放页布局'));
       await tester.pumpAndSettle();
+      expect(menuOption('自动适配布局'), findsOneWidget);
+      expect(find.text('自动分屏'), findsOneWidget);
       await tester.tap(menuOption('自动适配布局'));
       await tester.pumpAndSettle();
 
       // 早退分支：偏好不变，也没有失败提示。
       expect(PlayerLayoutPreferences.mode.value, PlayerLayoutMode.auto);
-      expect(find.text('自动适配布局'), findsOneWidget);
+      expect(find.text('自动分屏'), findsOneWidget);
       expect(find.text('未能保存播放页布局，已恢复原设置'), findsNothing);
       // 真正的「不重复落盘」：SP 里仍是初始的「未写入」状态。
       final prefs = await SharedPreferences.getInstance();
