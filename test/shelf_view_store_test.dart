@@ -42,6 +42,7 @@ void main() {
           store.state.shelfPreferences,
           const BookShelfPreferences.defaults(),
         );
+        expect(store.preferences, store.state.shelfPreferences);
         expect(store.state.shelf3d, isTrue);
         expect(store.isLoaded, isTrue);
         final prefs = await SharedPreferences.getInstance();
