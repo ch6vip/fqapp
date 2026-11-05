@@ -153,6 +153,32 @@ void main() {
     }
   });
 
+  testWidgets('an empty shuqi reply shows no results instead of an error', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchPage(
+          searchLoader:
+              (query, {required int tabType, required int offset}) async {
+                return const <SearchTab>[];
+              },
+          shuqiSearchLoader: (key) async => {'source': 'shuqi', 'data': []},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(searchSegment('书旗'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'xiuxian');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+
+    expect(find.text('没有找到相关故事'), findsOneWidget);
+    expect(find.text('搜索失败，请稍后重试'), findsNothing);
+  });
+
   testWidgets('a restored rating filter does not hide shuqi results', (
     tester,
   ) async {
