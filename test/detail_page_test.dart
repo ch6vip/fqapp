@@ -159,7 +159,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('重试'), findsOneWidget);
     expect(find.text('暂无目录'), findsNothing);
-    await tester.ensureVisible(find.text('重试'));
+    // The bottom glass dock overlays the viewport bottom; scroll to the end so
+    // the retry clears it before tapping.
+    for (var i = 0; i < 3; i++) {
+      await tester.drag(
+        find.byKey(const Key('detail_scroll')),
+        const Offset(0, -200),
+      );
+      await tester.pump();
+    }
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(find.text('第一章'), findsOneWidget);

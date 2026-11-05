@@ -307,17 +307,10 @@ void main() {
         );
       }
     }
-    // The ID row sits after the lazy catalogue; scroll it into existence
-    // before inspecting its typography.
+    // The ID row lives in the intro sliver above the catalogue, so it is
+    // built without scrolling even for a long directory.
     final idRow = find.byKey(const Key('detail_id_row'), skipOffstage: false);
-    for (var i = 0; i < 120 && idRow.evaluate().isEmpty; i++) {
-      await tester.drag(
-        find.byKey(const Key('detail_scroll')),
-        const Offset(0, -400),
-      );
-      await tester.pump();
-    }
-    expect(idRow, findsWidgets);
+    expect(idRow, findsOneWidget);
     final id = tester.widget<SelectableText>(
       find.byKey(const Key('detail_id_text'), skipOffstage: false),
     );
