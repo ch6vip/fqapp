@@ -9,6 +9,7 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/detail/detail_archive.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_media_card.dart';
 import '../widgets/wenku/wenku_ui.dart';
@@ -91,10 +92,18 @@ class _AuthorPageState extends State<AuthorPage> {
     child: Builder(builder: _body),
   );
 
+  /// The page body always stays inside [RefreshIndicator], like upstream's
+  /// `FeedRefresh`: pulling down reloads the profile from any state, including
+  /// the failure screen.
   Widget _body(BuildContext context) {
     final padding = featurePadding(context);
+    return RefreshIndicator(onRefresh: _load, child: _scrollBody(padding));
+  }
+
+  Widget _scrollBody(EdgeInsets padding) {
     if (_loading) {
       return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: padding,
         child: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,6 +125,7 @@ class _AuthorPageState extends State<AuthorPage> {
     final error = _error;
     if (error != null) {
       return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: padding,
         child: ContentNotice(
           icon: CupertinoIcons.person_crop_circle,
@@ -276,8 +286,9 @@ class _AuthorPageState extends State<AuthorPage> {
     );
   }
 
-  /// Upstream `NovelRow`: 56×76 cover, code/title/author, chevron. The meta
-  /// line carries fqapp's category/status/word count.
+  /// Upstream `NovelRow`: 56×76 cover, `ArchiveCode` + title + author, chevron.
+  /// The author line is omitted because this page already belongs to that
+  /// author; the meta line carries fqapp's category/status/word count.
   Widget _workRow(BuildContext context, AuthorWork work) {
     final scheme = Theme.of(context).colorScheme;
     final item = _asItem(work);
@@ -312,6 +323,8 @@ class _AuthorPageState extends State<AuthorPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  ArchiveCode(detailArchiveFileCode(work.id)),
+                  const SizedBox(height: 4),
                   AppText(
                     work.title,
                     maxLines: 2,

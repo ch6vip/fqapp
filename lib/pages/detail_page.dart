@@ -16,6 +16,7 @@ import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/audio_history.dart';
 import '../services/book_open_preferences.dart';
+import '../services/catalogue_order_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/chapter_download.dart';
 import '../services/connectivity_status.dart';
@@ -27,7 +28,6 @@ import '../services/shelf_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_description.dart';
-import '../widgets/detail/detail_directory_section.dart';
 import '../widgets/detail/detail_directory_sheet.dart';
 import '../widgets/detail/detail_hero.dart';
 import '../widgets/detail/detail_id_row.dart';
@@ -62,9 +62,6 @@ class DetailExtras {
 }
 
 typedef DetailExtrasLoader = Future<DetailExtras> Function(String bookId);
-
-/// How many chapter rows the detail preview block shows.
-const _previewChapterCount = 3;
 
 Future<DetailExtras> _defaultExtras(String bookId) async =>
     DetailExtras(comments: await ApiClient.instance.bookComments(bookId));
@@ -161,10 +158,12 @@ class _DetailPageState extends State<DetailPage> {
 
   /// Inline catalogue state ported from upstream `DetailPage._directory`.
   /// fqapp shows the whole catalogue on the page (the searchable sheet stays
-  /// one tap away) and remembers the 正序/倒序 choice for this visit.
+  /// one tap away) and persists the 正序/倒序 choice like upstream's
+  /// `readerPreferences.catalogueReversed`.
   List<DetailVolumeGroup> _volumes = const [];
   final Set<String> _expandedVolumes = {};
   bool _catalogueReversed = false;
+  bool _catalogueOrderSaving = false;
   Set<String> _cachedChapterIds = const {};
 
   bool get _supported => kindLabels.containsKey(widget.item.kind);
@@ -178,6 +177,20 @@ class _DetailPageState extends State<DetailPage> {
       : _isManga
       ? '话'
       : '章';
+
+  /// Archives header title per content kind; upstream's novel-only `图书详情`.
+  String get _pageTitle => switch (widget.item.kind) {
+    'video' => '短剧详情',
+    'manju' => '漫剧详情',
+    'audio' => '听书详情',
+    'manga' => '漫画详情',
+    _ => '图书详情',
+  };
+
+  /// Source label on the identity block: the fqapp catalogue is 番茄's, and
+  /// short dramas/manju/comics are not "小说".
+  String get _sourceLabel => '番茄${kindLabels[widget.item.kind] ?? '小说'}';
+
   String get _readLabel => switch (widget.item.kind) {
     'video' || 'manju' => _resumeIndex == null ? '开始观看' : '继续观看',
     'audio' => _resumeIndex == null ? '开始收听' : '继续收听',
@@ -246,6 +259,14 @@ class _DetailPageState extends State<DetailPage> {
       }
     }
     _load();
+    unawaited(_loadCatalogueOrder());
+  }
+
+  /// Restores upstream's persisted 目录正序/倒序 choice.
+  Future<void> _loadCatalogueOrder() async {
+    final reversed = await CatalogueOrderPreferences.instance.load();
+    if (!mounted || reversed == _catalogueReversed) return;
+    setState(() => _catalogueReversed = reversed);
   }
 
   @override
@@ -484,32 +505,6 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  /// The chapter rows the directory preview shows: current ±1, or the first
-  /// three when the reader has no saved place.
-  List<Chapter> _previewChapters() {
-    if (_allChapters.isEmpty) return const [];
-    final current = _resumeIndex;
-    if (current == null) {
-      return _allChapters.take(_previewChapterCount).toList(growable: false);
-    }
-    final last = _allChapters.length - 1;
-    final start = (current.clamp(0, last) - 1).clamp(
-      0,
-      (_allChapters.length - _previewChapterCount).clamp(0, last),
-    );
-    final end = (start + _previewChapterCount).clamp(0, _allChapters.length);
-    return _allChapters.sublist(start, end);
-  }
-
-  /// Index of the current chapter inside [_previewChapters], or null.
-  int? _previewCurrentIndex() {
-    final current = _resumeIndex;
-    if (current == null || _allChapters.isEmpty) return null;
-    final id = _allChapters[current.clamp(0, _allChapters.length - 1)].itemId;
-    final index = _previewChapters().indexWhere((c) => c.itemId == id);
-    return index < 0 ? null : index;
-  }
-
   /// Same offline rule as [_loadExtras]: an injected loader means the caller
   /// drives its own data.
   Future<SeriesDetail> _defaultSeries(String seriesId) {
@@ -559,9 +554,10 @@ class _DetailPageState extends State<DetailPage> {
     ),
     title: FittedBox(
       fit: BoxFit.scaleDown,
-      child: const AppText(
-        '图书详情',
-        style: TextStyle(
+      child: AppText(
+        _pageTitle,
+        key: const Key('detail_page_title'),
+        style: const TextStyle(
           fontSize: 18,
           height: 1.2,
           fontWeight: FontWeight.w700,
@@ -663,17 +659,6 @@ class _DetailPageState extends State<DetailPage> {
                           _directoryEntry(entries[index]),
                     ),
                   ),
-                  SliverPadding(
-                    padding: EdgeInsets.fromLTRB(
-                      edge + safe.left,
-                      0,
-                      edge + safe.right,
-                      0,
-                    ),
-                    sliver: SliverToBoxAdapter(
-                      child: DetailIdRow(id: _contentId),
-                    ),
-                  ),
                   SliverToBoxAdapter(
                     child: SizedBox(height: geometry.extent + 20),
                   ),
@@ -740,6 +725,7 @@ class _DetailPageState extends State<DetailPage> {
           detail: _bookDetail,
           onOpenAuthor: _openAuthorAction,
           lastChapterTitle: _latestChapterTitle,
+          sourceLabel: _sourceLabel,
         ),
         if (!_supported) ...[
           const SizedBox(height: 28),
@@ -789,6 +775,11 @@ class _DetailPageState extends State<DetailPage> {
               flush: true,
             ),
           ],
+          // Baseline order: 简介 → 目录预览 → 书评 → ID. The inline catalogue
+          // replaces the preview, so the ID row stays above the catalogue
+          // heading (and after the reviews) to remain reachable on long books.
+          const SizedBox(height: 30),
+          DetailIdRow(id: _contentId),
           const SizedBox(height: 30),
           DetailArchiveContentsHeading(
             countLabel: _directoryCountLabel,
@@ -985,7 +976,7 @@ class _DetailPageState extends State<DetailPage> {
           )
         : _loading
         ? _loadingView(palette)
-        : _content(palette, desktop: true);
+        : _content(palette);
     Widget mainScroll() => RefreshIndicator(
       onRefresh: _load,
       color: palette.eink ? palette.ink : HomePalette.accent,
@@ -1068,23 +1059,9 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Widget _content(HomePalette palette, {bool desktop = false}) {
+  Widget _content(HomePalette palette) {
     final hasReviews =
         _comments.comments.isNotEmpty || _comments.totalCount > 0;
-    if (!desktop) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _introSection(palette),
-          _directorySection(),
-          _reviewsSection(palette, hasReviews: hasReviews, showEmpty: false),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-            child: DetailIdRow(id: _contentId),
-          ),
-        ],
-      );
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1164,22 +1141,6 @@ class _DetailPageState extends State<DetailPage> {
     if (_allChapters.isEmpty) return null;
     final title = _allChapters.last.title.trim();
     return title.isEmpty ? null : title;
-  }
-
-  Widget _directorySection() {
-    final preview = _previewChapters();
-    return DetailDirectorySection(
-      trailing: _allChapters.isEmpty ? '' : _directoryTrailing,
-      preview: preview,
-      currentIndex: _previewCurrentIndex(),
-      resumeIndex: _resumeIndex,
-      chapterCount: _allChapters.length,
-      readTimeLabel: _resumeTimeLabel(),
-      error: _directoryError,
-      onOpenAll: _openDirectory,
-      onRetry: _load,
-      onOpenChapter: (chapter) => _openChapter(chapter),
-    );
   }
 
   Widget _reviewsSection(
@@ -1675,8 +1636,28 @@ class _DetailPageState extends State<DetailPage> {
     return count == list.length ? '已缓存' : '已缓存 $count / ${list.length}';
   }
 
-  void _toggleCatalogueOrder() =>
-      setState(() => _catalogueReversed = !_catalogueReversed);
+  /// Flips the inline catalogue and persists the choice, like upstream's
+  /// `setReaderPreferences(catalogueReversed: …)`. A failed write keeps the
+  /// in-session order and tells the user.
+  Future<void> _toggleCatalogueOrder() async {
+    if (_catalogueOrderSaving) return;
+    final next = !_catalogueReversed;
+    setState(() {
+      _catalogueOrderSaving = true;
+      _catalogueReversed = next;
+    });
+    final saved = await CatalogueOrderPreferences.instance.save(next);
+    if (!mounted) return;
+    setState(() => _catalogueOrderSaving = false);
+    if (!saved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('目录顺序保存失败，请重试'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
 
   /// 「点击书籍直接进入阅读」：详情页加载出目录后，直接按上次进度进
   /// 阅读器。目录为空（加载失败/无章节）时不触发，用户留在详情页看错误

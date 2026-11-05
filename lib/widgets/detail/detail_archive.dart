@@ -51,7 +51,7 @@ class DetailArchiveIdentity extends StatelessWidget {
     this.detail,
     this.onOpenAuthor,
     this.lastChapterTitle,
-    this.sourceLabel = '番茄小说',
+    this.sourceLabel,
   });
 
   final MediaItem item;
@@ -63,9 +63,9 @@ class DetailArchiveIdentity extends StatelessWidget {
   /// Newest chapter for the `更新于 …` line.
   final String? lastChapterTitle;
 
-  /// Where this work comes from; 书旗 uses its own detail page and passes
-  /// `书旗小说`.
-  final String sourceLabel;
+  /// Where this work comes from. Supplied by the page (书旗 uses 书旗小说);
+  /// null hides the segment instead of guessing a source.
+  final String? sourceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -220,11 +220,12 @@ class DetailArchiveIdentity extends StatelessWidget {
   /// `分类 · 连载中 · 128万字 · 番茄小说`, each part only when present.
   String _metaParts() {
     final info = detail;
+    final source = sourceLabel?.trim() ?? '';
     final parts = <String>[
       if (info != null && info.category.isNotEmpty) info.category,
       if (info != null && info.statusLabel.isNotEmpty) info.statusLabel,
       if (info != null && info.wordLabel.isNotEmpty) info.wordLabel,
-      sourceLabel,
+      if (source.isNotEmpty) source,
     ];
     return parts.join(' · ');
   }

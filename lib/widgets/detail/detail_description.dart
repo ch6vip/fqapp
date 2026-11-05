@@ -9,7 +9,9 @@ import '../wenku/wenku_ui.dart';
 ///
 /// The heading is a plain `简介` on every kind: the old `书籍简介` read as
 /// nonsense on audio and manga. Kept for fqapp's desktop column; the phone
-/// detail page uses the ported `DetailArchiveSynopsis` instead.
+/// detail page uses the ported `DetailArchiveSynopsis` instead. The shared
+/// archive heading carries no gutter of its own, so the desktop branch pads it
+/// to line up with the body text below.
 class DetailDescription extends StatefulWidget {
   final String text;
   final bool desktop;
@@ -52,7 +54,10 @@ class _DetailDescriptionState extends State<DetailDescription> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        sectionHeader(context, widget.title, ''),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: sectionHeader(context, widget.title, ''),
+        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: widget.text.isEmpty
