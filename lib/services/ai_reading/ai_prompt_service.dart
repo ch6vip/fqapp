@@ -128,7 +128,10 @@ class AiPromptService {
     );
     final reservation = reserved.reservation;
     if (reservation == null) {
-      throw AiNetworkException('BUDGET_EXCEEDED', reserved.reason ?? '预算已用完');
+      throw AiNetworkException(
+        reserved.code ?? 'BUDGET_EXCEEDED',
+        reserved.reason ?? '预算已用完',
+      );
     }
     final samples = feedback
         .take(30)
