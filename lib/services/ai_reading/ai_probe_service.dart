@@ -38,6 +38,8 @@ class AiProbeService {
     required AiOutputMode outputMode,
     required Duration timeout,
   }) async {
+    await _settings.init();
+    await _store.init();
     final reserved = await _budget.reserve(
       bookId: probeBookId,
       automatic: false,
