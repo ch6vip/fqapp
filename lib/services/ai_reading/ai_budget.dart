@@ -30,6 +30,7 @@ class AiBudgetReservation {
     required this.displayCurrency,
     required this.countTask,
     required this.requestId,
+    this.runId,
   });
 
   final String day;
@@ -38,6 +39,10 @@ class AiBudgetReservation {
   final String? bookId;
   final String displayCurrency;
   final String requestId;
+
+  /// The real Run created before admission. Recovery updates this run instead
+  /// of creating a second crash-recovery run when it is available.
+  final String? runId;
 
   /// Whether this reservation incremented the task counter. Retries share a
   /// task and must not decrement it when their reservation is released.
@@ -136,6 +141,7 @@ class AiBudgetService {
     bool requireEnabled = true,
     bool requireConsent = true,
     String? requestId,
+    String? runId,
   }) {
     final reservedRequestId =
         requestId ??
@@ -200,6 +206,7 @@ class AiBudgetService {
         displayCurrency: displayCurrency,
         countTask: countTask,
         requestId: reservedRequestId,
+        runId: runId,
       );
       final nextDaily = daily.copyWith(
         reservedRequestCount: daily.reservedRequestCount + 1,
@@ -209,6 +216,9 @@ class AiBudgetService {
           ...daily.reservedTaskIds,
           if (countTask) reservedRequestId,
         ],
+        reservedRunIds: runId == null
+            ? daily.reservedRunIds
+            : {...daily.reservedRunIds, reservedRequestId: runId},
         updatedAt: DateTime.now(),
       );
       final nextBook = book.copyWith(
@@ -219,6 +229,9 @@ class AiBudgetService {
           ...book.reservedTaskIds,
           if (countTask) reservedRequestId,
         ],
+        reservedRunIds: runId == null
+            ? book.reservedRunIds
+            : {...book.reservedRunIds, reservedRequestId: runId},
         updatedAt: DateTime.now(),
       );
       try {
@@ -280,6 +293,11 @@ class AiBudgetService {
               reservedTaskIds: current.reservedTaskIds
                   .where((id) => id != reservation.requestId)
                   .toList(growable: false),
+              reservedRunIds: {
+                for (final entry in current.reservedRunIds.entries)
+                  if (entry.key != reservation.requestId)
+                    entry.key: entry.value,
+              },
               updatedAt: DateTime.now(),
             ),
           );
@@ -348,6 +366,11 @@ class AiBudgetService {
               reservedTaskIds: current.reservedTaskIds
                   .where((id) => id != reservation.requestId)
                   .toList(growable: false),
+              reservedRunIds: {
+                for (final entry in current.reservedRunIds.entries)
+                  if (entry.key != reservation.requestId)
+                    entry.key: entry.value,
+              },
               tokenSum: current.tokenSum + request.usage.knownTokenSum,
               unknownUsageCount:
                   current.unknownUsageCount +
@@ -397,6 +420,7 @@ class AiBudgetService {
           requestId: requestId,
           displayCurrency: projection.currency,
           countTask: projection.reservedTaskIds.contains(requestId),
+          runIdHint: projection.reservedRunIds[requestId],
         );
       }
     }
@@ -420,6 +444,7 @@ class AiBudgetService {
           requestId: requestId,
           displayCurrency: projection.currency,
           countTask: projection.reservedTaskIds.contains(requestId),
+          runIdHint: projection.reservedRunIds[requestId],
         );
       }
     }
@@ -436,13 +461,14 @@ class AiBudgetService {
     required String requestId,
     required String displayCurrency,
     required bool countTask,
+    String? runIdHint,
   }) async {
     final now = DateTime.now();
     var request = await _store.request(requestId);
     if (request == null) {
       request = AiRequestRecord(
         requestId: requestId,
-        runId: 'run_crash_$requestId',
+        runId: runIdHint ?? 'run_crash_$requestId',
         attemptNo: 1,
         providerId: 'recovered',
         endpoint: '',
@@ -531,6 +557,7 @@ class AiBudgetService {
               reservedTaskCount: 0,
               reservedRequestIds: const [],
               reservedTaskIds: const [],
+              reservedRunIds: const {},
               costsByCurrency: Map.unmodifiable(costs),
             )
           : incoming.copyWith(
@@ -546,6 +573,7 @@ class AiBudgetService {
               reservedTaskCount: current.reservedTaskCount,
               reservedRequestIds: current.reservedRequestIds,
               reservedTaskIds: current.reservedTaskIds,
+              reservedRunIds: current.reservedRunIds,
               tokenSum: incoming.tokenSum > current.tokenSum
                   ? incoming.tokenSum
                   : current.tokenSum,

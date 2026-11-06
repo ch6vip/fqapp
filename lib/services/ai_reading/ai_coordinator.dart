@@ -245,6 +245,7 @@ class AiCoordinator {
         countTask: requestCount == 0,
         confirmedOverBudget: overBudgetConfirmed,
         requestId: requestId,
+        runId: runId,
       );
       if (reserved.reservation == null) {
         final blockedCode = reserved.needsConfirmation
