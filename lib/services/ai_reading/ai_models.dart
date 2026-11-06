@@ -2110,12 +2110,20 @@ class AiBudgetProjection {
     required this.currency,
     required this.updatedAt,
     this.costsByCurrency = const {},
+    this.reservedRequestCount = 0,
+    this.reservedTaskCount = 0,
   });
 
   final String bucketDay;
   final String? bookId;
+
+  /// Settled request/task counts. Reserved (in-flight) slots are tracked
+  /// separately so restoring an older usage snapshot can never turn a real
+  /// imported count back into "releasable" headroom.
   final int requestCount;
   final int taskCount;
+  final int reservedRequestCount;
+  final int reservedTaskCount;
   final int tokenSum;
   final int unknownUsageCount;
   final int costMicros;
@@ -2128,6 +2136,9 @@ class AiBudgetProjection {
 
   String get key => jsonEncode([bucketDay, bookId]);
 
+  int get totalRequestCount => requestCount + reservedRequestCount;
+  int get totalTaskCount => taskCount + reservedTaskCount;
+
   int costFor(String currency) =>
       costsByCurrency[currency] ??
       (costsByCurrency.isEmpty && this.currency == currency ? costMicros : 0);
@@ -2135,6 +2146,8 @@ class AiBudgetProjection {
   AiBudgetProjection copyWith({
     int? requestCount,
     int? taskCount,
+    int? reservedRequestCount,
+    int? reservedTaskCount,
     int? tokenSum,
     int? unknownUsageCount,
     int? costMicros,
@@ -2146,6 +2159,8 @@ class AiBudgetProjection {
     bookId: bookId,
     requestCount: requestCount ?? this.requestCount,
     taskCount: taskCount ?? this.taskCount,
+    reservedRequestCount: reservedRequestCount ?? this.reservedRequestCount,
+    reservedTaskCount: reservedTaskCount ?? this.reservedTaskCount,
     tokenSum: tokenSum ?? this.tokenSum,
     unknownUsageCount: unknownUsageCount ?? this.unknownUsageCount,
     costMicros: costMicros ?? this.costMicros,
@@ -2159,6 +2174,8 @@ class AiBudgetProjection {
     'bookId': bookId,
     'requestCount': requestCount,
     'taskCount': taskCount,
+    'reservedRequestCount': reservedRequestCount,
+    'reservedTaskCount': reservedTaskCount,
     'tokenSum': tokenSum,
     'unknownUsageCount': unknownUsageCount,
     'costMicros': costMicros,
@@ -2190,6 +2207,8 @@ class AiBudgetProjection {
       bookId: map['bookId'] is String ? map['bookId'] as String : null,
       requestCount: _intOrNull(map['requestCount']) ?? 0,
       taskCount: _intOrNull(map['taskCount']) ?? 0,
+      reservedRequestCount: _intOrNull(map['reservedRequestCount']) ?? 0,
+      reservedTaskCount: _intOrNull(map['reservedTaskCount']) ?? 0,
       tokenSum: _intOrNull(map['tokenSum']) ?? 0,
       unknownUsageCount: _intOrNull(map['unknownUsageCount']) ?? 0,
       costMicros: costMicros,

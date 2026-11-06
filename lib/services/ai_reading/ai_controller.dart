@@ -304,6 +304,7 @@ class AiReadingController extends ChangeNotifier {
   }) async {
     if (!_initialized) return null;
     await init();
+    if (!isReady) return null;
     final AiChapterSnapshot snapshot;
     try {
       snapshot = AiChapterSnapshotBuilder.fromContent(content, chapterTitle);
@@ -502,6 +503,7 @@ class AiReadingController extends ChangeNotifier {
     if (!_initialized) return;
     final epoch = _prefetchEpoch;
     await init();
+    if (!isReady) return;
     if (epoch != _prefetchEpoch) return;
     final effective = _settings.resolve(bookId);
     if (!effective.enabled || !effective.prefetchEnabled) return;

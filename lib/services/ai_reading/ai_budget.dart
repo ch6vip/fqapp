@@ -61,10 +61,10 @@ class AiBudgetSnapshot {
       : book.tokenSum / settings.bookTokenLimit;
   double get dailyRequestRatio => settings.dailyRequestLimit <= 0
       ? 0
-      : daily.requestCount / settings.dailyRequestLimit;
+      : daily.totalRequestCount / settings.dailyRequestLimit;
   double get bookRequestRatio => settings.bookRequestLimit <= 0
       ? 0
-      : book.requestCount / settings.bookRequestLimit;
+      : book.totalRequestCount / settings.bookRequestLimit;
 }
 
 class AiBudgetService {
@@ -91,6 +91,14 @@ class AiBudgetService {
     required bool automatic,
     int? incomingTokens,
   }) async {
+    if (!_store.isAvailable) {
+      return const AiBudgetDecision(
+        allowed: false,
+        reason: 'AI 数据存储不可用，已停止请求',
+        code: 'STORE_UNAVAILABLE',
+        usageRatio: 1,
+      );
+    }
     final effective = _settings.resolve(bookId);
     if (!effective.enabled) {
       return const AiBudgetDecision(allowed: false, reason: 'AI 阅读优化未开启');
@@ -125,6 +133,14 @@ class AiBudgetService {
     return _enqueue(() async {
       // Re-read every gate inside the serialized queue. Consent can be revoked
       // while this task waits behind another budget write.
+      if (!_store.isAvailable) {
+        return const AiBudgetDecision(
+          allowed: false,
+          reason: 'AI 数据存储不可用，已停止请求',
+          code: 'STORE_UNAVAILABLE',
+          usageRatio: 1,
+        );
+      }
       final effective = _settings.resolve(bookId);
       if (!effective.enabled) {
         return const AiBudgetDecision(
@@ -175,13 +191,13 @@ class AiBudgetService {
         countTask: countTask,
       );
       final nextDaily = daily.copyWith(
-        requestCount: daily.requestCount + 1,
-        taskCount: daily.taskCount + (countTask ? 1 : 0),
+        reservedRequestCount: daily.reservedRequestCount + 1,
+        reservedTaskCount: daily.reservedTaskCount + (countTask ? 1 : 0),
         updatedAt: DateTime.now(),
       );
       final nextBook = book.copyWith(
-        requestCount: book.requestCount + 1,
-        taskCount: book.taskCount + (countTask ? 1 : 0),
+        reservedRequestCount: book.reservedRequestCount + 1,
+        reservedTaskCount: book.reservedTaskCount + (countTask ? 1 : 0),
         updatedAt: DateTime.now(),
       );
       try {
@@ -225,17 +241,21 @@ class AiBudgetService {
             reservation.displayCurrency,
           );
       final nextDaily = daily.copyWith(
-        requestCount: daily.requestCount > 0 ? daily.requestCount - 1 : 0,
-        taskCount: reservation.countTask && daily.taskCount > 0
-            ? daily.taskCount - 1
-            : daily.taskCount,
+        reservedRequestCount: daily.reservedRequestCount > 0
+            ? daily.reservedRequestCount - 1
+            : 0,
+        reservedTaskCount: reservation.countTask && daily.reservedTaskCount > 0
+            ? daily.reservedTaskCount - 1
+            : daily.reservedTaskCount,
         updatedAt: DateTime.now(),
       );
       final nextBook = book.copyWith(
-        requestCount: book.requestCount > 0 ? book.requestCount - 1 : 0,
-        taskCount: reservation.countTask && book.taskCount > 0
-            ? book.taskCount - 1
-            : book.taskCount,
+        reservedRequestCount: book.reservedRequestCount > 0
+            ? book.reservedRequestCount - 1
+            : 0,
+        reservedTaskCount: reservation.countTask && book.reservedTaskCount > 0
+            ? book.reservedTaskCount - 1
+            : book.reservedTaskCount,
         updatedAt: DateTime.now(),
       );
       try {
@@ -281,6 +301,15 @@ class AiBudgetService {
           }
           await _store.putProjection(
             current.copyWith(
+              requestCount: current.requestCount + 1,
+              taskCount: current.taskCount + (reservation.countTask ? 1 : 0),
+              reservedRequestCount: current.reservedRequestCount > 0
+                  ? current.reservedRequestCount - 1
+                  : 0,
+              reservedTaskCount:
+                  reservation.countTask && current.reservedTaskCount > 0
+                  ? current.reservedTaskCount - 1
+                  : current.reservedTaskCount,
               tokenSum: current.tokenSum + request.usage.knownTokenSum,
               unknownUsageCount:
                   current.unknownUsageCount +
@@ -319,7 +348,11 @@ class AiBudgetService {
         if (entry.value > previous) costs[entry.key] = entry.value;
       }
       final merged = current == null
-          ? incoming.copyWith(costsByCurrency: Map.unmodifiable(costs))
+          ? incoming.copyWith(
+              reservedRequestCount: 0,
+              reservedTaskCount: 0,
+              costsByCurrency: Map.unmodifiable(costs),
+            )
           : incoming.copyWith(
               requestCount: incoming.requestCount > current.requestCount
                   ? incoming.requestCount
@@ -327,6 +360,10 @@ class AiBudgetService {
               taskCount: incoming.taskCount > current.taskCount
                   ? incoming.taskCount
                   : current.taskCount,
+              // Never import another device's in-flight slots. Only the
+              // current process knows which reservations it can release.
+              reservedRequestCount: current.reservedRequestCount,
+              reservedTaskCount: current.reservedTaskCount,
               tokenSum: incoming.tokenSum > current.tokenSum
                   ? incoming.tokenSum
                   : current.tokenSum,
@@ -358,10 +395,10 @@ class AiBudgetService {
     if (book.tokenSum + incomingTokens >= effective.bookTokenLimit) {
       checks.add('本书今日 Token 已达上限');
     }
-    if (daily.requestCount + 1 > effective.dailyRequestLimit) {
+    if (daily.totalRequestCount + 1 > effective.dailyRequestLimit) {
       checks.add('今日请求次数已达上限');
     }
-    if (book.requestCount + 1 > effective.bookRequestLimit) {
+    if (book.totalRequestCount + 1 > effective.bookRequestLimit) {
       checks.add('本书今日请求次数已达上限');
     }
     if (effective.dailyCostLimit != null &&
@@ -376,8 +413,8 @@ class AiBudgetService {
       final ratio = [
         (daily.tokenSum + incomingTokens) / effective.dailyTokenLimit,
         (book.tokenSum + incomingTokens) / effective.bookTokenLimit,
-        (daily.requestCount + 1) / effective.dailyRequestLimit,
-        (book.requestCount + 1) / effective.bookRequestLimit,
+        (daily.totalRequestCount + 1) / effective.dailyRequestLimit,
+        (book.totalRequestCount + 1) / effective.bookRequestLimit,
       ].reduce((a, b) => a > b ? a : b);
       return AiBudgetDecision(allowed: true, usageRatio: ratio.clamp(0, 1));
     }
