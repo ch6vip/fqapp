@@ -363,10 +363,9 @@ void main() {
           findsOneWidget,
         );
       }
-      expect(
-        find.textContaining('读者丙\n', findRichText: true),
-        findsNothing,
-      );
+      // 名字要显示，且后面不能跟着空行。
+      expect(find.textContaining('读者丙', findRichText: true), findsOneWidget);
+      expect(find.textContaining('读者丙\n', findRichText: true), findsNothing);
       expect(tester.takeException(), isNull);
     });
 

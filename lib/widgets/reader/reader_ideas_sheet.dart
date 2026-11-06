@@ -471,7 +471,11 @@ class _CommentRowState extends State<_CommentRow> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _IdeaAvatar(url: comment.userAvatar, size: 32, mutedColor: mutedColor),
+          _IdeaAvatar(
+            url: comment.userAvatar,
+            size: 32,
+            mutedColor: mutedColor,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
