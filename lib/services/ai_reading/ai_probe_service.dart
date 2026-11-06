@@ -65,6 +65,22 @@ class AiProbeService {
       );
     }
 
+    final runRecord = AiRunRecord(
+      runId: runId,
+      kind: AiRunKind.probe,
+      bookId: '',
+      chapterId: '',
+      canonicalHash: '',
+      configSnapshotHash: '',
+      state: AiRunState.running,
+      attemptCount: 1,
+      formalEligible: false,
+      startedAt: started,
+    );
+    // Persist the Run before the request so a crash between request/ledger and
+    // terminal update is recoverable instead of leaving an orphan request.
+    await _store.putRun(runRecord);
+
     var usage = const AiUsage();
     String? errorCode;
     AiModelCapability? capability;
@@ -108,17 +124,8 @@ class AiProbeService {
     await _store.putRequest(request);
     await _budget.settle(reservation: reservation, request: request);
     await _store.putRun(
-      AiRunRecord(
-        runId: runId,
-        kind: AiRunKind.probe,
-        bookId: '',
-        chapterId: '',
-        canonicalHash: '',
-        configSnapshotHash: '',
+      runRecord.copyWith(
         state: capability?.ok == true ? AiRunState.success : AiRunState.failed,
-        attemptCount: 1,
-        formalEligible: false,
-        startedAt: started,
         finishedAt: finished,
         errorCodes: [if (capability?.ok != true) errorCode ?? 'PROBE_FAILED'],
         detail: capability?.detail,
