@@ -87,6 +87,7 @@ class AiBudgetService {
   final AiStore _store;
   final AiSettingsStore _settings;
   Future<void> _writeQueue = Future<void>.value();
+  Future<void>? _recoveryFuture;
 
   static String dayKey([DateTime? now]) {
     final date = (now ?? DateTime.now()).toLocal();
@@ -100,6 +101,7 @@ class AiBudgetService {
     required bool automatic,
     int? incomingTokens,
   }) async {
+    await ensureRecovered();
     if (!_store.isAvailable) {
       return const AiBudgetDecision(
         allowed: false,
@@ -388,6 +390,17 @@ class AiBudgetService {
         rethrow;
       }
     });
+  }
+
+  /// One-time startup reconciliation shared by every request entry point. A
+  /// probe can start before the reading controller's init; without this gate it
+  /// could be mistaken for a leftover reservation by that later init.
+  Future<void> ensureRecovered() => _recoveryFuture ??= _recoverOnce();
+
+  Future<void> _recoverOnce() async {
+    if (!_store.isAvailable) return;
+    await _store.recoverInterruptedRuns();
+    await recoverOrphanedReservations();
   }
 
   /// Reconciles reservations left behind by a process kill. The HTTP request
