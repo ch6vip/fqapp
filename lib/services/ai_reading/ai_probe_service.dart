@@ -37,6 +37,7 @@ class AiProbeService {
     required String model,
     required AiOutputMode outputMode,
     required Duration timeout,
+    bool confirmedOverBudget = false,
   }) async {
     await _settings.init();
     await _store.init();
@@ -44,13 +45,16 @@ class AiProbeService {
       bookId: probeBookId,
       automatic: false,
       countTask: true,
+      confirmedOverBudget: confirmedOverBudget,
       requireEnabled: false,
       requireConsent: false,
     );
     final reservation = reserved.reservation;
     if (reservation == null) {
       throw AiNetworkException(
-        reserved.code ?? 'BUDGET_EXCEEDED',
+        reserved.needsConfirmation
+            ? 'BUDGET_CONFIRM'
+            : reserved.code ?? 'BUDGET_EXCEEDED',
         reserved.reason ?? '预算已用完',
       );
     }

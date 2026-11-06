@@ -268,14 +268,33 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
   Future<AiModelCapability> _probe(
     AiProviderProfile profile,
     String apiKey,
-    String model,
-  ) => AiProbeService.instance.probe(
+    String model, {
+    bool confirmedOverBudget = false,
+  }) => AiProbeService.instance.probe(
     profile: profile,
     apiKey: apiKey,
     model: model,
     outputMode: _outputMode,
     timeout: Duration(seconds: _settings.global.requestTimeoutSeconds),
+    confirmedOverBudget: confirmedOverBudget,
   );
+
+  Future<AiModelCapability> _probeWithConfirmation(
+    AiProviderProfile profile,
+    String apiKey,
+    String model,
+  ) async {
+    try {
+      return await _probe(profile, apiKey, model);
+    } on AiNetworkException catch (error) {
+      if (error.code != 'BUDGET_CONFIRM' || !mounted) rethrow;
+      final confirmed = await showAiBudgetDialog(context, error.message);
+      if (!confirmed) {
+        throw const AiNetworkException('BUDGET_CANCELLED', '已取消本次连接测试');
+      }
+      return _probe(profile, apiKey, model, confirmedOverBudget: true);
+    }
+  }
 
   String? _validateInput({required bool requireKey}) {
     if (_label.text.trim().isEmpty) return '请填写提供商名称';
@@ -314,7 +333,11 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
       _testResult = null;
     });
     try {
-      final capability = await _probe(profile, apiKey, profile.models.first);
+      final capability = await _probeWithConfirmation(
+        profile,
+        apiKey,
+        profile.models.first,
+      );
       await _settings.saveCapability(capability);
       if (!mounted) return;
       setState(() => _testResult = capability);
@@ -350,7 +373,11 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
           setState(() => _formError = 'json_schema 需要先填写 API Key 并测试通过');
           return;
         }
-        final capability = await _probe(profile, apiKey, profile.models.first);
+        final capability = await _probeWithConfirmation(
+          profile,
+          apiKey,
+          profile.models.first,
+        );
         await _settings.saveCapability(capability);
         if (!capability.ok) {
           if (!mounted) return;

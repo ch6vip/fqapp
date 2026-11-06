@@ -348,6 +348,34 @@ class AiBudgetService {
             projection.reservedTaskCount == 0) {
           continue;
         }
+        final now = DateTime.now();
+        // Keep the ledger consistent with the conservative counters. There is
+        // no real provider/model/usage left after a kill, so mark these as
+        // recovered unknown requests instead of pretending they are normal.
+        for (var i = 0; i < projection.reservedRequestCount; i++) {
+          try {
+            await _store.putRequest(
+              AiRequestRecord(
+                requestId:
+                    'req_crash_${now.microsecondsSinceEpoch.toRadixString(36)}_$i',
+                runId:
+                    'run_crash_${now.microsecondsSinceEpoch.toRadixString(36)}',
+                attemptNo: 1,
+                providerId: 'recovered',
+                endpoint: '',
+                model: '',
+                mode: AiOutputMode.jsonObject,
+                usage: const AiUsage(),
+                startedAt: now,
+                latencyMs: 0,
+                errorCode: 'CRASH_RECOVERED',
+                reason: 'crash_recovered',
+              ),
+            );
+          } catch (_) {
+            // Recovery of the counter is more important than the audit row.
+          }
+        }
         await _store.putProjection(
           projection.copyWith(
             requestCount:
@@ -357,7 +385,7 @@ class AiBudgetService {
                 projection.unknownUsageCount + projection.reservedRequestCount,
             reservedRequestCount: 0,
             reservedTaskCount: 0,
-            updatedAt: DateTime.now(),
+            updatedAt: now,
           ),
         );
       }
