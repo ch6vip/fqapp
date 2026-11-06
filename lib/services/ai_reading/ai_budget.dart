@@ -343,53 +343,108 @@ class AiBudgetService {
   Future<void> recoverOrphanedReservations() {
     return _enqueue(() async {
       if (!_store.isAvailable) return;
-      for (final projection in await _store.projections()) {
-        if (projection.reservedRequestCount == 0 &&
-            projection.reservedTaskCount == 0) {
-          continue;
+      final projections = await _store.projections();
+      final global = projections
+          .where((projection) => projection.bookId == null)
+          .firstOrNull;
+      final books = projections
+          .where((projection) => projection.bookId != null)
+          .toList(growable: false);
+      var bookReserved = 0;
+      for (final projection in books) {
+        bookReserved += projection.reservedRequestCount;
+        if (projection.reservedRequestCount > 0 ||
+            projection.reservedTaskCount > 0) {
+          await _recoverProjection(
+            projection,
+            runBookId: projection.bookId!,
+            requestCount: projection.reservedRequestCount,
+          );
         }
-        final now = DateTime.now();
-        // Keep the ledger consistent with the conservative counters. There is
-        // no real provider/model/usage left after a kill, so mark these as
-        // recovered unknown requests instead of pretending they are normal.
-        for (var i = 0; i < projection.reservedRequestCount; i++) {
-          try {
-            await _store.putRequest(
-              AiRequestRecord(
-                requestId:
-                    'req_crash_${now.microsecondsSinceEpoch.toRadixString(36)}_$i',
-                runId:
-                    'run_crash_${now.microsecondsSinceEpoch.toRadixString(36)}',
-                attemptNo: 1,
-                providerId: 'recovered',
-                endpoint: '',
-                model: '',
-                mode: AiOutputMode.jsonObject,
-                usage: const AiUsage(),
-                startedAt: now,
-                latencyMs: 0,
-                errorCode: 'CRASH_RECOVERED',
-                reason: 'crash_recovered',
-              ),
-            );
-          } catch (_) {
-            // Recovery of the counter is more important than the audit row.
-          }
+      }
+      if (global != null) {
+        // Every normal reservation increments both global and its book bucket.
+        // Only the part not represented by a book projection needs a synthetic
+        // global-only run; otherwise the same request is counted twice.
+        final globalOnly = global.reservedRequestCount - bookReserved;
+        if (globalOnly > 0 || global.reservedTaskCount > 0) {
+          await _recoverProjection(
+            global,
+            runBookId: '',
+            requestCount: globalOnly > 0 ? globalOnly : 0,
+          );
         }
-        await _store.putProjection(
-          projection.copyWith(
-            requestCount:
-                projection.requestCount + projection.reservedRequestCount,
-            taskCount: projection.taskCount + projection.reservedTaskCount,
-            unknownUsageCount:
-                projection.unknownUsageCount + projection.reservedRequestCount,
-            reservedRequestCount: 0,
-            reservedTaskCount: 0,
-            updatedAt: now,
-          ),
-        );
       }
     });
+  }
+
+  Future<void> _recoverProjection(
+    AiBudgetProjection projection, {
+    required String runBookId,
+    required int requestCount,
+  }) async {
+    final now = DateTime.now();
+    final stamp = now.microsecondsSinceEpoch.toRadixString(36);
+    final scope = runBookId.isEmpty
+        ? 'global'
+        : runBookId.hashCode.toRadixString(36);
+    final runId = requestCount > 0 ? 'run_crash_${stamp}_$scope' : null;
+    if (runId != null) {
+      try {
+        await _store.putRun(
+          AiRunRecord(
+            runId: runId,
+            kind: AiRunKind.recovered,
+            bookId: runBookId,
+            chapterId: '',
+            canonicalHash: '',
+            configSnapshotHash: '',
+            state: AiRunState.interrupted,
+            attemptCount: requestCount,
+            formalEligible: false,
+            startedAt: now,
+            finishedAt: now,
+            errorCodes: const ['CRASH_RECOVERED'],
+            detail: '应用异常退出，用量按未知保守计入',
+          ),
+        );
+      } catch (_) {
+        // The counter recovery below must still happen.
+      }
+      for (var i = 0; i < requestCount; i++) {
+        try {
+          await _store.putRequest(
+            AiRequestRecord(
+              requestId: 'req_crash_${stamp}_${scope}_$i',
+              runId: runId,
+              attemptNo: 1,
+              providerId: 'recovered',
+              endpoint: '',
+              model: '',
+              mode: AiOutputMode.jsonObject,
+              usage: const AiUsage(),
+              startedAt: now,
+              latencyMs: 0,
+              errorCode: 'CRASH_RECOVERED',
+              reason: 'crash_recovered',
+            ),
+          );
+        } catch (_) {
+          // The counter is more important than the audit row.
+        }
+      }
+    }
+    await _store.putProjection(
+      projection.copyWith(
+        requestCount: projection.requestCount + projection.reservedRequestCount,
+        taskCount: projection.taskCount + projection.reservedTaskCount,
+        unknownUsageCount:
+            projection.unknownUsageCount + projection.reservedRequestCount,
+        reservedRequestCount: 0,
+        reservedTaskCount: 0,
+        updatedAt: now,
+      ),
+    );
   }
 
   /// Monotonic restore of a usage projection. It shares the budget queue with

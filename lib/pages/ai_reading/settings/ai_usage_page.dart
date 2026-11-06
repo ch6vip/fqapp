@@ -500,6 +500,7 @@ class _AiUsagePageState extends State<AiUsagePage> {
         AiRunKind.trial => '提示词试验',
         AiRunKind.promptOptimize => '提示词优化',
         AiRunKind.probe => '连接测试',
+        AiRunKind.recovered => '崩溃恢复',
       };
     }
     return switch (request.reason) {
