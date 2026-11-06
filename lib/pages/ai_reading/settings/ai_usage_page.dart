@@ -505,6 +505,7 @@ class _AiUsagePageState extends State<AiUsagePage> {
     return switch (request.reason) {
       'first' => '正式校对',
       'content_repair' => '内容纠错',
+      'crash_recovered' => '崩溃恢复（用量未知）',
       _ => 'API 请求',
     };
   }

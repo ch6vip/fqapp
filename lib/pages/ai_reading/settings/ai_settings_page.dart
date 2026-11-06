@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/ai_reading/ai_budget.dart';
+import '../../../services/ai_reading/ai_client.dart';
 import '../../../services/ai_reading/ai_probe_service.dart';
 import '../../../services/ai_reading/ai_controller.dart';
 import '../../../services/ai_reading/ai_credentials.dart';
@@ -213,6 +214,33 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     if (mounted) setState(() => _probeResult = null);
   }
 
+  Future<AiModelCapability> _probeWithConfirmation(
+    AiProviderProfile profile,
+    String apiKey,
+    String model,
+    AiOutputMode outputMode,
+  ) async {
+    Future<AiModelCapability> attempt({bool confirmedOverBudget = false}) =>
+        AiProbeService.instance.probe(
+          profile: profile,
+          apiKey: apiKey,
+          model: model,
+          outputMode: outputMode,
+          timeout: Duration(seconds: _settings.global.requestTimeoutSeconds),
+          confirmedOverBudget: confirmedOverBudget,
+        );
+    try {
+      return await attempt();
+    } on AiNetworkException catch (error) {
+      if (error.code != 'BUDGET_CONFIRM' || !mounted) rethrow;
+      final confirmed = await showAiBudgetDialog(context, error.message);
+      if (!confirmed) {
+        throw const AiNetworkException('BUDGET_CANCELLED', '已取消本次连接测试');
+      }
+      return attempt(confirmedOverBudget: true);
+    }
+  }
+
   Future<void> _testConnection() async {
     final global = _settings.global;
     final profile = _settings.provider(global.providerId);
@@ -236,12 +264,11 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
       _probeResult = null;
     });
     try {
-      final capability = await AiProbeService.instance.probe(
-        profile: profile,
-        apiKey: apiKey,
-        model: model,
-        outputMode: profile.outputMode,
-        timeout: Duration(seconds: global.requestTimeoutSeconds),
+      final capability = await _probeWithConfirmation(
+        profile,
+        apiKey,
+        model,
+        profile.outputMode,
       );
       await _settings.saveCapability(capability);
       if (!mounted) return;
