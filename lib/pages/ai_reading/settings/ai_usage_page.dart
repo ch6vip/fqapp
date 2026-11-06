@@ -499,6 +499,7 @@ class _AiUsagePageState extends State<AiUsagePage> {
         AiRunKind.formalPrefetch => '预校对',
         AiRunKind.trial => '提示词试验',
         AiRunKind.promptOptimize => '提示词优化',
+        AiRunKind.probe => '连接测试',
       };
     }
     return switch (request.reason) {

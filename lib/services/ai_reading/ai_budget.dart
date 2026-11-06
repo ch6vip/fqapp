@@ -129,6 +129,8 @@ class AiBudgetService {
     required bool automatic,
     required bool countTask,
     bool confirmedOverBudget = false,
+    bool requireEnabled = true,
+    bool requireConsent = true,
   }) {
     return _enqueue(() async {
       // Re-read every gate inside the serialized queue. Consent can be revoked
@@ -142,7 +144,7 @@ class AiBudgetService {
         );
       }
       final effective = _settings.resolve(bookId);
-      if (!effective.enabled) {
+      if (requireEnabled && !effective.enabled) {
         return const AiBudgetDecision(
           allowed: false,
           reason: 'AI 阅读优化未开启',
@@ -158,7 +160,7 @@ class AiBudgetService {
           usageRatio: 1,
         );
       }
-      if (!_settings.device.cloudConsent) {
+      if (requireConsent && !_settings.device.cloudConsent) {
         return const AiBudgetDecision(
           allowed: false,
           reason: '还没有同意把章节正文发送给第三方',
@@ -329,6 +331,35 @@ class AiBudgetService {
           } catch (_) {}
         }
         rethrow;
+      }
+    });
+  }
+
+  /// Reconciles reservations left behind by a process kill. The HTTP request
+  /// may or may not have been sent, so count it as a settled request with
+  /// unknown usage rather than silently freeing the slot. This is deliberately
+  /// conservative: it can over-count one crashed request, but never lowers
+  /// imported usage or leaves the day permanently locked.
+  Future<void> recoverOrphanedReservations() {
+    return _enqueue(() async {
+      if (!_store.isAvailable) return;
+      for (final projection in await _store.projections()) {
+        if (projection.reservedRequestCount == 0 &&
+            projection.reservedTaskCount == 0) {
+          continue;
+        }
+        await _store.putProjection(
+          projection.copyWith(
+            requestCount:
+                projection.requestCount + projection.reservedRequestCount,
+            taskCount: projection.taskCount + projection.reservedTaskCount,
+            unknownUsageCount:
+                projection.unknownUsageCount + projection.reservedRequestCount,
+            reservedRequestCount: 0,
+            reservedTaskCount: 0,
+            updatedAt: DateTime.now(),
+          ),
+        );
       }
     });
   }

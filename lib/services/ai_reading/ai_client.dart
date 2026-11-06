@@ -465,6 +465,7 @@ class AiChatCompletionsClient {
     required String model,
     required AiOutputMode outputMode,
     required Duration timeout,
+    void Function(AiUsage usage, String? errorCode)? onUsage,
   }) async {
     final key = AiSettingsCapabilityKey.of(
       providerId: profile.id,
@@ -473,7 +474,7 @@ class AiChatCompletionsClient {
       mode: outputMode,
     );
     try {
-      await complete(
+      final response = await complete(
         profile: profile,
         apiKey: apiKey,
         model: model,
@@ -489,6 +490,7 @@ class AiChatCompletionsClient {
         outputMode: outputMode,
         timeout: timeout,
       );
+      onUsage?.call(response.usage, null);
       return AiModelCapability(
         key: key,
         providerId: profile.id,
@@ -502,6 +504,7 @@ class AiChatCompletionsClient {
         ok: true,
       );
     } on AiNetworkException catch (error) {
+      onUsage?.call(error.usage ?? const AiUsage(), error.code);
       return AiModelCapability(
         key: key,
         providerId: profile.id,
