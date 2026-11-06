@@ -84,7 +84,7 @@ extension _ReaderPageBuild on _ReaderPageState {
     final overlayStyle = preset.isDark
         ? SystemUiOverlayStyle.light
         : SystemUiOverlayStyle.dark;
-    return PopScope<Object?>(
+    final surface = PopScope<Object?>(
       canPop: !_controlsVisible,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _controlsVisible) _toggleControls();
@@ -211,6 +211,15 @@ extension _ReaderPageBuild on _ReaderPageState {
         ),
       ),
     );
+    // 墨水屏：顶栏、段落选择条与菜单里的玻璃控件都在这个作用域下，
+    // 实时折射在 EPD 上会留灰阶残影，统一退回轻量不透明底板。
+    return preset.isEink
+        ? PerformanceScope(
+            preferences: const PerformancePreferences(enabled: true),
+            explicitReduceMotion: true,
+            child: surface,
+          )
+        : surface;
   }
 
   Widget _menuEdge({required bool top, required Widget child}) => Positioned(

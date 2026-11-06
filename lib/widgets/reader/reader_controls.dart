@@ -82,9 +82,27 @@ class ReaderControls extends StatelessWidget {
                 children: [
                   _chapterLine(preset),
                   const SizedBox(height: 6),
-                  _progressCapsule(context, preset, tint, upper),
+                  // Upstream narrows the capsule and dock to their action
+                  // count: `DockLayout.widthFor(5) - 32` and
+                  // `DockLayout.widthFor(n)` (pages.dart). Centering keeps the
+                  // glass compact on phones and tablets alike.
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: DockLayout.widthFor(5) - 32,
+                      ),
+                      child: _progressCapsule(context, preset, tint, upper),
+                    ),
+                  ),
                   const SizedBox(height: 10),
-                  _dock(context, preset, tint, night),
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: DockLayout.widthFor(3),
+                      ),
+                      child: _dock(context, preset, tint, night),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -140,6 +158,7 @@ class ReaderControls extends StatelessWidget {
   ) {
     final value = seekValue.clamp(0, upper).toDouble();
     return LiquidGlass(
+      key: const ValueKey('reader-progress-capsule'),
       radius: 24,
       tintColor: tint,
       child: Padding(
@@ -170,6 +189,7 @@ class ReaderControls extends StatelessWidget {
                 trackColor: preset.borderColor,
                 thumbColor: preset.isDark ? preset.textColor : Colors.white,
                 tint: tint,
+                semanticFormatter: (value) => '第 ${value.round() + 1} 章',
                 onChanged: chapterCount > 1 ? onSeek : null,
                 onChangeEnd: chapterCount > 1 ? onSeekEnd : null,
               ),

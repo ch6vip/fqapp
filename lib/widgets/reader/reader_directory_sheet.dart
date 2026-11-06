@@ -332,11 +332,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (current) const Text('正在阅读', style: TextStyle(fontSize: 10)),
-                if (cached)
-                  const Tooltip(
-                    message: '已缓存',
-                    child: ArchiveIcon(CupertinoIcons.checkmark_seal, size: 16),
-                  ),
+                if (cached) const Text('已缓存', style: TextStyle(fontSize: 10)),
               ],
             )
           : null,

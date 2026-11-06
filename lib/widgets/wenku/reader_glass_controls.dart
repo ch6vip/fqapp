@@ -148,6 +148,7 @@ class ReaderGlassSlider extends StatefulWidget {
     required this.thumbColor,
     required this.style,
     required this.reduceMotion,
+    this.semanticFormatter,
   });
 
   final double value, min, max;
@@ -158,6 +159,10 @@ class ReaderGlassSlider extends StatefulWidget {
   final Color activeColor, inactiveColor, thumbColor;
   final easy.LiquidGlassStyle style;
   final bool reduceMotion;
+
+  /// Accessibility text for the current value. Defaults to a percentage;
+  /// callers with meaningful steps (e.g. a chapter index) can name the unit.
+  final String Function(double value)? semanticFormatter;
 
   @override
   State<ReaderGlassSlider> createState() => _ReaderGlassSliderState();
@@ -233,6 +238,7 @@ class _ReaderGlassSliderState extends State<ReaderGlassSlider> {
     final enabled = widget.onChanged != null;
     final span = widget.max - widget.min;
     String percent(double value) =>
+        widget.semanticFormatter?.call(value) ??
         '${(span > 0 ? (value - widget.min) / span * 100 : 0).round()}%';
     return Semantics(
       slider: true,
@@ -436,6 +442,7 @@ abstract final class ReaderGlassControls {
     Color? tint,
     ValueChanged<double>? onChangeStart,
     ValueChanged<double>? onChangeEnd,
+    String Function(double value)? semanticFormatter,
   }) {
     final reduceMotion =
         MediaQuery.disableAnimationsOf(context) ||
@@ -456,6 +463,7 @@ abstract final class ReaderGlassControls {
       thumbColor: thumbColor ?? thumbOf(context),
       style: material(context, tint: tint),
       reduceMotion: reduceMotion,
+      semanticFormatter: semanticFormatter,
     );
   }
 
@@ -504,126 +512,6 @@ abstract final class ReaderGlassControls {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  /// A compact value row: label + formatted value above the glass track.
-  static Widget valueSlider(
-    BuildContext context, {
-    required Key sliderKey,
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required String Function(double) format,
-    required ValueChanged<double>? onCommitted,
-    ValueChanged<double>? onPreview,
-    int? divisions,
-    Color? tint,
-    TextStyle? labelStyle,
-  }) => _ReaderValueSlider(
-    sliderKey: sliderKey,
-    label: label,
-    value: value,
-    min: min,
-    max: max,
-    format: format,
-    onCommitted: onCommitted,
-    onPreview: onPreview,
-    divisions: divisions,
-    tint: tint,
-    labelStyle: labelStyle,
-  );
-}
-
-class _ReaderValueSlider extends StatefulWidget {
-  const _ReaderValueSlider({
-    required this.sliderKey,
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.format,
-    required this.onCommitted,
-    this.onPreview,
-    this.divisions,
-    this.tint,
-    this.labelStyle,
-  });
-
-  final Key sliderKey;
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final String Function(double) format;
-  final ValueChanged<double>? onCommitted;
-  final ValueChanged<double>? onPreview;
-  final int? divisions;
-  final Color? tint;
-  final TextStyle? labelStyle;
-
-  @override
-  State<_ReaderValueSlider> createState() => _ReaderValueSliderState();
-}
-
-class _ReaderValueSliderState extends State<_ReaderValueSlider> {
-  late double _draft = widget.value;
-
-  @override
-  void didUpdateWidget(_ReaderValueSlider oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.value != widget.value) _draft = widget.value;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.label,
-                  style:
-                      widget.labelStyle ??
-                      TextStyle(fontSize: 13, color: scheme.onSurface),
-                ),
-              ),
-              Text(
-                widget.format(_draft),
-                style: TextStyle(fontSize: 12, color: scheme.primary),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          ReaderGlassControls.slider(
-            context,
-            key: widget.sliderKey,
-            value: _draft,
-            min: widget.min,
-            max: widget.max,
-            divisions: widget.divisions,
-            tint: widget.tint,
-            onChanged: widget.onCommitted == null
-                ? null
-                : (value) {
-                    setState(() => _draft = value);
-                    (widget.onPreview ?? widget.onCommitted)?.call(value);
-                  },
-            onChangeEnd: widget.onCommitted == null
-                ? null
-                : (value) {
-                    setState(() => _draft = value);
-                    widget.onCommitted!(value);
-                  },
-          ),
-        ],
       ),
     );
   }
