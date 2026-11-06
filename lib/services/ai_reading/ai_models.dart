@@ -2118,6 +2118,7 @@ class AiBudgetProjection {
     this.reservedTaskCount = 0,
     this.reservedRequestIds = const [],
     this.reservedTaskIds = const [],
+    this.reservedRunIds = const {},
   });
 
   final String bucketDay;
@@ -2135,6 +2136,9 @@ class AiBudgetProjection {
   /// recovery path can still synthesize IDs from the counts.
   final List<String> reservedRequestIds;
   final List<String> reservedTaskIds;
+
+  /// requestId -> the Run that was already persisted before the reservation.
+  final Map<String, String> reservedRunIds;
   final int tokenSum;
   final int unknownUsageCount;
   final int costMicros;
@@ -2161,6 +2165,7 @@ class AiBudgetProjection {
     int? reservedTaskCount,
     List<String>? reservedRequestIds,
     List<String>? reservedTaskIds,
+    Map<String, String>? reservedRunIds,
     int? tokenSum,
     int? unknownUsageCount,
     int? costMicros,
@@ -2191,6 +2196,7 @@ class AiBudgetProjection {
     'reservedTaskCount': reservedTaskCount,
     if (reservedRequestIds.isNotEmpty) 'reservedRequestIds': reservedRequestIds,
     if (reservedTaskIds.isNotEmpty) 'reservedTaskIds': reservedTaskIds,
+    if (reservedRunIds.isNotEmpty) 'reservedRunIds': reservedRunIds,
     'tokenSum': tokenSum,
     'unknownUsageCount': unknownUsageCount,
     'costMicros': costMicros,
@@ -2226,6 +2232,7 @@ class AiBudgetProjection {
       reservedTaskCount: _intOrNull(map['reservedTaskCount']) ?? 0,
       reservedRequestIds: _stringList(map['reservedRequestIds']),
       reservedTaskIds: _stringList(map['reservedTaskIds']),
+      reservedRunIds: _stringMap(map['reservedRunIds']),
       tokenSum: _intOrNull(map['tokenSum']) ?? 0,
       unknownUsageCount: _intOrNull(map['unknownUsageCount']) ?? 0,
       costMicros: costMicros,
@@ -2611,6 +2618,15 @@ List<String> _stringList(Object? raw) => [
     for (final value in raw)
       if (value is String) value,
 ];
+
+Map<String, String> _stringMap(Object? raw) {
+  final map = _mapOrNull(raw);
+  if (map == null) return const {};
+  return {
+    for (final entry in map.entries)
+      if (entry.value is String) entry.key.toString(): entry.value as String,
+  };
+}
 
 int? _intOrNull(Object? value) => switch (value) {
   int v => v,

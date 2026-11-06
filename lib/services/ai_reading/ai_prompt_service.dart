@@ -124,13 +124,16 @@ class AiPromptService {
     if (key == null) {
       throw const AiNetworkException('MISSING_KEY', '还没有填写 API Key');
     }
+    final started = DateTime.now();
     final requestId =
-        'req_prompt_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+        'req_prompt_${started.microsecondsSinceEpoch.toRadixString(36)}';
+    final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
     final reserved = await AiBudgetService.instance.reserve(
       bookId: bookId,
       automatic: false,
       countTask: true,
       requestId: requestId,
+      runId: runId,
     );
     final reservation = reserved.reservation;
     if (reservation == null) {
@@ -148,8 +151,6 @@ class AiPromptService {
               '说明：${f.comment}';
         })
         .join('\n\n');
-    final started = DateTime.now();
-    final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
     final rateProfile = _settings.rateFor(provider.id, model);
     final rate = rateProfile?.snapshot();
     final runRecord = AiRunRecord(

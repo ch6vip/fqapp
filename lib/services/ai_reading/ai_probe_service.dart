@@ -41,8 +41,10 @@ class AiProbeService {
   }) async {
     await _settings.init();
     await _store.init();
+    final started = DateTime.now();
     final requestId =
-        'req_probe_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+        'req_probe_${started.microsecondsSinceEpoch.toRadixString(36)}';
+    final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
     final reserved = await _budget.reserve(
       bookId: probeBookId,
       automatic: false,
@@ -51,6 +53,7 @@ class AiProbeService {
       requireEnabled: false,
       requireConsent: false,
       requestId: requestId,
+      runId: runId,
     );
     final reservation = reserved.reservation;
     if (reservation == null) {
@@ -62,8 +65,6 @@ class AiProbeService {
       );
     }
 
-    final started = DateTime.now();
-    final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
     var usage = const AiUsage();
     String? errorCode;
     AiModelCapability? capability;
