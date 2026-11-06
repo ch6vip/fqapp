@@ -10,12 +10,21 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     _ => ShelfTabScope.shelf,
   };
 
-  /// 当前 tab 的分类；分组未就绪时 [ShelfGroupStore.resolveCategory] 返回
-  /// null，保留原值（D-M4：绝不把回落的 `_all` 写回磁盘）。
-  String get _category {
-    final raw = ShelfViewStore.instance.categoryOf(_scope);
-    return ShelfGroupStore.instance.resolveCategory(raw) ?? raw;
-  }
+  /// 当前 tab 持久化的分类原值；只给分类弹层的选中态用。
+  String get _rawCategory => ShelfViewStore.instance.categoryOf(_scope);
+
+  /// 当前 tab 实际参与过滤的分类。分组未就绪时 [ShelfGroupStore.resolveCategory]
+  /// 返回 null：此时必须降级成「全部」，否则持久化的组 id 在
+  /// [ShelfGroupStore.matchesKey] 里永远匹配不到（未就绪时 `groupOfKey` 恒为
+  /// `_unfiled`），书架 / 收藏 / 历史会整页为空（design D-M4）。
+  String get _category =>
+      ShelfGroupStore.instance.resolveCategory(_rawCategory) ??
+      ShelfCategory.all;
+
+  /// 分类弹层的选中值：就绪时用解析后的分类（已删除的组回落到全部），
+  /// 未就绪时保留原值，弹层自己显示只读提示。
+  String get _categoryForSheet =>
+      ShelfGroupStore.instance.resolveCategory(_rawCategory) ?? _rawCategory;
 
   int get _activeFilters {
     if (_tab == 1) return 0;
@@ -121,7 +130,7 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     final result = await showShelfGroupsSheet(
       context,
       store: store,
-      selected: _category,
+      selected: _categoryForSheet,
       reduceMotion: _reduceMotion,
       items: items,
     );

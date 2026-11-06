@@ -42,7 +42,9 @@ import '../widgets/wenku/wenku_archive.dart';
 import '../widgets/wenku/wenku_feature.dart';
 import '../widgets/wenku/wenku_glass.dart';
 import '../widgets/wenku/wenku_icons.dart';
+import '../widgets/wenku/wenku_loading.dart';
 import '../widgets/wenku/wenku_overlay.dart';
+import '../widgets/wenku/wenku_reveal.dart';
 import '../widgets/wenku/wenku_segments.dart';
 import 'cached_book_reader.dart';
 import 'cached_books_page.dart';
@@ -146,9 +148,11 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   final _updateChecks = UpdateCheckGate();
 
   /// 离线缓存扫描结果（源限定键，如 `book:123`）。扫描完成前「已缓存」
-  /// 来源筛选不匹配任何行，页面显示「正在检查离线缓存…」。
+  /// 来源筛选不匹配任何行，页面显示「正在检查离线缓存…」；扫描失败时
+  /// 保持未完成并显示「离线缓存暂不可用」。
   Set<String> _cachedContentKeys = const {};
   bool _cacheScanComplete = false;
+  bool _cacheScanFailed = false;
 
   /// 立体书架只在首次出现时播放入场；切 tab / 隐藏后回来不重播。
   bool _carouselEntrancePlayed = false;
@@ -162,6 +166,11 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   late final Listenable _viewChanges;
   late final ValueListenable<int> _groupChanges;
 
+  /// 立体书架宽屏信息栏的按钮文案取决于「书架点书直达阅读器」偏好。
+  /// 页面必须在冷启动时加载它并跟随变化，否则用户关掉开关后仍显示
+  /// 「继续阅读 / 开始阅读」（design §2.5：传实际值）。
+  late final ValueNotifier<bool> _shelfDirectReader;
+
   @override
   void initState() {
     super.initState();
@@ -174,6 +183,9 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
     _viewChanges = ShelfViewStore.instance..addListener(_storeChanged);
     _groupChanges = ShelfGroupStore.instance.listenable
       ..addListener(_storeChanged);
+    _shelfDirectReader = BookOpenPreferences.instance.shelfDirectReader
+      ..addListener(_storeChanged);
+    unawaited(BookOpenPreferences.instance.load());
     unawaited(_loadViewPreferences());
     unawaited(_scanCache());
   }
@@ -210,6 +222,9 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   /// 一次扫描得到「已缓存」来源筛选需要的源限定键。扫描失败保持未完成，
   /// 页面显示「离线缓存暂不可用」，绝不把未扫描当成「没缓存」。
   Future<void> _scanCache() async {
+    if (mounted && _cacheScanFailed) {
+      setState(() => _cacheScanFailed = false);
+    }
     final cache = widget.cacheStore;
     try {
       final List<CachedBookSummary> books;
@@ -236,6 +251,7 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
       _load();
     } catch (error, stack) {
       AppLog.w('shelf', '离线缓存扫描失败', error: error, stack: stack);
+      if (mounted) setState(() => _cacheScanFailed = true);
     }
   }
 
@@ -389,6 +405,7 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
     _shelfChanges.removeListener(_storeChanged);
     _viewChanges.removeListener(_storeChanged);
     _groupChanges.removeListener(_storeChanged);
+    _shelfDirectReader.removeListener(_storeChanged);
     super.dispose();
   }
 }

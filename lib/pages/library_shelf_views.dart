@@ -10,23 +10,30 @@ mixin _LibraryShelfViews on _LibraryShelfChrome {
     final entries = _visibleEntries;
     final mode = _effectiveMode;
     final view = ShelfViewStore.instance.state;
-    return ShelfCollectionView(
-      key: ValueKey('shelf-view-${mode.storageValue}'),
-      mode: mode,
-      density: view.density,
-      itemCount: entries.length,
-      regionToolbar: _toolbar(entries.length),
-      carousel: mode.hasShelf ? _carousel(entries) : null,
-      itemBuilder: (context, index) => _tile(entries[index], mode),
-      emptyBuilder: (context) => _emptyState(context),
-      padding: EdgeInsets.fromLTRB(
-        24,
-        0,
-        24,
-        DockLayout.scrollPaddingOf(context),
+    // 首屏条目沿用上游的入场序列：数据/筛选批次变化时播一次，滚动重建与
+    // 隐藏 tab 不重播（`LoadedContentSequence` 在 TickerMode 关闭时静态化）。
+    return LoadedContentSequence(
+      generation: ShelfViewStore.instance.isLoaded
+          ? (_tab, mode, view.sort, view.filter, view.source, _category)
+          : null,
+      child: ShelfCollectionView(
+        key: ValueKey('shelf-view-${mode.storageValue}'),
+        mode: mode,
+        density: view.density,
+        itemCount: entries.length,
+        regionToolbar: _toolbar(entries.length),
+        carousel: mode.hasShelf ? _carousel(entries) : null,
+        itemBuilder: (context, index) => _tile(entries[index], mode, index),
+        emptyBuilder: (context) => _emptyState(context),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          0,
+          24,
+          DockLayout.scrollPaddingOf(context),
+        ),
+        storageKey: PageStorageKey('shelf-$_tab'),
+        onGridViewport: (viewport) => _gridViewport = viewport,
       ),
-      storageKey: PageStorageKey('shelf-$_tab'),
-      onGridViewport: (viewport) => _gridViewport = viewport,
     );
   }
 
@@ -56,35 +63,42 @@ mixin _LibraryShelfViews on _LibraryShelfChrome {
     );
   }
 
-  Widget _tile(_ShelfEntry entry, BookCollectionMode mode) {
+  Widget _tile(_ShelfEntry entry, BookCollectionMode mode, int index) {
     final selected = _selected.contains(entry.selectionKey);
-    if (mode.isGrid) {
-      return ShelfBookGridTile(
-        key: ValueKey('shelf-grid-book-${entry.contentKey}'),
-        item: entry.item,
-        badge: entry.badgeText,
-        progress: entry.readingText,
-        meta: entry.metaText,
-        cached: entry.cached,
-        fanqieImported: entry.fanqieImported,
-        editing: _editing,
-        selected: selected,
-        onTap: () => _tap(entry),
-        onLongPress: () => _longPress(entry),
-      );
-    }
-    return ShelfNovelRow(
-      key: ValueKey('shelf-book-${entry.contentKey}'),
-      item: entry.item,
-      badge: entry.badgeText,
-      progress: entry.readingText,
-      meta: entry.metaText,
-      cached: entry.cached,
-      fanqieImported: entry.fanqieImported,
-      editing: _editing,
-      selected: selected,
-      onTap: () => _tap(entry),
-      onLongPress: () => _longPress(entry),
+    final tile = mode.isGrid
+        ? ShelfBookGridTile(
+            key: ValueKey('shelf-grid-book-${entry.contentKey}'),
+            item: entry.item,
+            badge: entry.badgeText,
+            progress: entry.readingText,
+            meta: entry.metaText,
+            cached: entry.cached,
+            fanqieImported: entry.fanqieImported,
+            editing: _editing,
+            selected: selected,
+            onTap: () => _tap(entry),
+            onLongPress: () => _longPress(entry),
+          )
+        : ShelfNovelRow(
+            key: ValueKey('shelf-book-${entry.contentKey}'),
+            item: entry.item,
+            badge: entry.badgeText,
+            progress: entry.readingText,
+            meta: entry.metaText,
+            cached: entry.cached,
+            fanqieImported: entry.fanqieImported,
+            editing: _editing,
+            selected: selected,
+            onTap: () => _tap(entry),
+            onLongPress: () => _longPress(entry),
+          );
+    return LoadedContentItem(
+      key: ValueKey('shelf-entrance-${entry.contentKey}'),
+      index: index,
+      placeholder: mode.isGrid
+          ? const BookGridSkeleton()
+          : const BookRowSkeleton(),
+      child: tile,
     );
   }
 

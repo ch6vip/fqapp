@@ -178,6 +178,27 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('分组未就绪时持久化的组分类降级为全部，不筛空页面', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    // 上次会话持久化的组分类还在，但这次分组仓库打不开。
+    setSingleChapterPrefs({'shelfLayout': 'list', 'shelfCategory': 'gabc-12'});
+    ShelfViewStore.instance.resetForTest();
+    await tester.runAsync(() async {
+      await ShelfStore.instance.add(_item('a', title: '甲书'));
+      await EncryptedHive.box<dynamic>(Hive, ShelfGroupStore.boxName).close();
+    });
+    expect(ShelfGroupStore.instance.isReady, isFalse);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    // 未就绪时 `groupOfKey` 恒为 `_unfiled`，持久化的组 id 永远匹配不到；
+    // 页面必须安全降级为「全部书籍」，而不是整页为空（design D-M4）。
+    expect(find.byKey(const ValueKey('shelf-book-book:a')), findsOneWidget);
+    expect(find.text('全部书籍'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 List<String> _rowKeys(WidgetTester tester) {
