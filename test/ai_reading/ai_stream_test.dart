@@ -48,8 +48,12 @@ void main() {
       ),
       apiKey: 'sk-test',
       model: 'deepseek-flash',
-      systemPrompt: 'system',
-      userText: 'user',
+      messages: const [
+        {'role': 'system', 'content': 'system'},
+        {'role': 'user', 'content': '原章正文'},
+        {'role': 'assistant', 'content': '上一轮输出'},
+        {'role': 'user', 'content': '纠错说明'},
+      ],
       outputMode: AiOutputMode.jsonObject,
       timeout: const Duration(seconds: 5),
       stream: true,
@@ -62,5 +66,17 @@ void main() {
     expect(progress.last.estimatedTokens, 18000);
     expect(transport.requestBody, isNot(contains('"max_tokens"')));
     expect(transport.requestBody, contains('"stream":true'));
+    final body = jsonDecode(transport.requestBody!) as Map<String, dynamic>;
+    expect(body['messages'], hasLength(4));
+    expect((body['messages'] as List).map((e) => (e as Map)['role']), [
+      'system',
+      'user',
+      'assistant',
+      'user',
+    ]);
+    expect((body['messages'] as List).last, {
+      'role': 'user',
+      'content': '纠错说明',
+    });
   });
 }

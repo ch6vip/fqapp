@@ -136,8 +136,10 @@ class AiStore {
     final raw = _formal?.get(formalKey(bookId, hash));
     final entry = AiFormalCacheEntry.fromJson(raw);
     if (entry == null) return null;
-    // A stale schema should be a miss, not a crash.
+    // A stale schema, a mismatched hash, or damaged edits are all cache misses.
     if (entry.canonicalVersion != 1 || entry.canonicalHash != hash) return null;
+    final encoded = jsonEncode(entry.edits.map((e) => e.toJson()).toList());
+    if (entry.integrityHash != aiIntegrityHash(encoded)) return null;
     return entry;
   }
 

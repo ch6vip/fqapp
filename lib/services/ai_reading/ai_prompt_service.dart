@@ -132,6 +132,8 @@ class AiPromptService {
         .join('\n\n');
     final started = DateTime.now();
     final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
+    final rateProfile = _settings.rateFor(provider.id, model);
+    final rate = rateProfile?.snapshot();
     await _store.putRun(
       AiRunRecord(
         runId: runId,
@@ -152,18 +154,55 @@ class AiPromptService {
         profile: provider,
         apiKey: key,
         model: model,
-        systemPrompt:
-            '你是中文小说校对提示词编辑。只输出修订后的完整提示词，不要解释，不要 Markdown。'
-            '保留原有保守校对原则，不得放宽为文学润色。',
-        userText:
-            '当前提示词：\n${_settings.resolvedPrompt(bookId).text}\n\n'
-            '用户反馈样本：\n$samples\n\n'
-            '${instruction ?? '请根据这些反馈收紧提示词，减少误改，并补充容易漏掉的同类错误。'}',
+        messages: [
+          {
+            'role': 'system',
+            'content':
+                '你是中文小说校对提示词编辑。只输出修订后的完整提示词，不要解释，不要 Markdown。'
+                '保留原有保守校对原则，不得放宽为文学润色。',
+          },
+          {
+            'role': 'user',
+            'content':
+                '当前提示词：\n${_settings.resolvedPrompt(bookId).text}\n\n'
+                '用户反馈样本：\n$samples\n\n'
+                '${instruction ?? '请根据这些反馈收紧提示词，减少误改，并补充容易漏掉的同类错误。'}',
+          },
+        ],
         outputMode: AiOutputMode.jsonObject,
         timeout: Duration(seconds: effective.requestTimeoutSeconds),
         jsonResponse: false,
       );
     } catch (error) {
+      final finished = DateTime.now();
+      final usage = error is AiNetworkException
+          ? (error.usage ?? const AiUsage())
+          : const AiUsage();
+      final request = AiRequestRecord(
+        requestId: 'req_${finished.microsecondsSinceEpoch.toRadixString(36)}',
+        runId: runId,
+        attemptNo: 1,
+        providerId: provider.id,
+        endpoint: AiChatCompletionsClient.endpoint(provider.baseUrl).toString(),
+        model: model,
+        mode: AiOutputMode.jsonObject,
+        usage: usage,
+        startedAt: started,
+        latencyMs: finished.difference(started).inMilliseconds,
+        errorCode: error is AiNetworkException
+            ? error.code
+            : 'PROMPT_OPTIMIZE_FAILED',
+        rateSnapshot: rate,
+        costMicros: aiEstimateCostMicros(usage, rate),
+        currency: rate?.currency ?? effective.global.costCurrency,
+        reason: 'prompt_optimize',
+      );
+      await _store.putRequest(request);
+      await AiBudgetService.instance.recordRequest(
+        bookId: bookId,
+        request: request,
+        countTask: true,
+      );
       await _store.putRun(
         AiRunRecord(
           runId: runId,
@@ -181,8 +220,6 @@ class AiPromptService {
       rethrow;
     }
     final finished = DateTime.now();
-    final rateProfile = _settings.rateFor(provider.id, model);
-    final rate = rateProfile?.snapshot();
     final request = AiRequestRecord(
       requestId: 'req_${finished.microsecondsSinceEpoch.toRadixString(36)}',
       runId: runId,

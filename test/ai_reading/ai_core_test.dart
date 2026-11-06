@@ -290,6 +290,26 @@ void main() {
     expect(map.toDisplay(2, bias: TextBoundaryBias.start), 0);
     expect(applied.spans.single.replacement, '天色已晚。');
   });
+  test('budget projection keeps costs separate per currency', () {
+    final projection = AiBudgetProjection(
+      bucketDay: '2026-11-06',
+      bookId: 'book',
+      requestCount: 2,
+      taskCount: 1,
+      tokenSum: 100,
+      unknownUsageCount: 0,
+      costMicros: 5,
+      currency: 'CNY',
+      costsByCurrency: const {'CNY': 5, 'USD': 2},
+      updatedAt: DateTime(2026, 11, 6),
+    );
+    expect(projection.costFor('CNY'), 5);
+    expect(projection.costFor('USD'), 2);
+    final decoded = AiBudgetProjection.fromJson(projection.toJson())!;
+    expect(decoded.costFor('CNY'), 5);
+    expect(decoded.costFor('USD'), 2);
+  });
+
   test('cost estimate prices cache and reasoning tokens separately', () {
     final rate = AiRateSnapshot(
       currency: 'CNY',

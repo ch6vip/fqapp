@@ -75,7 +75,7 @@ class AiBackupPayload {
     // Feedback, prompt history and candidates are user assets. A truncated
     // file must be rejected before any box is touched.
     for (final required in ['feedback', 'prompts', 'candidates']) {
-      if (!map.containsKey(required)) {
+      if (map[required] is! List) {
         throw FormatException('AI 备份缺少必需分段：$required');
       }
     }
@@ -114,11 +114,18 @@ class AiBackupPayload {
             throw const FormatException('AI 备份含损坏的反馈'),
       ],
       prompts: [
-        for (final entry in maps('prompts')) ?AiPromptRecord.fromJson(entry),
+        for (final entry in maps('prompts'))
+          if (AiPromptRecord.fromJson(entry) case final parsed?)
+            parsed
+          else
+            throw const FormatException('AI 备份含损坏的提示词'),
       ],
       candidates: [
         for (final entry in maps('candidates'))
-          ?AiPromptCandidate.fromJson(entry),
+          if (AiPromptCandidate.fromJson(entry) case final parsed?)
+            parsed
+          else
+            throw const FormatException('AI 备份含损坏的提示词候选'),
       ],
       trials: [
         for (final entry in maps('trials')) ?AiTrialRecord.fromJson(entry),
@@ -266,18 +273,17 @@ class AiBackupService {
     return restore(payload);
   }
 
-  Future<AiBackupRestoreResult> restore(AiBackupPayload payload) async {
-    var feedback = 0;
-    var prompts = 0;
-    var candidates = 0;
-    var trials = 0;
-    var trialResults = 0;
-    var usage = 0;
-    var pending = 0;
+  /// Decode and validate the AI section without writing anything. The outer
+  /// library restore calls this before it touches shelf/history boxes.
+  Future<AiBackupRestorePlan> prepareEncoded(String encoded) async {
+    final bytes = base64Decode(encoded);
+    final unpacked = GZipDecoder().decodeBytes(bytes);
+    final payload = AiBackupPayload.fromJson(jsonDecode(utf8.decode(unpacked)));
+    return prepare(payload);
+  }
 
-    // Phase 1: compute every merged aggregate in memory and validate it before
-    // the first write. This prevents an invalid file from leaving a partial
-    // restore behind.
+  /// Phase 1: compute every merge/validation in memory, before the first write.
+  Future<AiBackupRestorePlan> prepare(AiBackupPayload payload) async {
     final mergedFeedback = <AiFeedbackAggregate>[];
     for (final aggregate in payload.feedback) {
       if (aggregate.bookId.startsWith('local_')) continue;
@@ -316,17 +322,53 @@ class AiBackupService {
       pendingBindings.add(binding);
     }
 
-    // Phase 2: commit. Aggregate snapshots are one key each; a newer local
-    // revision is never replaced by an older backup revision.
-    for (final aggregate in mergedFeedback) {
+    // Prompt history is immutable by promptId. Never let an older backup flip
+    // a locally revoked prompt back to active.
+    final existingPromptIds = (await _store.prompts())
+        .map((prompt) => prompt.promptId)
+        .toSet();
+    final promptsToWrite = payload.prompts
+        .where((prompt) => !existingPromptIds.contains(prompt.promptId))
+        .toList(growable: false);
+    final existingCandidateIds = (await _store.candidates())
+        .map((candidate) => candidate.candidateId)
+        .toSet();
+    final candidatesToWrite = payload.candidates
+        .where(
+          (candidate) => !existingCandidateIds.contains(candidate.candidateId),
+        )
+        .toList(growable: false);
+
+    return AiBackupRestorePlan(
+      payload: payload,
+      mergedFeedback: mergedFeedback,
+      pendingBindings: pendingBindings,
+      promptsToWrite: promptsToWrite,
+      candidatesToWrite: candidatesToWrite,
+    );
+  }
+
+  /// Phase 2: commit a plan produced by [prepare]. No validation that can fail
+  /// on malformed input is left for this phase.
+  Future<AiBackupRestoreResult> commit(AiBackupRestorePlan plan) async {
+    final payload = plan.payload;
+    var feedback = 0;
+    var prompts = 0;
+    var candidates = 0;
+    var trials = 0;
+    var trialResults = 0;
+    var usage = 0;
+    var pending = 0;
+
+    for (final aggregate in plan.mergedFeedback) {
       await _store.putAggregate(aggregate);
       feedback++;
     }
-    for (final prompt in payload.prompts) {
+    for (final prompt in plan.promptsToWrite) {
       await _store.putPrompt(prompt);
       prompts++;
     }
-    for (final candidate in payload.candidates) {
+    for (final candidate in plan.candidatesToWrite) {
       await _store.putCandidate(candidate);
       candidates++;
     }
@@ -343,38 +385,37 @@ class AiBackupService {
         projection.bucketDay,
         projection.bookId,
       );
+      final costs = <String, int>{...?current?.costsByCurrency};
+      for (final entry in projection.costsByCurrency.entries) {
+        final previous = costs[entry.key] ?? 0;
+        if (entry.value > previous) costs[entry.key] = entry.value;
+      }
       // Usage is a monotonic ledger projection. Restoring an older backup must
       // not lower today's spend and silently reopen the budget.
-      if (current == null ||
-          projection.requestCount > current.requestCount ||
-          projection.tokenSum > current.tokenSum ||
-          projection.costMicros > current.costMicros) {
-        await _store.putProjection(
-          current == null
-              ? projection
-              : projection.copyWith(
-                  requestCount: projection.requestCount > current.requestCount
-                      ? projection.requestCount
-                      : current.requestCount,
-                  taskCount: projection.taskCount > current.taskCount
-                      ? projection.taskCount
-                      : current.taskCount,
-                  tokenSum: projection.tokenSum > current.tokenSum
-                      ? projection.tokenSum
-                      : current.tokenSum,
-                  unknownUsageCount:
-                      projection.unknownUsageCount > current.unknownUsageCount
-                      ? projection.unknownUsageCount
-                      : current.unknownUsageCount,
-                  costMicros: projection.costMicros > current.costMicros
-                      ? projection.costMicros
-                      : current.costMicros,
-                ),
-        );
-      }
+      final merged = current == null
+          ? projection.copyWith(costsByCurrency: Map.unmodifiable(costs))
+          : projection.copyWith(
+              requestCount: projection.requestCount > current.requestCount
+                  ? projection.requestCount
+                  : current.requestCount,
+              taskCount: projection.taskCount > current.taskCount
+                  ? projection.taskCount
+                  : current.taskCount,
+              tokenSum: projection.tokenSum > current.tokenSum
+                  ? projection.tokenSum
+                  : current.tokenSum,
+              unknownUsageCount:
+                  projection.unknownUsageCount > current.unknownUsageCount
+                  ? projection.unknownUsageCount
+                  : current.unknownUsageCount,
+              costsByCurrency: Map.unmodifiable(costs),
+              currency: current.currency,
+              costMicros: costs[current.currency] ?? 0,
+            );
+      await _store.putProjection(merged);
       usage++;
     }
-    for (final binding in pendingBindings) {
+    for (final binding in plan.pendingBindings) {
       await _store.putPending(binding);
       pending++;
     }
@@ -411,6 +452,10 @@ class AiBackupService {
       usage: usage,
       pending: pending,
     );
+  }
+
+  Future<AiBackupRestoreResult> restore(AiBackupPayload payload) async {
+    return commit(await prepare(payload));
   }
 
   static AiFeedbackAggregate _mergeAggregate(
@@ -454,25 +499,48 @@ class AiBackupService {
     if (next.caseRevision != current.caseRevision) {
       return next.caseRevision > current.caseRevision;
     }
+    if (next.updatedAt != current.updatedAt) {
+      return next.updatedAt.isAfter(current.updatedAt);
+    }
     final nextTerminal =
         next.status == AiFeedbackStatus.deleted ||
         next.status == AiFeedbackStatus.superseded;
     final currentTerminal =
         current.status == AiFeedbackStatus.deleted ||
         current.status == AiFeedbackStatus.superseded;
-    if (nextTerminal != currentTerminal) return nextTerminal;
-    return next.updatedAt.isAfter(current.updatedAt);
+    return nextTerminal && !currentTerminal;
   }
 
   static bool _preferProtection(
     AiFeedbackProtection next,
     AiFeedbackProtection current,
   ) {
+    if (next.sourceFeedbackRevision != current.sourceFeedbackRevision) {
+      return next.sourceFeedbackRevision > current.sourceFeedbackRevision;
+    }
+    if (next.updatedAt != current.updatedAt) {
+      return next.updatedAt.isAfter(current.updatedAt);
+    }
     final nextTerminal = next.status != AiProtectionStatus.active;
     final currentTerminal = current.status != AiProtectionStatus.active;
-    if (nextTerminal != currentTerminal) return nextTerminal;
-    return next.updatedAt.isAfter(current.updatedAt);
+    return nextTerminal && !currentTerminal;
   }
+}
+
+class AiBackupRestorePlan {
+  const AiBackupRestorePlan({
+    required this.payload,
+    required this.mergedFeedback,
+    required this.pendingBindings,
+    required this.promptsToWrite,
+    required this.candidatesToWrite,
+  });
+
+  final AiBackupPayload payload;
+  final List<AiFeedbackAggregate> mergedFeedback;
+  final List<AiPendingBinding> pendingBindings;
+  final List<AiPromptRecord> promptsToWrite;
+  final List<AiPromptCandidate> candidatesToWrite;
 }
 
 class AiBackupRestoreResult {

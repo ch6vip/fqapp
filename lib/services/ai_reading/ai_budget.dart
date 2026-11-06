@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'ai_models.dart';
@@ -55,6 +56,7 @@ class AiBudgetService {
   static final instance = AiBudgetService();
   final AiStore _store;
   final AiSettingsStore _settings;
+  Future<void> _writeQueue = Future<void>.value();
 
   static String dayKey([DateTime? now]) {
     final date = (now ?? DateTime.now()).toLocal();
@@ -115,13 +117,11 @@ class AiBudgetService {
     }
     final currency = effective.global.costCurrency;
     if (effective.dailyCostLimit != null &&
-        daily.currency == currency &&
-        daily.costMicros / 1000000 >= effective.dailyCostLimit!) {
+        daily.costFor(currency) / 1000000 >= effective.dailyCostLimit!) {
       checks.add('今日费用已达上限');
     }
     if (effective.bookCostLimit != null &&
-        book.currency == currency &&
-        book.costMicros / 1000000 >= effective.bookCostLimit!) {
+        book.costFor(currency) / 1000000 >= effective.bookCostLimit!) {
       checks.add('本书今日费用已达上限');
     }
     if (checks.isEmpty) {
@@ -159,6 +159,7 @@ class AiBudgetService {
     final unknown = request.usage.status == AiUsageStatus.unknown ? 1 : 0;
     final cost = request.costMicros ?? 0;
     final currency = request.currency ?? 'CNY';
+    final displayCurrency = _settings.resolve(bookId).global.costCurrency;
     await _update(
       day,
       null,
@@ -167,6 +168,7 @@ class AiBudgetService {
       unknown,
       cost,
       currency,
+      displayCurrency,
       countTask,
     );
     await _update(
@@ -177,6 +179,7 @@ class AiBudgetService {
       unknown,
       cost,
       currency,
+      displayCurrency,
       countTask,
     );
   }
@@ -189,33 +192,57 @@ class AiBudgetService {
     int unknown,
     int cost,
     String currency,
+    String displayCurrency,
     bool countTask,
-  ) async {
-    final current =
-        await _store.projection(day, bookId) ??
-        AiBudgetProjection(
-          bucketDay: day,
-          bookId: bookId,
-          requestCount: 0,
-          taskCount: 0,
-          tokenSum: 0,
-          unknownUsageCount: 0,
-          costMicros: 0,
-          currency: currency,
-          updatedAt: DateTime.now(),
+  ) {
+    // Read-modify-write must be serialized; different chapters may finish at
+    // the same time, and both projections are shared across those requests.
+    final completer = Completer<void>();
+    final previous = _writeQueue;
+    _writeQueue = () async {
+      try {
+        await previous;
+      } catch (_) {
+        // A failed earlier write must not poison the queue.
+      }
+      try {
+        final current =
+            await _store.projection(day, bookId) ??
+            AiBudgetProjection(
+              bucketDay: day,
+              bookId: bookId,
+              requestCount: 0,
+              taskCount: 0,
+              tokenSum: 0,
+              unknownUsageCount: 0,
+              costMicros: 0,
+              currency: displayCurrency,
+              updatedAt: DateTime.now(),
+            );
+        final costs = <String, int>{...current.costsByCurrency};
+        final requestCurrency = request.currency ?? displayCurrency;
+        if (cost != 0) {
+          costs[requestCurrency] = (costs[requestCurrency] ?? 0) + cost;
+        }
+        final displayCost = costs[displayCurrency] ?? 0;
+        await _store.putProjection(
+          current.copyWith(
+            requestCount: current.requestCount + 1,
+            taskCount: current.taskCount + (countTask ? 1 : 0),
+            tokenSum: current.tokenSum + tokens,
+            unknownUsageCount: current.unknownUsageCount + unknown,
+            costMicros: displayCost,
+            currency: displayCurrency,
+            costsByCurrency: Map.unmodifiable(costs),
+            updatedAt: DateTime.now(),
+          ),
         );
-    final sameCurrency =
-        request.currency == null || request.currency == currency;
-    await _store.putProjection(
-      current.copyWith(
-        requestCount: current.requestCount + 1,
-        taskCount: current.taskCount + (countTask ? 1 : 0),
-        tokenSum: current.tokenSum + tokens,
-        unknownUsageCount: current.unknownUsageCount + unknown,
-        costMicros: current.costMicros + (sameCurrency ? cost : 0),
-        updatedAt: DateTime.now(),
-      ),
-    );
+        if (!completer.isCompleted) completer.complete();
+      } catch (error, stack) {
+        if (!completer.isCompleted) completer.completeError(error, stack);
+      }
+    }();
+    return completer.future;
   }
 
   Future<AiBudgetSnapshot> snapshot(String bookId) async {
@@ -247,10 +274,13 @@ class AiBudgetService {
           currency: effective.global.costCurrency,
           updatedAt: DateTime.now(),
         );
+    final currency = effective.global.costCurrency;
+    AiBudgetProjection display(AiBudgetProjection projection) => projection
+        .copyWith(currency: currency, costMicros: projection.costFor(currency));
     return AiBudgetSnapshot(
       day: day,
-      daily: daily,
-      book: book,
+      daily: display(daily),
+      book: display(book),
       settings: effective,
     );
   }
@@ -268,6 +298,14 @@ class AiBudgetService {
     final bookRequests = requests
         .where((request) => bookRunIds.contains(request.runId))
         .toList();
+    final costsByCurrency = <String, int>{};
+    for (final request in bookRequests) {
+      if (request.costMicros == null) continue;
+      final currency = request.currency ?? 'CNY';
+      costsByCurrency[currency] =
+          (costsByCurrency[currency] ?? 0) + request.costMicros!;
+    }
+    final currency = _settings.resolve(bookId).global.costCurrency;
     var prompt = 0;
     var completion = 0;
     var cached = 0;
@@ -304,13 +342,9 @@ class AiBudgetService {
       'reasoningTokens': reasoning,
       'knownUsageCount': known,
       'unknownUsageCount': unknown,
-      'estimatedCostMicros': bookRequests.fold<int>(
-        0,
-        (sum, request) => sum + (request.costMicros ?? 0),
-      ),
-      'currency': bookRequests.isEmpty
-          ? 'CNY'
-          : (bookRequests.first.currency ?? 'CNY'),
+      'estimatedCostMicros': costsByCurrency[currency] ?? 0,
+      'estimatedCostsByCurrency': costsByCurrency,
+      'currency': currency,
     };
   }
 

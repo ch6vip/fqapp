@@ -79,26 +79,30 @@ class AiTrialService {
     var anySuccess = false;
     var anyFailure = false;
     try {
-      // Deduplicate by content hash: the same chapter text is requested once.
-      final seenHashes = <String>{};
+      // Request the same content hash once, but evaluate feedback per chapter:
+      // protection and feedback are chapter-scoped even when text is identical.
+      final resultsByHash = <String, AiTaskResult>{};
       for (final chapter in chapters) {
         final snapshot = AiChapterSnapshotBuilder.fromContent(
           chapter.content,
           chapter.title,
         );
-        if (!seenHashes.add(snapshot.canonicalHash)) continue;
-        final result = await _coordinator.runFormal(
-          bookId: bookId,
-          chapterId: chapter.chapterId,
-          chapterTitle: chapter.title,
-          content: chapter.content,
-          kind: AiRunKind.trial,
-          automatic: false,
-          confirmedOverBudget: confirmedOverBudget,
-          behaviorPromptOverride: candidatePrompt,
-        );
-        if (result.needsBudgetConfirmation) {
-          throw AiTrialNeedsBudget(result.budgetMessage ?? '本次试验将超出预算');
+        var result = resultsByHash[snapshot.canonicalHash];
+        if (result == null) {
+          result = await _coordinator.runFormal(
+            bookId: bookId,
+            chapterId: chapter.chapterId,
+            chapterTitle: chapter.title,
+            content: chapter.content,
+            kind: AiRunKind.trial,
+            automatic: false,
+            confirmedOverBudget: confirmedOverBudget,
+            behaviorPromptOverride: candidatePrompt,
+          );
+          if (result.needsBudgetConfirmation) {
+            throw AiTrialNeedsBudget(result.budgetMessage ?? '本次试验将超出预算');
+          }
+          resultsByHash[snapshot.canonicalHash] = result;
         }
         if (result.ok && result.validation != null) {
           anySuccess = true;
