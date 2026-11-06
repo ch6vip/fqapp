@@ -204,11 +204,21 @@ class AiBudgetService {
       final nextDaily = daily.copyWith(
         reservedRequestCount: daily.reservedRequestCount + 1,
         reservedTaskCount: daily.reservedTaskCount + (countTask ? 1 : 0),
+        reservedRequestIds: [...daily.reservedRequestIds, reservedRequestId],
+        reservedTaskIds: [
+          ...daily.reservedTaskIds,
+          if (countTask) reservedRequestId,
+        ],
         updatedAt: DateTime.now(),
       );
       final nextBook = book.copyWith(
         reservedRequestCount: book.reservedRequestCount + 1,
         reservedTaskCount: book.reservedTaskCount + (countTask ? 1 : 0),
+        reservedRequestIds: [...book.reservedRequestIds, reservedRequestId],
+        reservedTaskIds: [
+          ...book.reservedTaskIds,
+          if (countTask) reservedRequestId,
+        ],
         updatedAt: DateTime.now(),
       );
       try {
@@ -309,6 +319,13 @@ class AiBudgetService {
                 reservation.displayCurrency,
               );
           targets[bookId] = current;
+          final idKnown = current.reservedRequestIds.contains(
+            reservation.requestId,
+          );
+          final legacySlot =
+              current.reservedRequestIds.isEmpty &&
+              current.reservedRequestCount > 0;
+          if (!idKnown && !legacySlot) continue;
           final costs = <String, int>{...current.costsByCurrency};
           final cost = request.costMicros ?? 0;
           if (cost != 0) {
@@ -512,6 +529,8 @@ class AiBudgetService {
           ? incoming.copyWith(
               reservedRequestCount: 0,
               reservedTaskCount: 0,
+              reservedRequestIds: const [],
+              reservedTaskIds: const [],
               costsByCurrency: Map.unmodifiable(costs),
             )
           : incoming.copyWith(
