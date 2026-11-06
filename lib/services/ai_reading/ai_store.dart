@@ -342,6 +342,13 @@ class AiStore {
       try {
         final current = AiFeedbackAggregate.fromJson(_feedback?.get(key));
         var next = await mutate(current);
+        // Preserve unresolved restore conflicts across every later mutation
+        // of the same chapter aggregate. A normal feedback edit must not
+        // silently erase the fact that two devices diverged.
+        final conflicts = <String, AiRestoreConflict>{
+          for (final entry in [...?current?.conflicts, ...next.conflicts])
+            entry.signature: entry,
+        };
         next = AiFeedbackAggregate(
           bookId: bookId,
           chapterId: chapterId,
@@ -350,6 +357,7 @@ class AiStore {
           aggregateRevision: (current?.aggregateRevision ?? 0) + 1,
           cases: List.unmodifiable(next.cases),
           protections: List.unmodifiable(next.protections),
+          conflicts: List.unmodifiable(conflicts.values),
           updatedAt: DateTime.now(),
         );
         _validateAggregate(next);

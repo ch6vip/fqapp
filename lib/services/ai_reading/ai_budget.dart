@@ -10,6 +10,7 @@ class AiBudgetDecision {
     required this.allowed,
     this.needsConfirmation = false,
     this.reason,
+    this.code,
     this.usageRatio = 0,
     this.reservation,
   });
@@ -17,6 +18,7 @@ class AiBudgetDecision {
   final bool allowed;
   final bool needsConfirmation;
   final String? reason;
+  final String? code;
   final double usageRatio;
   final AiBudgetReservation? reservation;
 }
@@ -114,14 +116,37 @@ class AiBudgetService {
     required bool automatic,
     required bool countTask,
     bool confirmedOverBudget = false,
-  }) async {
-    final effective = _settings.resolve(bookId);
-    if (!effective.enabled) {
-      return const AiBudgetDecision(allowed: false, reason: 'AI 阅读优化未开启');
-    }
-    final day = dayKey();
-    final displayCurrency = effective.global.costCurrency;
+  }) {
     return _enqueue(() async {
+      // Re-read every gate inside the serialized queue. Consent can be revoked
+      // while this task waits behind another budget write.
+      final effective = _settings.resolve(bookId);
+      if (!effective.enabled) {
+        return const AiBudgetDecision(
+          allowed: false,
+          reason: 'AI 阅读优化未开启',
+          code: 'DISABLED',
+          usageRatio: 1,
+        );
+      }
+      if (_settings.device.deviceDisabled) {
+        return const AiBudgetDecision(
+          allowed: false,
+          reason: '本机已停用 AI 请求',
+          code: 'DEVICE_DISABLED',
+          usageRatio: 1,
+        );
+      }
+      if (!_settings.device.cloudConsent) {
+        return const AiBudgetDecision(
+          allowed: false,
+          reason: '还没有同意把章节正文发送给第三方',
+          code: 'CONSENT_REQUIRED',
+          usageRatio: 1,
+        );
+      }
+      final day = dayKey();
+      final displayCurrency = effective.global.costCurrency;
       final daily =
           await _store.projection(day, null) ??
           _emptyProjection(day, null, displayCurrency);
@@ -143,20 +168,35 @@ class AiBudgetService {
         bookId: bookId,
         displayCurrency: displayCurrency,
       );
-      await _store.putProjection(
-        daily.copyWith(
-          requestCount: daily.requestCount + 1,
-          taskCount: daily.taskCount + (countTask ? 1 : 0),
-          updatedAt: DateTime.now(),
-        ),
+      final nextDaily = daily.copyWith(
+        requestCount: daily.requestCount + 1,
+        taskCount: daily.taskCount + (countTask ? 1 : 0),
+        updatedAt: DateTime.now(),
       );
-      await _store.putProjection(
-        book.copyWith(
-          requestCount: book.requestCount + 1,
-          taskCount: book.taskCount + (countTask ? 1 : 0),
-          updatedAt: DateTime.now(),
-        ),
+      final nextBook = book.copyWith(
+        requestCount: book.requestCount + 1,
+        taskCount: book.taskCount + (countTask ? 1 : 0),
+        updatedAt: DateTime.now(),
       );
+      try {
+        await _store.putProjection(nextDaily);
+        await _store.putProjection(nextBook);
+      } catch (_) {
+        // Hive has no cross-key transaction. Never leave a half-reserved slot
+        // behind when the second write fails.
+        try {
+          await _store.putProjection(daily);
+        } catch (_) {}
+        try {
+          await _store.putProjection(book);
+        } catch (_) {}
+        return const AiBudgetDecision(
+          allowed: false,
+          reason: '预算写入失败，请重试',
+          code: 'BUDGET_WRITE_FAILED',
+          usageRatio: 1,
+        );
+      }
       return AiBudgetDecision(
         allowed: true,
         usageRatio: decision.usageRatio,
@@ -165,37 +205,93 @@ class AiBudgetService {
     });
   }
 
+  /// Returns a reservation whose HTTP call was cancelled before it was sent.
+  Future<void> release(AiBudgetReservation reservation) {
+    return _enqueue(() async {
+      final daily =
+          await _store.projection(reservation.day, null) ??
+          _emptyProjection(reservation.day, null, reservation.displayCurrency);
+      final book =
+          await _store.projection(reservation.day, reservation.bookId) ??
+          _emptyProjection(
+            reservation.day,
+            reservation.bookId,
+            reservation.displayCurrency,
+          );
+      final nextDaily = daily.copyWith(
+        requestCount: daily.requestCount > 0 ? daily.requestCount - 1 : 0,
+        taskCount: daily.taskCount > 0 ? daily.taskCount - 1 : 0,
+        updatedAt: DateTime.now(),
+      );
+      final nextBook = book.copyWith(
+        requestCount: book.requestCount > 0 ? book.requestCount - 1 : 0,
+        taskCount: book.taskCount > 0 ? book.taskCount - 1 : 0,
+        updatedAt: DateTime.now(),
+      );
+      try {
+        await _store.putProjection(nextDaily);
+        await _store.putProjection(nextBook);
+      } catch (_) {
+        try {
+          await _store.putProjection(daily);
+        } catch (_) {}
+        try {
+          await _store.putProjection(book);
+        } catch (_) {}
+        rethrow;
+      }
+    });
+  }
+
   /// Adds actual usage after a request. The request slot was already counted by
-  /// [reserve], so this never increments [requestCount] or [taskCount].
+  /// [reserve], so this never increments [requestCount] or [taskCount]. Global
+  /// and per-book projections are updated in the same queue turn so a new
+  /// reservation cannot observe one half of this settlement.
   Future<void> settle({
     required AiBudgetReservation reservation,
     required AiRequestRecord request,
-  }) async {
+  }) {
     final currency = request.currency ?? reservation.displayCurrency;
-    await _apply(
-      day: reservation.day,
-      bookId: null,
-      tokens: request.usage.knownTokenSum,
-      unknown: request.usage.status == AiUsageStatus.unknown ? 1 : 0,
-      cost: request.costMicros ?? 0,
-      requestCurrency: currency,
-      displayCurrency: reservation.displayCurrency,
-      countRequest: false,
-      addUsage: true,
-      countTask: false,
-    );
-    await _apply(
-      day: reservation.day,
-      bookId: reservation.bookId,
-      tokens: request.usage.knownTokenSum,
-      unknown: request.usage.status == AiUsageStatus.unknown ? 1 : 0,
-      cost: request.costMicros ?? 0,
-      requestCurrency: currency,
-      displayCurrency: reservation.displayCurrency,
-      countRequest: false,
-      addUsage: true,
-      countTask: false,
-    );
+    return _enqueue(() async {
+      final targets = <String?, AiBudgetProjection>{};
+      try {
+        for (final bookId in <String?>[null, reservation.bookId]) {
+          final current =
+              await _store.projection(reservation.day, bookId) ??
+              _emptyProjection(
+                reservation.day,
+                bookId,
+                reservation.displayCurrency,
+              );
+          targets[bookId] = current;
+          final costs = <String, int>{...current.costsByCurrency};
+          final cost = request.costMicros ?? 0;
+          if (cost != 0) {
+            costs[currency] = (costs[currency] ?? 0) + cost;
+          }
+          await _store.putProjection(
+            current.copyWith(
+              tokenSum: current.tokenSum + request.usage.knownTokenSum,
+              unknownUsageCount:
+                  current.unknownUsageCount +
+                  (request.usage.status == AiUsageStatus.unknown ? 1 : 0),
+              costMicros: costs[reservation.displayCurrency] ?? 0,
+              currency: reservation.displayCurrency,
+              costsByCurrency: Map.unmodifiable(costs),
+              updatedAt: DateTime.now(),
+            ),
+          );
+        }
+      } catch (_) {
+        // Best effort compensation; the request ledger remains authoritative.
+        for (final entry in targets.entries) {
+          try {
+            await _store.putProjection(entry.value);
+          } catch (_) {}
+        }
+        rethrow;
+      }
+    });
   }
 
   AiBudgetDecision _decide({
@@ -208,10 +304,10 @@ class AiBudgetService {
     bool confirmedOverBudget = false,
   }) {
     final checks = <String>[];
-    if (daily.tokenSum + incomingTokens > effective.dailyTokenLimit) {
+    if (daily.tokenSum + incomingTokens >= effective.dailyTokenLimit) {
       checks.add('今日 Token 已达上限');
     }
-    if (book.tokenSum + incomingTokens > effective.bookTokenLimit) {
+    if (book.tokenSum + incomingTokens >= effective.bookTokenLimit) {
       checks.add('本书今日 Token 已达上限');
     }
     if (daily.requestCount + 1 > effective.dailyRequestLimit) {
@@ -288,42 +384,6 @@ class AiBudgetService {
       }
     }();
     return completer.future;
-  }
-
-  Future<void> _apply({
-    required String day,
-    required String? bookId,
-    required int tokens,
-    required int unknown,
-    required int cost,
-    required String requestCurrency,
-    required String displayCurrency,
-    required bool countRequest,
-    required bool addUsage,
-    required bool countTask,
-  }) {
-    return _enqueue(() async {
-      final current =
-          await _store.projection(day, bookId) ??
-          _emptyProjection(day, bookId, displayCurrency);
-      final costs = <String, int>{...current.costsByCurrency};
-      if (addUsage && cost != 0) {
-        costs[requestCurrency] = (costs[requestCurrency] ?? 0) + cost;
-      }
-      await _store.putProjection(
-        current.copyWith(
-          requestCount: current.requestCount + (countRequest ? 1 : 0),
-          taskCount: current.taskCount + (countTask ? 1 : 0),
-          tokenSum: current.tokenSum + (addUsage ? tokens : 0),
-          unknownUsageCount:
-              current.unknownUsageCount + (addUsage ? unknown : 0),
-          costMicros: costs[displayCurrency] ?? 0,
-          currency: displayCurrency,
-          costsByCurrency: Map.unmodifiable(costs),
-          updatedAt: DateTime.now(),
-        ),
-      );
-    });
   }
 
   Future<AiBudgetSnapshot> snapshot(String bookId) async {
