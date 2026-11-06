@@ -27,8 +27,21 @@ Future<List<ReaderTapZoneAction>?> showReaderTapZoneEditor({
     context: context,
     barrierColor: Colors.black54,
     barrierDismissible: true,
-    builder: (context) =>
-        _ReaderTapZoneEditor(initialZones: initialZones, preset: preset),
+    builder: (context) {
+      final editor = _ReaderTapZoneEditor(
+        initialZones: initialZones,
+        preset: preset,
+      );
+      // 墨水屏：弹窗在独立路由里，必须自己声明轻量作用域，否则面板里的
+      // 玻璃按钮仍会走实时折射并留残影。
+      return preset.isEink
+          ? PerformanceScope(
+              preferences: const PerformancePreferences(enabled: true),
+              explicitReduceMotion: true,
+              child: editor,
+            )
+          : editor;
+    },
   );
 }
 

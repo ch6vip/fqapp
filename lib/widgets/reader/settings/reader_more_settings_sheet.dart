@@ -122,6 +122,7 @@ class _ReaderMoreSettingsSheetState
       closeTooltip: '关闭更多设置',
       scrollKey: const ValueKey('reader-more-settings-scroll'),
       maxHeightFactor: 0.75,
+      onClose: flushPreferences,
       children: [
         const ReaderSettingsSectionHeader(title: '排版'),
         ReaderTypographySettings(

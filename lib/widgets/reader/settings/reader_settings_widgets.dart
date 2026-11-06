@@ -65,6 +65,7 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
     this.body,
     this.actions = const [],
     this.maxHeightFactor = 0.82,
+    this.onClose,
   });
 
   final ReaderThemePreset preset;
@@ -73,6 +74,10 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
   final Key scrollKey;
   final double maxHeightFactor;
   final List<Widget> children;
+
+  /// 关闭前先执行：面板把尾随合并的最后一个值交给阅读页，避免关闭按钮
+  /// 触发 pop 后、退出动画期间才 dispose 补发，导致这次保存漏掉终值。
+  final VoidCallback? onClose;
 
   /// 标题右侧、关闭按钮之前的玻璃动作（目录的搜索 / 排序）。
   final List<Widget> actions;
@@ -186,7 +191,10 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
             GlassIconButton(
               icon: CupertinoIcons.xmark,
               label: closeTooltip,
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                onClose?.call();
+                Navigator.pop(context);
+              },
             ),
           ],
         ),

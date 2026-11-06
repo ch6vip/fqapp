@@ -6,12 +6,13 @@
 //   date/battery cache are replaced by fqapp's `ReaderDeviceStatus` snapshot;
 //   the clock/battery row keeps the upstream geometry and typography.
 // - `AppText` -> `AppText` from `lib/widgets/wenku/src/app_text.dart`.
-// - `ArchiveIcon(CupertinoIcons.battery_100)` / bolt icon match upstream.
+// - `CupertinoIcons.battery_100` (15) / `bolt_fill` (11) match upstream; they
+//   are painted with `Icon` rather than the archive `ArchiveIcon` wrapper
+//   because fqapp keeps its own muted reader palette.
 // - fqapp keeps its own second slot: the reading progress percentage, the
 //   paged page number and the floating player pill are existing product
 //   features and stay in this footer.
 import 'package:flutter/cupertino.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
@@ -149,8 +150,8 @@ class ReaderStatusBar extends StatelessWidget {
               ),
             const SizedBox(width: 5),
             Icon(
-              LucideIcons.battery_medium,
-              size: 13,
+              CupertinoIcons.battery_100,
+              size: 15,
               color: preset.mutedTextColor,
             ),
             const SizedBox(width: 4),

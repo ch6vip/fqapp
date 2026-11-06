@@ -252,6 +252,7 @@ class _ReaderAppearanceSheetState
       title: '阅读设置',
       closeTooltip: '关闭排版设置',
       scrollKey: const ValueKey('reader-appearance-scroll'),
+      onClose: flushPreferences,
       children: [
         if (widget.deviceAvailable) _brightnessRow(),
         _fontSizeRow(),
