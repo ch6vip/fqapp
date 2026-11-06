@@ -23,6 +23,7 @@
 //   existing row facts without a service dependency.
 // - `coverHeroTag` is accepted for parity; fqapp does not fly a Hero.
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/media_item.dart';
@@ -249,7 +250,8 @@ class ShelfNovelRow extends StatelessWidget {
                     ],
                   ),
                 ),
-                trailing ?? const ArchiveIcon(Icons.chevron_right, size: 15),
+                trailing ??
+                    const ArchiveIcon(CupertinoIcons.chevron_right, size: 15),
               ],
             ),
           ),
