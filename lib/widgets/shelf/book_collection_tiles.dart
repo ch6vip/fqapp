@@ -172,7 +172,9 @@ class ShelfNovelRow extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 13),
             decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
@@ -322,58 +324,68 @@ class ShelfBookGridTile extends StatelessWidget {
     ),
   );
 
-  Widget _metadata(BuildContext context, {double? height}) => SizedBox(
-    key: ValueKey('grid-metadata-${item.id}'),
-    height: height,
-    child: Row(
-      children: [
-        Expanded(
-          child: GestureDetector(
-            onLongPress: onLongPress,
-            child: JellyTapSurface(
-              onTap: onTap,
-              child: SizedBox(
-                height: height,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (meta != null && meta!.isNotEmpty)
-                      AppText(
-                        meta!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.4,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+  Widget _metadata(BuildContext context, {double? height}) {
+    // The grid footer carries the same facts as the list row's meta line, so
+    // the 番茄导入 marker never disappears when the user switches to a grid.
+    final metaText = [
+      if (meta != null && meta!.isNotEmpty) meta!,
+      if (fanqieImported) '番茄导入',
+    ].join(' · ');
+    return SizedBox(
+      key: ValueKey('grid-metadata-${item.id}'),
+      height: height,
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onLongPress: onLongPress,
+              child: JellyTapSurface(
+                onTap: onTap,
+                child: SizedBox(
+                  height: height,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (metaText.isNotEmpty)
+                        AppText(
+                          metaText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                    if (progress != null && progress!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      AppText(
-                        progress!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.4,
-                          color: Theme.of(context).colorScheme.primary,
+                      if (progress != null && progress!.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        AppText(
+                          progress!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        // This sibling is never inside the cover's open-book gesture target.
-        trailing ?? const SizedBox.shrink(),
-      ],
-    ),
-  );
+          // This sibling is never inside the cover's open-book gesture target.
+          trailing ?? const SizedBox.shrink(),
+        ],
+      ),
+    );
+  }
 
   Widget _tile(
     BuildContext context, {
