@@ -480,7 +480,11 @@ class AiStore {
   }
 
   Future<void> putProjection(AiBudgetProjection projection) async {
-    await _usage?.put(projection.key, projection.toJson());
+    final box = _usage;
+    if (!_available || box == null) {
+      throw StateError(_status ?? 'AI 用量存储不可用');
+    }
+    await box.put(projection.key, projection.toJson());
   }
 
   Future<List<AiBudgetProjection>> projections() async {
