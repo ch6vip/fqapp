@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 
 import 'ai_models.dart';
+import 'ai_budget.dart';
 import 'ai_controller.dart';
 import 'ai_settings.dart';
 import 'ai_store.dart';
@@ -383,12 +384,13 @@ class AiBackupService {
     var trialResults = 0;
     var usage = 0;
     var pending = 0;
+    var conflicts = 0;
 
     for (final aggregatePlan in plan.aggregatePlans) {
       // The queue and revision check are inside the store. If a local edit
       // landed after prepare(), merge it with the incoming snapshot again
       // instead of overwriting the newer chapter.
-      await _store.mutateAggregate(
+      final restored = await _store.mutateAggregate(
         bookId: aggregatePlan.incoming.bookId,
         chapterId: aggregatePlan.incoming.chapterId,
         canonicalVersion: aggregatePlan.incoming.canonicalVersion,
@@ -403,6 +405,7 @@ class AiBackupService {
           return remerged;
         },
       );
+      conflicts += restored.conflicts.length;
       feedback++;
     }
     for (final prompt in plan.promptsToWrite) {
@@ -443,38 +446,9 @@ class AiBackupService {
       trialResults++;
     }
     for (final projection in payload.usage) {
-      final current = await _store.projection(
-        projection.bucketDay,
-        projection.bookId,
-      );
-      final costs = <String, int>{...?current?.costsByCurrency};
-      for (final entry in projection.costsByCurrency.entries) {
-        final previous = costs[entry.key] ?? 0;
-        if (entry.value > previous) costs[entry.key] = entry.value;
-      }
-      // Usage is a monotonic ledger projection. Restoring an older backup must
-      // not lower today's spend and silently reopen the budget.
-      final merged = current == null
-          ? projection.copyWith(costsByCurrency: Map.unmodifiable(costs))
-          : projection.copyWith(
-              requestCount: projection.requestCount > current.requestCount
-                  ? projection.requestCount
-                  : current.requestCount,
-              taskCount: projection.taskCount > current.taskCount
-                  ? projection.taskCount
-                  : current.taskCount,
-              tokenSum: projection.tokenSum > current.tokenSum
-                  ? projection.tokenSum
-                  : current.tokenSum,
-              unknownUsageCount:
-                  projection.unknownUsageCount > current.unknownUsageCount
-                  ? projection.unknownUsageCount
-                  : current.unknownUsageCount,
-              costsByCurrency: Map.unmodifiable(costs),
-              currency: current.currency,
-              costMicros: costs[current.currency] ?? 0,
-            );
-      await _store.putProjection(merged);
+      // Same serialized budget queue as live requests: an older backup snapshot
+      // must not overwrite a request that reserved or settled concurrently.
+      await AiBudgetService.instance.mergeUsage(projection);
       usage++;
     }
     for (final binding in plan.pendingBindings) {
@@ -513,6 +487,7 @@ class AiBackupService {
       trialResults: trialResults,
       usage: usage,
       pending: pending,
+      conflicts: conflicts,
     );
   }
 
@@ -655,6 +630,7 @@ class AiBackupRestoreResult {
     required this.trialResults,
     required this.usage,
     required this.pending,
+    required this.conflicts,
   });
 
   final int feedback;
@@ -664,12 +640,21 @@ class AiBackupRestoreResult {
   final int trialResults;
   final int usage;
   final int pending;
+  final int conflicts;
 
   int get total =>
-      feedback + prompts + candidates + trials + trialResults + usage + pending;
+      feedback +
+      prompts +
+      candidates +
+      trials +
+      trialResults +
+      usage +
+      pending +
+      conflicts;
 
   String get summary =>
       '已恢复 $feedback 章反馈、$prompts 条提示词、$candidates 个候选、'
       '$trials 次试验、$trialResults 条试验判定、$usage 个用量聚合'
-      '${pending > 0 ? '；$pending 条本地书资产待绑定' : ''}';
+      '${pending > 0 ? '；$pending 条本地书资产待绑定' : ''}'
+      '${conflicts > 0 ? '；$conflicts 条恢复冲突待处理' : ''}';
 }
