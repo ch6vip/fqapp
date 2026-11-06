@@ -145,6 +145,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('目录'));
     await tester.pumpAndSettle();
+    // 目录搜索默认收起（与上游一致），展开后才挂载输入框。
+    expect(find.byType(TextField), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('reader-catalogue-search-toggle')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-chapter-search')), findsOneWidget);
     await tester.tap(find.byType(TextField));
     tester.view.viewInsets = const FakeViewPadding(bottom: 300);
     await tester.pumpAndSettle();

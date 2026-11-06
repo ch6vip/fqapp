@@ -43,6 +43,24 @@ void main() {
     expect(find.text('目录'), findsOneWidget);
     expect(find.text('设置'), findsOneWidget);
 
+    // 胶囊和坞按上游 DockLayout 的宽度收紧，不再铺满整栏。
+    final capsule = tester.getSize(
+      find.byKey(const ValueKey('reader-progress-capsule')),
+    );
+    expect(capsule.width, lessThanOrEqualTo(DockLayout.widthFor(5) - 32 + .5));
+    final dock = tester.getSize(
+      find.byKey(const ValueKey('reader-liquid-dock')),
+    );
+    expect(dock.width, lessThanOrEqualTo(DockLayout.widthFor(3) + .5));
+
+    // 章节滑条的无障碍值读作「第 N 章」，而不是默认百分比。
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey('reader-chapter-seek')))
+          .value,
+      '第 1 章',
+    );
+
     final back = tester.widget<GlassIconButton>(
       find.byKey(const ValueKey('reader-back-entry')),
     );
@@ -54,7 +72,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('外观面板的步进器立即写入偏好', (tester) async {
+  testWidgets('外观面板的步进器尾随合并写入偏好', (tester) async {
     final changes = <ReaderPreferences>[];
     await tester.pumpWidget(
       MaterialApp(
@@ -86,10 +104,33 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('增大字号'));
-    await tester.pumpAndSettle();
-    // 离散步进不经过 120ms 合并，点完即写入。
+    await tester.pump();
+    // 面板自身立即更新，阅读页按 120ms 尾随合并收到一次写入。
+    expect(changes, isEmpty);
+    await tester.pump(const Duration(milliseconds: 150));
     expect(changes, hasLength(1));
     expect(changes.single.fontSize, 19);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('墨水屏阅读页的顶栏与正文子层不启用实时玻璃', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'reader_theme_preset': ReaderThemePreset.eink.name,
+    });
+    await _mountReader(tester);
+    await tester.tapAt(
+      tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+    );
+    await tester.pumpAndSettle();
+
+    // 顶栏和正文（段落选择条挂在这里）都必须落在轻量作用域内，否则 EPD
+    // 上会走实时折射并留下灰阶残影。
+    for (final key in ['reader-toolbar', 'reader-page-surface']) {
+      final scope = PerformanceScope.of(
+        tester.element(find.byKey(ValueKey(key))),
+      );
+      expect(scope.glass, isFalse, reason: '$key 仍启用实时玻璃');
+    }
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
