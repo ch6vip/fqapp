@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/library_backup.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/services/encrypted_hive.dart';
 import 'package:fqapp/services/library_backup_service.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_group_store.dart';
@@ -231,6 +232,57 @@ void main() {
   });
 
   test(
+    'a ready group store with no groups exports no groups field and restores',
+    () async {
+      await groups.init();
+      expect(groups.isReady, isTrue);
+      expect(groups.groups, isEmpty);
+      await shelf.add(_item('1'));
+      final backup = await LibraryBackupService().capture();
+      // The store is ready but empty: the three-key organization must be
+      // normalized away so the field is omitted and the page does not claim
+      // "0 个分组" (D-B1).
+      expect(backup.groupsIncluded, isFalse);
+      expect(utf8.decode(backup.encode()), isNot(contains('"groups"')));
+
+      // A backup without groups must restore even when the group store is not
+      // ready (D-M9); the readiness gate only applies to grouped backups.
+      await EncryptedHive.box<dynamic>(Hive, ShelfGroupStore.boxName).close();
+      expect(groups.isReady, isFalse);
+      expect(await LibraryBackupService().restore(backup), (
+        shelf: 0,
+        history: 0,
+        episodes: 0,
+        groups: 0,
+        assignments: 0,
+      ));
+    },
+  );
+
+  test('malformed local ids are excluded instead of failing the export', () {
+    final backup = LibraryBackup.capture(
+      shelf: [
+        ShelfRecord(item: _item('local_foo'), addedAt: DateTime(2020)),
+        ShelfRecord(item: _item('local_123'), addedAt: DateTime(2020)),
+        ShelfRecord(item: _item('local_1_XYZ'), addedAt: DateTime(2020)),
+        ShelfRecord(
+          item: _item('1', seriesId: 'local_foo'),
+          addedAt: DateTime(2020),
+        ),
+        ShelfRecord(item: _item('123'), addedAt: DateTime(2020)),
+      ],
+      history: [],
+      watched: {},
+    );
+    // The pre-migration rule excluded every `local_`-prefixed id; malformed
+    // ids must not slip into the file and make `_id` reject the whole export.
+    expect(backup.shelf, hasLength(1));
+    expect(backup.shelf.single.item.id, '123');
+    expect(backup.excludedLocalRecords, 4);
+    expect(() => LibraryBackup.decode(backup.encode()), returnsNormally);
+  });
+
+  test(
     'export still carries shelf and history when the group store is not ready',
     () async {
       expect(groups.isReady, isFalse);
@@ -324,7 +376,7 @@ Uint8List _bytesWithGroups(Object? groups) {
   return Uint8List.fromList(utf8.encode(jsonEncode(base)));
 }
 
-MediaItem _item(String id) => MediaItem(
+MediaItem _item(String id, {String? seriesId}) => MediaItem(
   id: id,
   title: '作品',
   cover: '',
@@ -332,4 +384,5 @@ MediaItem _item(String id) => MediaItem(
   badge: '',
   ep: '',
   kind: 'book',
+  seriesId: seriesId,
 );
