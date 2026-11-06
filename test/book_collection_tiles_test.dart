@@ -112,6 +112,45 @@ void main() {
     expect(find.text('已读完'), findsOneWidget);
   });
 
+  testWidgets('列表行底部分隔线使用主题 dividerColor', (tester) async {
+    await tester.pumpWidget(
+      _host(ShelfNovelRow(item: _item('1'), onTap: () {})),
+    );
+    await tester.pumpAndSettle();
+    final container = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byType(ShelfNovelRow),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final border = (container.decoration! as BoxDecoration).border! as Border;
+    final theme = Theme.of(tester.element(find.byType(ShelfNovelRow)));
+    expect(border.bottom.color, theme.dividerColor);
+  });
+
+  testWidgets('宫格条目也显示番茄导入标记', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 120,
+            child: ShelfBookGridTile(
+              item: _item('3'),
+              onTap: () {},
+              meta: '作者',
+              fanqieImported: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('作者 · 番茄导入'), findsOneWidget);
+  });
+
   testWidgets('编辑态隐藏封面角标并显示选中标记', (tester) async {
     await tester.pumpWidget(
       _host(
