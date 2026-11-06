@@ -144,10 +144,13 @@ class AiBudgetService {
     bool requireConsent = true,
     String? requestId,
     String? runId,
-  }) {
+  }) async {
     final reservedRequestId =
         requestId ??
         'req_reserved_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+    // Wait for recovery before entering the write queue: recovery itself calls
+    // settle(), which uses the same queue.
+    await ensureRecovered();
     return _enqueue(() async {
       // Re-read every gate inside the serialized queue. Consent can be revoked
       // while this task waits behind another budget write.
@@ -395,7 +398,17 @@ class AiBudgetService {
   /// One-time startup reconciliation shared by every request entry point. A
   /// probe can start before the reading controller's init; without this gate it
   /// could be mistaken for a leftover reservation by that later init.
-  Future<void> ensureRecovered() => _recoveryFuture ??= _recoverOnce();
+  Future<void> ensureRecovered() {
+    final pending = _recoveryFuture;
+    if (pending != null) return pending;
+    final future = _recoverOnce().catchError((Object error, StackTrace stack) {
+      // A transient storage failure must not poison every later request.
+      _recoveryFuture = null;
+      return Future<void>.error(error, stack);
+    });
+    _recoveryFuture = future;
+    return future;
+  }
 
   Future<void> _recoverOnce() async {
     if (!_store.isAvailable) return;
