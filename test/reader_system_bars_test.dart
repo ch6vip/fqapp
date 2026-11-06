@@ -9,7 +9,7 @@ import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/chapter_ideas.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
-import 'package:fqapp/widgets/wenku/reader_glass_controls.dart';
+import 'package:fqapp/widgets/wenku/glass_controls.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_preferences.dart';
@@ -62,13 +62,13 @@ void main() {
           .first;
       final toggle = find.descendant(
         of: row,
-        matching: find.byType(ReaderGlassSwitch),
+        matching: find.byType(AppGlassSwitch),
       );
       await tester.ensureVisible(toggle);
-      expect(tester.widget<ReaderGlassSwitch>(toggle).value, !visible);
+      expect(tester.widget<AppGlassSwitch>(toggle).value, !visible);
       await tester.tap(toggle);
       await tester.pumpAndSettle();
-      expect(tester.widget<ReaderGlassSwitch>(toggle).value, visible);
+      expect(tester.widget<AppGlassSwitch>(toggle).value, visible);
       await tester.tap(find.byTooltip('关闭更多设置'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('关闭排版设置'));

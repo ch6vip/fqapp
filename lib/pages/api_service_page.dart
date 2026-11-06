@@ -8,7 +8,7 @@
 // Mechanical substitutions:
 // - `SettingsScaffold` / `SettingsGroupCard` / `SettingsSwitch` / HomePalette
 //   rows -> `SettingsArchivePage`, `ContentPanel`, `SettingsPanel`,
-//   `SettingsLinkRow`, `SettingsGlassControls.toggle`.
+//   `SettingsLinkRow`, `GlassControls.toggle`.
 // - `SettingsArchivePage` drops the back button when the nearest Navigator has
 //   nothing to pop, so the Windows right pane cannot be emptied by it.
 // - The status dot reads the archive `colorScheme` instead of HomePalette.
@@ -25,7 +25,6 @@ import '../services/lan_share_preferences.dart';
 import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
-import '../widgets/wenku/settings_glass_controls.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'log_viewer_page.dart';
 
@@ -359,7 +358,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         else
-                          SettingsGlassControls.toggle(
+                          GlassControls.toggle(
                             context,
                             value: _lanShare,
                             // 确认框还开着时不能先显示「开」：只有真正

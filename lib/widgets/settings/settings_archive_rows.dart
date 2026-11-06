@@ -7,8 +7,8 @@
 //                                   chevron)
 //
 // Mechanical substitutions:
-// - `AppControls.toggle` -> `SettingsGlassControls.toggle`
-//   (`lib/widgets/wenku/settings_glass_controls.dart`, the vendored
+// - `AppControls.toggle` -> `GlassControls.toggle`
+//   (`lib/widgets/wenku/glass_controls.dart`, the shared vendored
 //   `glass_controls.dart` / `app_ui.dart` adapters).
 // - `app_ui.dart` AppText/ArchiveIcon/ContentPanel/JellyTapSurface/ArchivePart
 //   -> the shared `wenku_ui.dart` exports.
@@ -22,7 +22,6 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-import '../wenku/settings_glass_controls.dart';
 import '../wenku/wenku_ui.dart';
 
 /// Upstream `ContentPanel` with the settings-section dividers between rows.
@@ -92,7 +91,7 @@ class SettingsToggleRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              SettingsGlassControls.toggle(
+              GlassControls.toggle(
                 context,
                 value: value,
                 optimistic: optimistic,
@@ -165,7 +164,7 @@ class SettingsOptionRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            SettingsGlassControls.toggle(
+            GlassControls.toggle(
               context,
               value: value,
               semanticLabel: title,

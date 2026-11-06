@@ -34,9 +34,16 @@ Non-identical mechanical substitutions:
   shared UI slice.
 - E-ink/high-contrast headers omit the transparent feather's height when using
   an opaque plate, so that plate cannot hide the first content row.
-- Toggle/slider adapters and the retired optical reflection painter are not
-  carried into this batch. `wenku_segments.dart` carries `AppGlassSegments`,
-  `GlassChoiceGroup` and upstream `AppControls.segments` as `WenkuControls`.
+- `glass_controls.dart` carries upstream `glass_controls.dart`
+  (`AppGlassSwitch` / `AppGlassSlider`) and `AppControls.toggle` / `slider` as
+  `GlassControls`, plus the reader's compact `chip`. The reader and settings
+  units originally vendored prefixed copies (`reader_glass_controls.dart`,
+  `settings_glass_controls.dart`); this is the single shared copy. Archive
+  surfaces use the `WenkuTonalColors` palette; reader surfaces pass their paper
+  palette explicitly and opt into the plain-switch fallback. The retired
+  optical reflection painter is still not carried. `wenku_segments.dart`
+  carries `AppGlassSegments`, `GlassChoiceGroup` and upstream
+  `AppControls.segments` as `WenkuControls`.
 - `glass_dock.dart` is upstream `glass_dock.dart` with `NovelMotion` renamed to
   `WenkuMotion`. `lib/widgets/shell_dock.dart` hosts it with upstream's
   `DockUnderlay` geometry; the bottom blur uses the vendored scroll-edge pass

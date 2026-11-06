@@ -10,7 +10,7 @@
 //   behaviour is preserved (theme mode / e-ink / OLED, reading entry points,
 //   listening, short drama playback, data and service pages).
 // - `GlassSettingMenu` and the glass switch come from fqapp's vendored
-//   `settings_glass_menu.dart` / `settings_glass_controls.dart`.
+//   `settings_glass_menu.dart` / `glass_controls.dart`.
 // - Upstream items fqapp does not have (force portrait, start page, combined
 //   shelf, language, fonts, dictionaries, lane sync, widgets, frame rate,
 //   low-performance mode, haptics) are intentionally absent, per the product

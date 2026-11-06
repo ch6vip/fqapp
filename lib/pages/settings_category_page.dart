@@ -6,7 +6,7 @@
 //
 // Mechanical substitutions:
 // - `AppControls.toggle` / `GlassSettingMenu` are provided by fqapp's ported
-//   settings components (`lib/widgets/wenku/settings_glass_controls.dart`,
+//   settings components (`lib/widgets/wenku/glass_controls.dart`,
 //   `settings_glass_menu.dart`) through `SettingsToggleRow` /
 //   `GlassSettingMenu`.
 // - `ArchiveFeaturePage` -> `SettingsArchivePage`, which renders the same
