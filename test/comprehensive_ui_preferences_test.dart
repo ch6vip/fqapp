@@ -160,7 +160,7 @@ void main() {
       }
       expect(tester.takeException(), isNull);
       if (statistics) {
-        expect(find.text('阅读热力图'), findsOneWidget);
+        expect(find.text('阅读总览'), findsOneWidget);
       } else {
         // 偏好读失败时保留默认宫格；阅读历史仍能从第二个 tab 打开。
         expect(find.byKey(const Key('shelf-grid-view')), findsOneWidget);

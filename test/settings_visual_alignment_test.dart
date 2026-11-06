@@ -11,6 +11,7 @@ import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'package:fqapp/widgets/shelf/shelf_design.dart';
 import 'package:fqapp/widgets/wenku/settings_glass_controls.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
@@ -249,7 +250,7 @@ void main() {
     );
   });
 
-  testWidgets('备份与导入页的分区头和卡片改用 settings 组件', (tester) async {
+  testWidgets('备份与导入页改用档案分区与面板', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.createTheme(Brightness.light),
@@ -258,9 +259,18 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(SettingsSectionHeader), findsNWidgets(2));
-    expect(find.byType(SettingsGroupCard), findsNWidgets(3));
-    expect(find.byType(SettingsRow), findsNWidgets(3));
+    expect(find.byType(ArchiveSection), findsNWidgets(2));
+    expect(find.byType(ContentPanel), findsWidgets);
+    expect(find.byType(FeatureEntry), findsOneWidget);
+    // The three data rows stay individually pinned: export, restore, 番茄.
+    expect(find.byKey(const ValueKey('backup-export')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-import')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-fanqie')), findsOneWidget);
+    expect(find.text('导出备份'), findsOneWidget);
+    expect(find.text('从备份文件恢复'), findsOneWidget);
+    expect(find.text('导入番茄书架'), findsOneWidget);
+    expect(find.byType(SettingsSectionHeader), findsNothing);
+    expect(find.byType(SettingsGroupCard), findsNothing);
     expect(find.text('书架随你走'), findsOneWidget);
   });
 }
