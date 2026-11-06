@@ -103,10 +103,12 @@ class LibraryBackup {
     String? aiData;
     if (version == 2) {
       final ai = raw['ai'];
-      if (ai != null && ai is! String) {
-        throw const FormatException('备份中的 AI 分段无效');
+      // The exporter writes v2 only when an AI section exists; a missing or
+      // non-string section is a damaged backup, not an empty AI dataset.
+      if (ai is! String || ai.isEmpty) {
+        throw const FormatException('备份中的 AI 分段缺失或无效');
       }
-      aiData = ai as String?;
+      aiData = ai;
     }
     final createdAt = _integer(raw['createdAt'], '备份时间', 8640000000000000);
     final shelf = <ShelfRecord>[];

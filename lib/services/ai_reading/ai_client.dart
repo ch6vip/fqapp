@@ -101,8 +101,7 @@ class AiChatCompletionsClient {
     required AiProviderProfile profile,
     required String apiKey,
     required String model,
-    required String systemPrompt,
-    required String userText,
+    required List<Map<String, String>> messages,
     required AiOutputMode outputMode,
     required Duration timeout,
     bool stream = false,
@@ -120,10 +119,7 @@ class AiChatCompletionsClient {
     final uri = endpoint(profile.baseUrl);
     final body = <String, dynamic>{
       'model': model,
-      'messages': [
-        {'role': 'system', 'content': systemPrompt},
-        {'role': 'user', 'content': userText},
-      ],
+      'messages': messages,
       'stream': stream,
       if (stream) 'stream_options': const {'include_usage': true},
       'temperature': profile.temperature,
@@ -481,10 +477,15 @@ class AiChatCompletionsClient {
         profile: profile,
         apiKey: apiKey,
         model: model,
-        systemPrompt: outputMode == AiOutputMode.jsonObject
-            ? '只输出 json。$kAiJsonObjectProtocol'
-            : '只输出符合给定 schema 的 JSON。',
-        userText: '这是连接测试。请返回 {"edits":[]}。',
+        messages: [
+          {
+            'role': 'system',
+            'content': outputMode == AiOutputMode.jsonObject
+                ? '只输出 json。$kAiJsonObjectProtocol'
+                : '只输出符合给定 schema 的 JSON。',
+          },
+          {'role': 'user', 'content': '这是连接测试。请返回 {"edits":[]}。'},
+        ],
         outputMode: outputMode,
         timeout: timeout,
       );

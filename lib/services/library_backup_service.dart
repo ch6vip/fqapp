@@ -113,6 +113,14 @@ class LibraryBackupService {
     if (!LibraryStore.instance.isInitialized || !ShelfStore.instance.isReady) {
       throw StateError('本机数据尚未初始化');
     }
+    // Validate and pre-merge the AI section before touching shelf/history.
+    // A malformed AI blob must not leave a half-restored bookshelf behind.
+    AiBackupRestorePlan? aiPlan;
+    final ai = backup.aiData;
+    if (ai != null && ai.isNotEmpty) {
+      await AiReadingController.instance.init();
+      aiPlan = await AiBackupService.instance.prepareEncoded(ai);
+    }
     // Every record was validated by LibraryBackup before any write. Boxes do
     // not share a transaction; retries only fill missing identities/episodes.
     final library = await LibraryStore.instance.mergeBackup(
@@ -120,9 +128,9 @@ class LibraryBackupService {
       watched: backup.watched,
     );
     final shelf = await ShelfStore.instance.mergeBackup(backup.shelf);
-    // AI assets are restored after the shelf merge. The AI importer does a
-    // full preflight before writes and keeps local-book assets pending.
-    lastAiRestore = await restoreAi(backup);
+    lastAiRestore = aiPlan == null
+        ? null
+        : await AiBackupService.instance.commit(aiPlan);
     return (shelf: shelf, history: library.history, episodes: library.episodes);
   }
 

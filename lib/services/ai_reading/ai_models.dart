@@ -1541,6 +1541,17 @@ class AiChapterCheckStatus {
   }
 }
 
+/// Stable fingerprint for the formal edit payload. It detects cache damage;
+/// it is not a security signature.
+String aiIntegrityHash(String value) {
+  var hash = 2166136261;
+  for (final code in value.codeUnits) {
+    hash ^= code;
+    hash = (hash * 16777619) & 0x7fffffff;
+  }
+  return hash.toRadixString(16);
+}
+
 @immutable
 class AiFormalCacheEntry {
   const AiFormalCacheEntry({
@@ -2043,6 +2054,7 @@ class AiBudgetProjection {
     required this.costMicros,
     required this.currency,
     required this.updatedAt,
+    this.costsByCurrency = const {},
   });
 
   final String bucketDay;
@@ -2055,7 +2067,15 @@ class AiBudgetProjection {
   final String currency;
   final DateTime updatedAt;
 
+  /// Costs are never summed across currencies. [costMicros]/[currency] mirror
+  /// the display currency; the map keeps every provider currency separately.
+  final Map<String, int> costsByCurrency;
+
   String get key => jsonEncode([bucketDay, bookId]);
+
+  int costFor(String currency) =>
+      costsByCurrency[currency] ??
+      (costsByCurrency.isEmpty && this.currency == currency ? costMicros : 0);
 
   AiBudgetProjection copyWith({
     int? requestCount,
@@ -2063,7 +2083,9 @@ class AiBudgetProjection {
     int? tokenSum,
     int? unknownUsageCount,
     int? costMicros,
+    String? currency,
     DateTime? updatedAt,
+    Map<String, int>? costsByCurrency,
   }) => AiBudgetProjection(
     bucketDay: bucketDay,
     bookId: bookId,
@@ -2072,8 +2094,9 @@ class AiBudgetProjection {
     tokenSum: tokenSum ?? this.tokenSum,
     unknownUsageCount: unknownUsageCount ?? this.unknownUsageCount,
     costMicros: costMicros ?? this.costMicros,
-    currency: currency,
+    currency: currency ?? this.currency,
     updatedAt: updatedAt ?? this.updatedAt,
+    costsByCurrency: costsByCurrency ?? this.costsByCurrency,
   );
 
   Map<String, dynamic> toJson() => {
@@ -2085,6 +2108,7 @@ class AiBudgetProjection {
     'unknownUsageCount': unknownUsageCount,
     'costMicros': costMicros,
     'currency': currency,
+    'costs': costsByCurrency.isEmpty ? {currency: costMicros} : costsByCurrency,
     'updatedAt': updatedAt.millisecondsSinceEpoch,
   };
 
@@ -2093,6 +2117,19 @@ class AiBudgetProjection {
     if (map == null) return null;
     final day = map['bucketDay'];
     if (day is! String) return null;
+    final currency = map['currency'] is String
+        ? map['currency'] as String
+        : 'CNY';
+    final costMicros = _intOrNull(map['costMicros']) ?? 0;
+    final costs = <String, int>{};
+    final rawCosts = map['costs'];
+    if (rawCosts is Map) {
+      for (final entry in rawCosts.entries) {
+        final value = _intOrNull(entry.value);
+        if (value != null) costs['${entry.key}'] = value;
+      }
+    }
+    if (costs.isEmpty && costMicros > 0) costs[currency] = costMicros;
     return AiBudgetProjection(
       bucketDay: day,
       bookId: map['bookId'] is String ? map['bookId'] as String : null,
@@ -2100,9 +2137,10 @@ class AiBudgetProjection {
       taskCount: _intOrNull(map['taskCount']) ?? 0,
       tokenSum: _intOrNull(map['tokenSum']) ?? 0,
       unknownUsageCount: _intOrNull(map['unknownUsageCount']) ?? 0,
-      costMicros: _intOrNull(map['costMicros']) ?? 0,
-      currency: map['currency'] is String ? map['currency'] as String : 'CNY',
+      costMicros: costMicros,
+      currency: currency,
       updatedAt: _date(map['updatedAt']) ?? DateTime.now(),
+      costsByCurrency: Map.unmodifiable(costs),
     );
   }
 }

@@ -70,6 +70,7 @@ class AiReadingController extends ChangeNotifier {
   int _prefetchEpoch = 0;
   final _status = <String, AiChapterRunStatus>{};
   final _inflight = <String, Future<AiTaskResult?>>{};
+  final _forcedRefreshQueued = <String>{};
   final _progress = <String, ValueNotifier<AiStreamProgress?>>{};
   final _statusRecorded = <String>{};
   final _knownDisplays =
@@ -313,7 +314,26 @@ class AiReadingController extends ChangeNotifier {
     // still run concurrently, and the formal cache remains hash-keyed.
     final key = _chapterKey(bookId, chapterId);
     final existing = _inflight[key];
-    if (existing != null) return existing;
+    if (existing != null) {
+      if (!forceRefresh || !_forcedRefreshQueued.add(key)) return existing;
+      try {
+        await existing;
+      } catch (_) {
+        // A failed in-flight task must not swallow the explicit refresh.
+      } finally {
+        _forcedRefreshQueued.remove(key);
+      }
+      return requestChapter(
+        bookId: bookId,
+        chapterId: chapterId,
+        chapterTitle: chapterTitle,
+        content: content,
+        chapterVersion: chapterVersion,
+        forceRefresh: true,
+        automatic: automatic,
+        confirmedOverBudget: confirmedOverBudget,
+      );
+    }
     final future = _runRequest(
       bookId: bookId,
       chapterId: chapterId,

@@ -106,26 +106,6 @@ class AiCoordinator {
         );
       }
     }
-    final gate = await _preflight(
-      bookId: bookId,
-      effective: effective,
-      automatic: automatic,
-      confirmedOverBudget: confirmedOverBudget,
-      kind: kind,
-    );
-    if (gate != null) {
-      debugPrint('[AI] preflight blocked ${gate.code}: ${gate.message}');
-      return AiTaskResult(
-        ok: false,
-        runId: '',
-        snapshot: snapshot,
-        error: gate.message,
-        errorCodes: [gate.code],
-        needsBudgetConfirmation: gate.needsBudgetConfirmation,
-        budgetMessage: gate.needsBudgetConfirmation ? gate.message : null,
-      );
-    }
-
     final provider = _settings.provider(effective.providerId);
     final model = effective.modelId;
     if (provider == null || model == null || model.trim().isEmpty) {
@@ -218,8 +198,44 @@ class AiCoordinator {
     var transportRetries = 0;
     var thinkingFallback = false;
     var requestProfile = provider;
+    var overBudgetConfirmed = confirmedOverBudget;
 
     while (true) {
+      final gate = await _preflight(
+        bookId: bookId,
+        effective: effective,
+        automatic: automatic,
+        confirmedOverBudget: overBudgetConfirmed,
+        kind: kind,
+      );
+      if (gate != null) {
+        debugPrint('[AI] preflight blocked ${gate.code}: ${gate.message}');
+        if (requestCount > 0 && !gate.needsBudgetConfirmation) {
+          await _store.putRun(
+            run.copyWith(
+              state: AiRunState.failed,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: [gate.code],
+              detail: gate.message,
+            ),
+          );
+          onState?.call(AiRunState.failed);
+        }
+        return AiTaskResult(
+          ok: false,
+          runId: runId,
+          snapshot: snapshot,
+          error: gate.message,
+          errorCodes: [gate.code],
+          needsBudgetConfirmation: gate.needsBudgetConfirmation,
+          budgetMessage: gate.needsBudgetConfirmation ? gate.message : null,
+          requestCount: requestCount,
+        );
+      }
+      // The user's over-budget confirmation covers this one HTTP call, not
+      // every content/transport retry in the task.
+      overBudgetConfirmed = false;
       requestCount++;
       final attemptNo = requestCount;
       final started = DateTime.now();
@@ -230,8 +246,7 @@ class AiCoordinator {
           profile: requestProfile,
           apiKey: apiKey,
           model: model,
-          systemPrompt: messages.first['content']!,
-          userText: messages.last['content']!,
+          messages: messages,
           outputMode: outputMode,
           timeout: timeout,
           stream: true,
@@ -242,7 +257,7 @@ class AiCoordinator {
         networkError = error;
       }
       final latency = DateTime.now().difference(started);
-      final usage = response?.usage ?? const AiUsage();
+      final usage = response?.usage ?? networkError?.usage ?? const AiUsage();
       final rateProfile = _settings.rateFor(provider.id, model);
       final rate = rateProfile?.snapshot();
       final requestRecord = AiRequestRecord(
@@ -575,7 +590,7 @@ class AiCoordinator {
       updatedAt: DateTime.now(),
       sourceUtf16Length: snapshot.sourceUtf16Length,
       paragraphBoundaryFingerprint: snapshot.paragraphBoundaryFingerprint,
-      integrityHash: _sha(encoded),
+      integrityHash: aiIntegrityHash(encoded),
       model: model,
       promptHash: promptHash,
     );
