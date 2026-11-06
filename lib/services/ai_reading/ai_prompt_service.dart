@@ -121,6 +121,15 @@ class AiPromptService {
     if (key == null) {
       throw const AiNetworkException('MISSING_KEY', '还没有填写 API Key');
     }
+    final reserved = await AiBudgetService.instance.reserve(
+      bookId: bookId,
+      automatic: false,
+      countTask: true,
+    );
+    final reservation = reserved.reservation;
+    if (reservation == null) {
+      throw AiNetworkException('BUDGET_EXCEEDED', reserved.reason ?? '预算已用完');
+    }
     final samples = feedback
         .take(30)
         .map((f) {
@@ -198,10 +207,9 @@ class AiPromptService {
         reason: 'prompt_optimize',
       );
       await _store.putRequest(request);
-      await AiBudgetService.instance.recordRequest(
-        bookId: bookId,
+      await AiBudgetService.instance.settle(
+        reservation: reservation,
         request: request,
-        countTask: true,
       );
       await _store.putRun(
         AiRunRecord(
@@ -237,10 +245,9 @@ class AiPromptService {
       reason: 'prompt_optimize',
     );
     await _store.putRequest(request);
-    await AiBudgetService.instance.recordRequest(
-      bookId: bookId,
+    await AiBudgetService.instance.settle(
+      reservation: reservation,
       request: request,
-      countTask: true,
     );
     await _store.putRun(
       AiRunRecord(

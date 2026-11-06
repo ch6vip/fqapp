@@ -128,7 +128,11 @@ class AiBackupPayload {
             throw const FormatException('AI 备份含损坏的提示词候选'),
       ],
       trials: [
-        for (final entry in maps('trials')) ?AiTrialRecord.fromJson(entry),
+        for (final entry in maps('trials'))
+          if (AiTrialRecord.fromJson(entry) case final parsed?)
+            parsed
+          else
+            throw const FormatException('AI 备份含损坏的试验'),
       ],
       trialResults: [
         for (final entry in maps('trialResults'))
@@ -143,13 +147,23 @@ class AiBackupPayload {
               validationStatus: parsed.validationStatus,
               perFeedback: parsed.perFeedback,
               createdAt: parsed.createdAt,
-            ),
+            )
+          else
+            throw const FormatException('AI 备份含损坏的试验判定'),
       ],
       usage: [
-        for (final entry in maps('usage')) ?AiBudgetProjection.fromJson(entry),
+        for (final entry in maps('usage'))
+          if (AiBudgetProjection.fromJson(entry) case final parsed?)
+            parsed
+          else
+            throw const FormatException('AI 备份含损坏的用量聚合'),
       ],
       pending: [
-        for (final entry in maps('pending')) ?AiPendingBinding.fromJson(entry),
+        for (final entry in maps('pending'))
+          if (AiPendingBinding.fromJson(entry) case final parsed?)
+            parsed
+          else
+            throw const FormatException('AI 备份含损坏的待绑定资产'),
       ],
       createdAt: DateTime.fromMillisecondsSinceEpoch(
         map['createdAt'] is int
@@ -161,7 +175,11 @@ class AiBackupPayload {
           : null,
       bookPrompts: Map.unmodifiable(bookPrompts),
       rates: [
-        for (final entry in maps('rates')) ?AiRateProfile.fromJson(entry),
+        for (final entry in maps('rates'))
+          if (AiRateProfile.fromJson(entry) case final parsed?)
+            parsed
+          else
+            throw const FormatException('AI 备份含损坏的费率配置'),
       ],
     );
   }
@@ -284,7 +302,7 @@ class AiBackupService {
 
   /// Phase 1: compute every merge/validation in memory, before the first write.
   Future<AiBackupRestorePlan> prepare(AiBackupPayload payload) async {
-    final mergedFeedback = <AiFeedbackAggregate>[];
+    final aggregatePlans = <AiBackupAggregatePlan>[];
     for (final aggregate in payload.feedback) {
       if (aggregate.bookId.startsWith('local_')) continue;
       final current = await _store.aggregate(
@@ -297,7 +315,13 @@ class AiBackupService {
           ? aggregate
           : _mergeAggregate(current, aggregate);
       _store.validateAggregateForRestore(merged);
-      mergedFeedback.add(merged);
+      aggregatePlans.add(
+        AiBackupAggregatePlan(
+          incoming: aggregate,
+          merged: merged,
+          expectedRevision: current?.aggregateRevision ?? 0,
+        ),
+      );
     }
 
     // Local books get a new ID after every import. Keep their assets pending
@@ -341,7 +365,7 @@ class AiBackupService {
 
     return AiBackupRestorePlan(
       payload: payload,
-      mergedFeedback: mergedFeedback,
+      aggregatePlans: aggregatePlans,
       pendingBindings: pendingBindings,
       promptsToWrite: promptsToWrite,
       candidatesToWrite: candidatesToWrite,
@@ -360,8 +384,25 @@ class AiBackupService {
     var usage = 0;
     var pending = 0;
 
-    for (final aggregate in plan.mergedFeedback) {
-      await _store.putAggregate(aggregate);
+    for (final aggregatePlan in plan.aggregatePlans) {
+      // The queue and revision check are inside the store. If a local edit
+      // landed after prepare(), merge it with the incoming snapshot again
+      // instead of overwriting the newer chapter.
+      await _store.mutateAggregate(
+        bookId: aggregatePlan.incoming.bookId,
+        chapterId: aggregatePlan.incoming.chapterId,
+        canonicalVersion: aggregatePlan.incoming.canonicalVersion,
+        canonicalHash: aggregatePlan.incoming.canonicalHash,
+        mutate: (current) {
+          if (current == null ||
+              current.aggregateRevision == aggregatePlan.expectedRevision) {
+            return aggregatePlan.merged;
+          }
+          final remerged = _mergeAggregate(current, aggregatePlan.incoming);
+          _store.validateAggregateForRestore(remerged);
+          return remerged;
+        },
+      );
       feedback++;
     }
     for (final prompt in plan.promptsToWrite) {
@@ -377,7 +418,28 @@ class AiBackupService {
       trials++;
     }
     for (final result in payload.trialResults) {
-      await _store.putTrialResult(result);
+      final current = await _store.trialResult(
+        result.trialId,
+        result.chapterId,
+      );
+      // Portable backups deliberately omit raw model edits. Never let such a
+      // summary replace a locally retained raw result and break re-scoring.
+      final merged = current == null
+          ? result
+          : AiTrialResultRecord(
+              trialId: result.trialId,
+              chapterId: result.chapterId,
+              canonicalHash: result.canonicalHash,
+              runId: current.runId,
+              rawValidatedEdits:
+                  current.rawValidatedEdits ?? result.rawValidatedEdits,
+              validationStatus: current.validationStatus,
+              perFeedback: current.perFeedback.isNotEmpty
+                  ? current.perFeedback
+                  : result.perFeedback,
+              createdAt: current.createdAt,
+            );
+      await _store.putTrialResult(merged);
       trialResults++;
     }
     for (final projection in payload.usage) {
@@ -465,18 +527,52 @@ class AiBackupService {
     final cases = <String, AiFeedbackCase>{
       for (final entry in current.cases) entry.feedbackId: entry,
     };
-    for (final entry in incoming.cases) {
-      final existing = cases[entry.feedbackId];
-      if (existing == null || _preferCase(entry, existing)) {
-        cases[entry.feedbackId] = entry;
-      }
-    }
     final protections = <String, AiFeedbackProtection>{
       for (final entry in current.protections) entry.protectionId: entry,
     };
+    final conflicts = <String, AiRestoreConflict>{
+      for (final entry in [...current.conflicts, ...incoming.conflicts])
+        entry.signature: entry,
+    };
+    for (final entry in incoming.cases) {
+      final existing = cases[entry.feedbackId];
+      if (existing == null) {
+        cases[entry.feedbackId] = entry;
+        continue;
+      }
+      if (existing.caseRevision == entry.caseRevision &&
+          jsonEncode(existing.toJson()) != jsonEncode(entry.toJson())) {
+        _addConflict(
+          conflicts,
+          'case',
+          entry.feedbackId,
+          existing.toJson(),
+          entry.toJson(),
+        );
+        continue;
+      }
+      if (_preferCase(entry, existing)) {
+        cases[entry.feedbackId] = entry;
+      }
+    }
     for (final entry in incoming.protections) {
       final existing = protections[entry.protectionId];
-      if (existing == null || _preferProtection(entry, existing)) {
+      if (existing == null) {
+        protections[entry.protectionId] = entry;
+        continue;
+      }
+      if (existing.sourceFeedbackRevision == entry.sourceFeedbackRevision &&
+          jsonEncode(existing.toJson()) != jsonEncode(entry.toJson())) {
+        _addConflict(
+          conflicts,
+          'protection',
+          entry.protectionId,
+          existing.toJson(),
+          entry.toJson(),
+        );
+        continue;
+      }
+      if (_preferProtection(entry, existing)) {
         protections[entry.protectionId] = entry;
       }
     }
@@ -491,53 +587,60 @@ class AiBackupService {
       aggregateRevision: revision + 1,
       cases: List.unmodifiable(cases.values),
       protections: List.unmodifiable(protections.values),
+      conflicts: List.unmodifiable(conflicts.values),
       updatedAt: DateTime.now(),
     );
   }
 
-  static bool _preferCase(AiFeedbackCase next, AiFeedbackCase current) {
-    if (next.caseRevision != current.caseRevision) {
-      return next.caseRevision > current.caseRevision;
-    }
-    if (next.updatedAt != current.updatedAt) {
-      return next.updatedAt.isAfter(current.updatedAt);
-    }
-    final nextTerminal =
-        next.status == AiFeedbackStatus.deleted ||
-        next.status == AiFeedbackStatus.superseded;
-    final currentTerminal =
-        current.status == AiFeedbackStatus.deleted ||
-        current.status == AiFeedbackStatus.superseded;
-    return nextTerminal && !currentTerminal;
-  }
+  static bool _preferCase(AiFeedbackCase next, AiFeedbackCase current) =>
+      next.caseRevision > current.caseRevision;
 
   static bool _preferProtection(
     AiFeedbackProtection next,
     AiFeedbackProtection current,
+  ) => next.sourceFeedbackRevision > current.sourceFeedbackRevision;
+
+  static void _addConflict(
+    Map<String, AiRestoreConflict> conflicts,
+    String kind,
+    String itemId,
+    Map<String, dynamic> local,
+    Map<String, dynamic> incoming,
   ) {
-    if (next.sourceFeedbackRevision != current.sourceFeedbackRevision) {
-      return next.sourceFeedbackRevision > current.sourceFeedbackRevision;
-    }
-    if (next.updatedAt != current.updatedAt) {
-      return next.updatedAt.isAfter(current.updatedAt);
-    }
-    final nextTerminal = next.status != AiProtectionStatus.active;
-    final currentTerminal = current.status != AiProtectionStatus.active;
-    return nextTerminal && !currentTerminal;
+    final conflict = AiRestoreConflict(
+      kind: kind,
+      itemId: itemId,
+      localJson: jsonEncode(local),
+      incomingJson: jsonEncode(incoming),
+      detectedAt: DateTime.now(),
+    );
+    conflicts.putIfAbsent(conflict.signature, () => conflict);
   }
+}
+
+class AiBackupAggregatePlan {
+  const AiBackupAggregatePlan({
+    required this.incoming,
+    required this.merged,
+    required this.expectedRevision,
+  });
+
+  final AiFeedbackAggregate incoming;
+  final AiFeedbackAggregate merged;
+  final int expectedRevision;
 }
 
 class AiBackupRestorePlan {
   const AiBackupRestorePlan({
     required this.payload,
-    required this.mergedFeedback,
+    required this.aggregatePlans,
     required this.pendingBindings,
     required this.promptsToWrite,
     required this.candidatesToWrite,
   });
 
   final AiBackupPayload payload;
-  final List<AiFeedbackAggregate> mergedFeedback;
+  final List<AiBackupAggregatePlan> aggregatePlans;
   final List<AiPendingBinding> pendingBindings;
   final List<AiPromptRecord> promptsToWrite;
   final List<AiPromptCandidate> candidatesToWrite;

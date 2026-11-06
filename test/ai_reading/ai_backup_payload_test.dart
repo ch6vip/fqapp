@@ -124,4 +124,29 @@ void main() {
     expect(restored.bookPrompts['book_1'], '本书提示词');
     expect(restored.rates.single.modelId, 'deepseek-flash');
   });
+  test(
+    'corrupt optional sections are rejected instead of silently skipped',
+    () {
+      for (final key in [
+        'trials',
+        'trialResults',
+        'usage',
+        'pending',
+        'rates',
+      ]) {
+        expect(
+          () => AiBackupPayload.fromJson({
+            'format': 'fqapp.ai-backup',
+            'version': 1,
+            'feedback': <Object>[],
+            'prompts': <Object>[],
+            'candidates': <Object>[],
+            key: [1],
+          }),
+          throwsFormatException,
+          reason: key,
+        );
+      }
+    },
+  );
 }
