@@ -304,6 +304,8 @@ void main() {
       costsByCurrency: const {'CNY': 5, 'USD': 2},
       reservedRequestCount: 3,
       reservedTaskCount: 1,
+      reservedRequestIds: const ['req_1', 'req_2', 'req_3'],
+      reservedTaskIds: const ['req_1'],
       updatedAt: DateTime(2026, 11, 6),
     );
     expect(projection.costFor('CNY'), 5);
@@ -314,6 +316,8 @@ void main() {
     expect(decoded.costFor('USD'), 2);
     expect(decoded.totalRequestCount, 5);
     expect(decoded.totalTaskCount, 2);
+    expect(decoded.reservedRequestIds, ['req_1', 'req_2', 'req_3']);
+    expect(decoded.reservedTaskIds, ['req_1']);
   });
 
   test('usage writes fail closed when AI storage is unavailable', () async {

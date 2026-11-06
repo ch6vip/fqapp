@@ -41,6 +41,8 @@ class AiProbeService {
   }) async {
     await _settings.init();
     await _store.init();
+    final requestId =
+        'req_probe_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
     final reserved = await _budget.reserve(
       bookId: probeBookId,
       automatic: false,
@@ -48,6 +50,7 @@ class AiProbeService {
       confirmedOverBudget: confirmedOverBudget,
       requireEnabled: false,
       requireConsent: false,
+      requestId: requestId,
     );
     final reservation = reserved.reservation;
     if (reservation == null) {
@@ -85,7 +88,7 @@ class AiProbeService {
     final finished = DateTime.now();
     final rate = _settings.rateFor(profile.id, model)?.snapshot();
     final request = AiRequestRecord(
-      requestId: 'req_${finished.microsecondsSinceEpoch.toRadixString(36)}',
+      requestId: requestId,
       runId: runId,
       attemptNo: 1,
       providerId: profile.id,

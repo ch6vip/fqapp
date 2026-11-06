@@ -124,10 +124,13 @@ class AiPromptService {
     if (key == null) {
       throw const AiNetworkException('MISSING_KEY', '还没有填写 API Key');
     }
+    final requestId =
+        'req_prompt_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
     final reserved = await AiBudgetService.instance.reserve(
       bookId: bookId,
       automatic: false,
       countTask: true,
+      requestId: requestId,
     );
     final reservation = reserved.reservation;
     if (reservation == null) {
@@ -208,7 +211,7 @@ class AiPromptService {
           ? (error.usage ?? const AiUsage())
           : const AiUsage();
       final request = AiRequestRecord(
-        requestId: 'req_${finished.microsecondsSinceEpoch.toRadixString(36)}',
+        requestId: requestId,
         runId: runId,
         attemptNo: 1,
         providerId: provider.id,
@@ -249,7 +252,7 @@ class AiPromptService {
     }
     final finished = DateTime.now();
     final request = AiRequestRecord(
-      requestId: 'req_${finished.microsecondsSinceEpoch.toRadixString(36)}',
+      requestId: requestId,
       runId: runId,
       attemptNo: 1,
       providerId: provider.id,

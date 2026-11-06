@@ -2116,6 +2116,8 @@ class AiBudgetProjection {
     this.costsByCurrency = const {},
     this.reservedRequestCount = 0,
     this.reservedTaskCount = 0,
+    this.reservedRequestIds = const [],
+    this.reservedTaskIds = const [],
   });
 
   final String bucketDay;
@@ -2128,6 +2130,11 @@ class AiBudgetProjection {
   final int taskCount;
   final int reservedRequestCount;
   final int reservedTaskCount;
+
+  /// Request IDs behind the reserved counters. Empty on legacy records; the
+  /// recovery path can still synthesize IDs from the counts.
+  final List<String> reservedRequestIds;
+  final List<String> reservedTaskIds;
   final int tokenSum;
   final int unknownUsageCount;
   final int costMicros;
@@ -2152,6 +2159,8 @@ class AiBudgetProjection {
     int? taskCount,
     int? reservedRequestCount,
     int? reservedTaskCount,
+    List<String>? reservedRequestIds,
+    List<String>? reservedTaskIds,
     int? tokenSum,
     int? unknownUsageCount,
     int? costMicros,
@@ -2180,6 +2189,8 @@ class AiBudgetProjection {
     'taskCount': taskCount,
     'reservedRequestCount': reservedRequestCount,
     'reservedTaskCount': reservedTaskCount,
+    if (reservedRequestIds.isNotEmpty) 'reservedRequestIds': reservedRequestIds,
+    if (reservedTaskIds.isNotEmpty) 'reservedTaskIds': reservedTaskIds,
     'tokenSum': tokenSum,
     'unknownUsageCount': unknownUsageCount,
     'costMicros': costMicros,
@@ -2213,6 +2224,8 @@ class AiBudgetProjection {
       taskCount: _intOrNull(map['taskCount']) ?? 0,
       reservedRequestCount: _intOrNull(map['reservedRequestCount']) ?? 0,
       reservedTaskCount: _intOrNull(map['reservedTaskCount']) ?? 0,
+      reservedRequestIds: _stringList(map['reservedRequestIds']),
+      reservedTaskIds: _stringList(map['reservedTaskIds']),
       tokenSum: _intOrNull(map['tokenSum']) ?? 0,
       unknownUsageCount: _intOrNull(map['unknownUsageCount']) ?? 0,
       costMicros: costMicros,

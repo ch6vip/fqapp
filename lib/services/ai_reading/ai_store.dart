@@ -260,12 +260,22 @@ class AiStore {
     await _requests?.put(request.requestId, request.toJson());
   }
 
+  Future<AiRequestRecord?> request(String requestId) async {
+    if (!_available) return null;
+    return AiRequestRecord.fromJson(_requests?.get(requestId));
+  }
+
   Future<List<AiRequestRecord>> requests() async {
     if (!_available) return const [];
     return [
       for (final value in _requests?.values ?? const [])
         ?AiRequestRecord.fromJson(value),
     ];
+  }
+
+  Future<AiRunRecord?> run(String runId) async {
+    if (!_available) return null;
+    return AiRunRecord.fromJson(_runs?.get(runId));
   }
 
   Future<List<AiRunRecord>> runs() async {
