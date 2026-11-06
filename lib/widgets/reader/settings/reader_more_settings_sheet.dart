@@ -84,13 +84,13 @@ class _ReaderMoreSettingsSheetState
   }
 
   void _apply(ReaderPreferences Function(ReaderPreferences) change) =>
-      updatePreferences(change(value));
+      commitPreferences(change(value));
 
   bool get _noAnimation =>
       value.pageTurnStyle == ReaderPageTurnStyle.none || value.instantSwipeTurn;
 
   void _setNoAnimation(bool enabled) {
-    updatePreferences(
+    commitPreferences(
       value.copyWith(
         pageTurnStyle: enabled
             ? ReaderPageTurnStyle.none
@@ -122,11 +122,12 @@ class _ReaderMoreSettingsSheetState
       closeTooltip: '关闭更多设置',
       scrollKey: const ValueKey('reader-more-settings-scroll'),
       maxHeightFactor: 0.75,
+      onClose: flushPreferences,
       children: [
         const ReaderSettingsSectionHeader(title: '排版'),
         ReaderTypographySettings(
           value: value,
-          onChanged: updatePreferences,
+          onChanged: commitPreferences,
           backgroundLocked: widget.backgroundLocked,
         ),
         const ReaderSettingsDivider(),

@@ -52,7 +52,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('目录'));
       await tester.pumpAndSettle();
-      expect(find.text('目录 · 3 章'), findsOneWidget);
+      // 上游目录头部只写「目录」，不再带总章数；用搜索入口确认目录面板
+      // 已按新契约打开。
+      expect(
+        find.byKey(const ValueKey('reader-catalogue-search-toggle')),
+        findsOneWidget,
+      );
       await tester.tap(find.text('第三章'));
       await tester.pumpAndSettle();
       expect(find.textContaining('第三章的正文'), findsWidgets);
