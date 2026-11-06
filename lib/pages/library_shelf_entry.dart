@@ -35,6 +35,11 @@ class _ShelfEntry implements ShelfProjectable {
   /// 离线缓存扫描命中（仅番茄小说）。
   final bool cached;
 
+  /// 历史条目的身份以 `LibraryStore._historyIdentity`（contentId ?? id）为准；
+  /// 书架条目直接由 [MediaItem] 推导。两者在短剧 seriesId 与 contentId
+  /// 不一致时可能不同，历史侧必须与历史索引保持同一把键。
+  final String? contentKeyOverride;
+
   const _ShelfEntry({
     required this.item,
     required this.contentId,
@@ -47,6 +52,7 @@ class _ShelfEntry implements ShelfProjectable {
     this.importedResume = false,
     this.fanqieImported = false,
     this.cached = false,
+    this.contentKeyOverride,
   });
 
   factory _ShelfEntry.fromRecord(
@@ -96,12 +102,18 @@ class _ShelfEntry implements ShelfProjectable {
           history['fanqieImported'] == true &&
           history['chapterId'] != null,
       fanqieImported: history['fanqieImported'] == true,
+      contentKeyOverride: ShelfIdentity.contentKeyFor(
+        item.kind,
+        historyContentId(history),
+        source: item.source,
+      ),
     );
   }
 
   /// 源限定身份键：番茄 `book:123`，书旗 `shuqi/book:123`。
   @override
-  String get contentKey => ShelfIdentity.contentKeyOf(item);
+  String get contentKey =>
+      contentKeyOverride ?? ShelfIdentity.contentKeyOf(item);
 
   /// 行 / 选中 / 立体书架共用的稳定键。
   String get selectionKey => contentKey;
