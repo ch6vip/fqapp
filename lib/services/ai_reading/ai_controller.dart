@@ -132,14 +132,9 @@ class AiReadingController extends ChangeNotifier {
     await _settings.init();
     await _store.init();
     try {
-      // A killed process may have left a persisted reservation behind. Count
-      // it conservatively instead of leaving today's budget permanently full.
-      await AiBudgetService.instance.recoverOrphanedReservations();
-    } catch (_) {
-      // Budget recovery must not block reading.
-    }
-    try {
-      await _store.recoverInterruptedRuns();
+      // Shared gate: a probe started before this init must not be mistaken for
+      // a leftover reservation when recovery runs.
+      await AiBudgetService.instance.ensureRecovered();
       await _store.recoverInterruptedChapterStatuses();
       await _store.prune();
     } catch (_) {
