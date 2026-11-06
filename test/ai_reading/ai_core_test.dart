@@ -320,6 +320,12 @@ void main() {
     expect(decoded.reservedRequestIds, ['req_1', 'req_2', 'req_3']);
     expect(decoded.reservedTaskIds, ['req_1']);
     expect(decoded.reservedRunIds['req_1'], 'run_1');
+    final changed = projection.copyWith(requestCount: 9);
+    expect(changed.reservedRequestCount, 3);
+    expect(changed.reservedTaskCount, 1);
+    expect(changed.reservedRequestIds, ['req_1', 'req_2', 'req_3']);
+    expect(changed.reservedTaskIds, ['req_1']);
+    expect(changed.reservedRunIds['req_1'], 'run_1');
   });
 
   test('usage writes fail closed when AI storage is unavailable', () async {
