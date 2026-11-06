@@ -9,7 +9,8 @@
 // - `showJellySheet`/`confirmNovelAction` -> `wenku_overlay.dart`'s
 //   `showJellySheet`/`confirmArchiveAction` (the same upstream jelly sheet and
 //   confirmation, decisions #10/#17).
-// - `showNovelFeedback` -> a local SnackBar helper.
+// - `showNovelFeedback` -> `shelf_feedback.dart`'s `showShelfFeedback`, which
+//   inserts into the root Overlay so the notice stays visible above the sheet.
 // - `app_ui.dart` AppText -> `src/app_text.dart`; ArchiveSection/ArchiveIcon ->
 //   `wenku_archive.dart`/`wenku_icons.dart`; GlassTextButton/GlassIconButton/
 //   GlassPillButton -> `wenku_glass.dart`.
@@ -32,6 +33,7 @@ import '../wenku/src/app_text.dart';
 import '../wenku/wenku_archive.dart';
 import '../wenku/wenku_glass.dart';
 import '../wenku/wenku_overlay.dart';
+import 'shelf_feedback.dart';
 
 /// Opens the full category manager: choose, create, rename, delete, or pick an
 /// author category. Returns the chosen category (or null when dismissed).
@@ -92,7 +94,7 @@ Future<String?> showShelfGroupsSheet(
     return result;
   } catch (error) {
     if (context.mounted) {
-      _feedback(
+      showShelfFeedback(
         context,
         error is FormatException ? error.message : '分类保存失败，请重试',
       );
@@ -109,14 +111,11 @@ Future<String?> chooseShelfCategory(
   required String selected,
   bool reduceMotion = false,
 }) async {
-  if (!store.isReady) {
-    return showJellySheet<String>(
-      context: context,
-      reduceMotion: reduceMotion,
-      heightFactor: .5,
-      builder: (sheet) => const _ReadOnlyCategories(),
-    );
-  }
+  // An assignment target must be a real, visible group. `_ReadOnlyCategories`
+  // exists for the filter sheet, where `_all` is valid; reusing it here would
+  // hand the caller `_all`, which `ShelfGroupStore.assignKeys` rejects (and a
+  // not-ready store throws before that). Keep the selection unchanged instead.
+  if (!store.isReady) return null;
   final result = await showJellySheet<String>(
     context: context,
     reduceMotion: reduceMotion,
@@ -175,12 +174,6 @@ Future<String?> _chooseAuthor(
       ],
     ),
   );
-}
-
-void _feedback(BuildContext context, String message) {
-  ScaffoldMessenger.maybeOf(context)
-    ?..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(message)));
 }
 
 /// The category list with per-group rename/delete actions.
@@ -340,7 +333,10 @@ class _GroupNameSheetState extends State<_GroupNameSheet> {
     } catch (error) {
       if (mounted) {
         setState(() => _busy = false);
-        _feedback(context, error is FormatException ? error.message : '分类保存失败');
+        showShelfFeedback(
+          context,
+          error is FormatException ? error.message : '分类保存失败',
+        );
       }
     }
   }

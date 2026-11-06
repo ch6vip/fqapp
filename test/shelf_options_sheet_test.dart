@@ -94,6 +94,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(changes, isEmpty);
     expect(find.text('请输入 1–100 本'), findsOneWidget);
+    // The notice is a root-Overlay notice, not a page-level SnackBar.
+    expect(find.byType(SnackBar), findsNothing);
     expect(tester.widget<CupertinoTextField>(input).controller!.text, '1');
 
     await tester.enterText(input, '101');
@@ -106,6 +108,47 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
     expect(changes.single.minimumBooks, 5);
+    // Let the transient notice's timer fire before the test zone ends.
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets('切换版式时立体参数区与封面密度区按模式展开/收起', (tester) async {
+    var mode = BookCollectionMode.shelfList;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: WenkuTheme.create(Brightness.light),
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: 360,
+                child: ShelfViewOptions(
+                  mode: mode,
+                  onModeChanged: (value) => setState(() => mode = value),
+                  density: const BookGridDensity.auto(),
+                  onDensityChanged: (_) {},
+                  onPreferencesChanged: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shelf-minimum-books')), findsOneWidget);
+    expect(find.byKey(const ValueKey('grid-density-auto')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('collection-view-grid')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shelf-minimum-books')), findsNothing);
+    expect(find.byKey(const ValueKey('grid-density-auto')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('collection-view-shelf')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shelf-minimum-books')), findsOneWidget);
+    expect(find.byKey(const ValueKey('grid-density-auto')), findsNothing);
   });
 
   testWidgets('重复填充开关回传新值', (tester) async {
