@@ -220,6 +220,35 @@ class AiStore {
     ];
   }
 
+  /// Runs left in a non-terminal state by a previous process are no longer in
+  /// flight. Mark them interrupted so the ledger never shows a permanent
+  /// spinner and so a request written before the terminal Run update stays
+  /// explainable after a crash.
+  Future<void> recoverInterruptedRuns() async {
+    if (!_available) return;
+    for (final run in await runs()) {
+      if (run.state != AiRunState.running &&
+          run.state != AiRunState.validating &&
+          run.state != AiRunState.repairing) {
+        continue;
+      }
+      await _runs?.put(
+        run.runId,
+        run
+            .copyWith(
+              state: AiRunState.interrupted,
+              finishedAt: DateTime.now(),
+              errorCodes: [
+                ...run.errorCodes,
+                if (!run.errorCodes.contains('INTERRUPTED')) 'INTERRUPTED',
+              ],
+              detail: '应用异常退出，已恢复未完成运行',
+            )
+            .toJson(),
+      );
+    }
+  }
+
   /// A status left in [running] from a previous process is not actually in
   /// flight anymore. Keep it out of the directory's spinner state.
   Future<void> recoverInterruptedChapterStatuses() async {

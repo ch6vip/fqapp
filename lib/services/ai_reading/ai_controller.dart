@@ -139,6 +139,7 @@ class AiReadingController extends ChangeNotifier {
       // Budget recovery must not block reading.
     }
     try {
+      await _store.recoverInterruptedRuns();
       await _store.recoverInterruptedChapterStatuses();
       await _store.prune();
     } catch (_) {
