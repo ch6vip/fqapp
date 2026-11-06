@@ -619,7 +619,10 @@ class AiCoordinator {
     }
     final decision = await _budget.check(bookId: bookId, automatic: automatic);
     if (!decision.allowed) {
-      return _Gate('BUDGET_EXCEEDED', decision.reason ?? '预算已达上限');
+      return _Gate(
+        decision.code ?? 'BUDGET_EXCEEDED',
+        decision.reason ?? '预算已达上限',
+      );
     }
     if (decision.needsConfirmation && !confirmedOverBudget) {
       return _Gate(

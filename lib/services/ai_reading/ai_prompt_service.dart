@@ -110,7 +110,10 @@ class AiPromptService {
       throw AiNetworkException('BUDGET_EXCEEDED', budget.reason ?? '本次请求将超出预算');
     }
     if (!budget.allowed) {
-      throw AiNetworkException('BUDGET_EXCEEDED', budget.reason ?? '预算已用完');
+      throw AiNetworkException(
+        budget.code ?? 'BUDGET_EXCEEDED',
+        budget.reason ?? '预算已用完',
+      );
     }
     final provider = _settings.provider(effective.providerId);
     final model = effective.modelId;
