@@ -35,7 +35,7 @@ class AiBudgetReservation {
 
   final String day;
 
-  /// `null` means a global-only reservation (legacy/global recovery).
+  /// `null` means a global-only reservation from a partial recovery.
   final String? bookId;
   final String displayCurrency;
   final String requestId;
@@ -337,13 +337,9 @@ class AiBudgetService {
                 reservation.displayCurrency,
               );
           targets[bookId] = current;
-          final idKnown = current.reservedRequestIds.contains(
-            reservation.requestId,
-          );
-          final legacySlot =
-              current.reservedRequestIds.isEmpty &&
-              current.reservedRequestCount > 0;
-          if (!idKnown && !legacySlot) continue;
+          if (!current.reservedRequestIds.contains(reservation.requestId)) {
+            continue;
+          }
           final costs = <String, int>{...current.costsByCurrency};
           final cost = request.costMicros ?? 0;
           if (cost != 0) {
@@ -408,11 +404,7 @@ class AiBudgetService {
     final seen = <String>{};
 
     for (final projection in books) {
-      final ids = <String>[...projection.reservedRequestIds];
-      for (var i = ids.length; i < projection.reservedRequestCount; i++) {
-        ids.add(_legacyReservationId(projection, i));
-      }
-      for (final requestId in ids) {
+      for (final requestId in projection.reservedRequestIds) {
         if (!seen.add(requestId)) continue;
         await _recoverReservation(
           day: projection.bucketDay,
@@ -425,18 +417,10 @@ class AiBudgetService {
       }
     }
 
-    // Global-only reservations exist only in legacy data or a global recovery
-    // path. Never process the book IDs a second time, and do not invent legacy
-    // global IDs when book projections already accounted for the same slots.
-    final hadBookReservations = seen.isNotEmpty;
+    // A crash can happen between the global write and the book write. Process
+    // any global-only IDs, but never the same ID twice.
     for (final projection in projections.where((p) => p.bookId == null)) {
-      final ids = <String>[...projection.reservedRequestIds];
-      if (!hadBookReservations) {
-        for (var i = ids.length; i < projection.reservedRequestCount; i++) {
-          ids.add(_legacyReservationId(projection, i));
-        }
-      }
-      for (final requestId in ids) {
+      for (final requestId in projection.reservedRequestIds) {
         if (!seen.add(requestId)) continue;
         await _recoverReservation(
           day: projection.bucketDay,
@@ -448,11 +432,6 @@ class AiBudgetService {
         );
       }
     }
-  }
-
-  String _legacyReservationId(AiBudgetProjection projection, int index) {
-    final scope = projection.bookId ?? 'global';
-    return 'legacy_${projection.bucketDay}_${scope.hashCode.toRadixString(36)}_$index';
   }
 
   Future<void> _recoverReservation({
