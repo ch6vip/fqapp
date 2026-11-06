@@ -1381,6 +1381,51 @@ class AiFeedbackProtection {
 }
 
 @immutable
+class AiRestoreConflict {
+  const AiRestoreConflict({
+    required this.kind,
+    required this.itemId,
+    required this.localJson,
+    required this.incomingJson,
+    required this.detectedAt,
+  });
+
+  /// `case` or `protection`.
+  final String kind;
+  final String itemId;
+  final String localJson;
+  final String incomingJson;
+  final DateTime detectedAt;
+
+  String get signature => jsonEncode([kind, itemId, localJson, incomingJson]);
+
+  Map<String, dynamic> toJson() => {
+    'kind': kind,
+    'itemId': itemId,
+    'localJson': localJson,
+    'incomingJson': incomingJson,
+    'detectedAt': detectedAt.millisecondsSinceEpoch,
+  };
+
+  static AiRestoreConflict? fromJson(Object? raw) {
+    final map = _mapOrNull(raw);
+    if (map == null) return null;
+    final kind = map['kind'];
+    final itemId = map['itemId'];
+    if (kind is! String || itemId is! String) return null;
+    return AiRestoreConflict(
+      kind: kind,
+      itemId: itemId,
+      localJson: map['localJson'] is String ? map['localJson'] as String : '',
+      incomingJson: map['incomingJson'] is String
+          ? map['incomingJson'] as String
+          : '',
+      detectedAt: _date(map['detectedAt']) ?? DateTime.now(),
+    );
+  }
+}
+
+@immutable
 class AiFeedbackAggregate {
   const AiFeedbackAggregate({
     required this.bookId,
@@ -1391,6 +1436,7 @@ class AiFeedbackAggregate {
     required this.cases,
     required this.protections,
     required this.updatedAt,
+    this.conflicts = const [],
   });
 
   final String bookId;
@@ -1401,6 +1447,10 @@ class AiFeedbackAggregate {
   final List<AiFeedbackCase> cases;
   final List<AiFeedbackProtection> protections;
   final DateTime updatedAt;
+
+  /// Parallel branches discovered while restoring a backup. They are kept
+  /// intact instead of letting a clock decide which device wins.
+  final List<AiRestoreConflict> conflicts;
 
   List<AiFeedbackProtection> get activeProtections =>
       protections.where((p) => p.isActive).toList(growable: false);
@@ -1419,6 +1469,7 @@ class AiFeedbackAggregate {
     'aggregateRevision': aggregateRevision,
     'cases': cases.map((e) => e.toJson()).toList(),
     'protections': protections.map((e) => e.toJson()).toList(),
+    'conflicts': conflicts.map((e) => e.toJson()).toList(),
     'updatedAt': updatedAt.millisecondsSinceEpoch,
   };
 
@@ -1443,6 +1494,10 @@ class AiFeedbackAggregate {
       protections: [
         for (final entry in (map['protections'] as List? ?? const []))
           ?AiFeedbackProtection.fromJson(entry),
+      ],
+      conflicts: [
+        for (final entry in (map['conflicts'] as List? ?? const []))
+          ?AiRestoreConflict.fromJson(entry),
       ],
       updatedAt: _date(map['updatedAt']) ?? DateTime.now(),
     );

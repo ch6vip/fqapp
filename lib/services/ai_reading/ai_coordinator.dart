@@ -210,18 +210,21 @@ class AiCoordinator {
       );
       if (gate != null) {
         debugPrint('[AI] preflight blocked ${gate.code}: ${gate.message}');
-        if (requestCount > 0 && !gate.needsBudgetConfirmation) {
-          await _store.putRun(
-            run.copyWith(
-              state: AiRunState.failed,
-              attemptCount: requestCount,
-              finishedAt: DateTime.now(),
-              errorCodes: [gate.code],
-              detail: gate.message,
-            ),
-          );
-          onState?.call(AiRunState.failed);
-        }
+        // Every exit path must close the persisted run. A budget confirmation
+        // is a cancelled run; the user's confirmation starts a new run.
+        final blockedState = gate.needsBudgetConfirmation
+            ? AiRunState.cancelled
+            : AiRunState.failed;
+        await _store.putRun(
+          run.copyWith(
+            state: blockedState,
+            attemptCount: requestCount,
+            finishedAt: DateTime.now(),
+            errorCodes: [gate.code],
+            detail: gate.message,
+          ),
+        );
+        onState?.call(blockedState);
         return AiTaskResult(
           ok: false,
           runId: runId,
@@ -233,11 +236,48 @@ class AiCoordinator {
           requestCount: requestCount,
         );
       }
-      // The user's over-budget confirmation covers this one HTTP call, not
-      // every content/transport retry in the task.
+      // Admission is atomic: two chapters cannot both pass the last request
+      // slot between the read-only preflight and the actual HTTP call.
+      final reserved = await _budget.reserve(
+        bookId: bookId,
+        automatic: automatic,
+        countTask: requestCount == 0,
+        confirmedOverBudget: overBudgetConfirmed,
+      );
+      if (reserved.reservation == null) {
+        final blockedState = reserved.needsConfirmation
+            ? AiRunState.cancelled
+            : AiRunState.failed;
+        await _store.putRun(
+          run.copyWith(
+            state: blockedState,
+            attemptCount: requestCount,
+            finishedAt: DateTime.now(),
+            errorCodes: [
+              reserved.needsConfirmation ? 'BUDGET_CONFIRM' : 'BUDGET_EXCEEDED',
+            ],
+            detail: reserved.reason ?? '预算已达上限',
+          ),
+        );
+        onState?.call(blockedState);
+        return AiTaskResult(
+          ok: false,
+          runId: runId,
+          snapshot: snapshot,
+          error: reserved.reason ?? '预算已达上限',
+          errorCodes: [
+            reserved.needsConfirmation ? 'BUDGET_CONFIRM' : 'BUDGET_EXCEEDED',
+          ],
+          needsBudgetConfirmation: reserved.needsConfirmation,
+          budgetMessage: reserved.needsConfirmation ? reserved.reason : null,
+          requestCount: requestCount,
+        );
+      }
+      // The user's confirmation covers this one HTTP call, not every retry.
       overBudgetConfirmed = false;
       requestCount++;
       final attemptNo = requestCount;
+      final reservation = reserved.reservation!;
       final started = DateTime.now();
       AiProviderResponse? response;
       AiNetworkException? networkError;
@@ -282,11 +322,7 @@ class AiCoordinator {
             : 'first',
       );
       await _store.putRequest(requestRecord);
-      await _budget.recordRequest(
-        bookId: bookId,
-        request: requestRecord,
-        countTask: attemptNo == 1,
-      );
+      await _budget.settle(reservation: reservation, request: requestRecord);
 
       if (networkError != null) {
         final truncatedThinking =

@@ -435,9 +435,22 @@ class AiStore {
     ];
   }
 
+  String trialResultKey(String trialId, String chapterId) =>
+      jsonEncode([trialId, chapterId]);
+
+  Future<AiTrialResultRecord?> trialResult(
+    String trialId,
+    String chapterId,
+  ) async {
+    if (!_available) return null;
+    return AiTrialResultRecord.fromJson(
+      _trialResults?.get(trialResultKey(trialId, chapterId)),
+    );
+  }
+
   Future<void> putTrialResult(AiTrialResultRecord result) async {
     await _trialResults?.put(
-      jsonEncode([result.trialId, result.chapterId]),
+      trialResultKey(result.trialId, result.chapterId),
       result.toJson(),
     );
   }
