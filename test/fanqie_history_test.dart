@@ -67,6 +67,8 @@ void main() {
       ),
     );
     expect(preview.validated.history, hasLength(1));
+    // 番茄历史预览不携带书架分组，也不因缺少 groups 失败。
+    expect(preview.validated.groupsIncluded, isFalse);
     expect(preview.skipped, 1);
     expect(preview.sourceCount, 2);
   });
