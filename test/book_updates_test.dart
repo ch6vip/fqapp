@@ -414,7 +414,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('更新'), findsOneWidget);
-      expect(find.text('检测失败的书'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('shelf-book-book:failing')),
+        findsOneWidget,
+      );
       expect(LibraryStore.instance.historySnapshot().single['chapterId'], '2');
       expect(tester.takeException(), isNull);
     });

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -21,6 +22,7 @@ import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/shelf_view_store.dart';
 import 'package:fqapp/widgets/home/home_reading_row.dart';
 import 'package:fqapp/widgets/lazy_indexed_stack.dart';
+import 'package:fqapp/widgets/wenku/wenku_reveal.dart';
 
 import 'support/fakes.dart';
 
@@ -536,6 +538,9 @@ void main() {
       tester.view.physicalSize = const Size(1080, 2280);
       tester.view.devicePixelRatio = 3;
       addTearDown(tester.view.reset);
+      // 设计 §6.1/§7.1：360dp 且 1.4x 字号下 masthead + 三动作页头不溢出。
+      tester.platformDispatcher.textScaleFactorTestValue = 1.4;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('shelf-book'));
       });
@@ -546,6 +551,22 @@ void main() {
       expect(find.byKey(const Key('library-import-button')), findsOneWidget);
       expect(find.byKey(const Key('library-more-button')), findsOneWidget);
       expect(find.byKey(const Key('shelf-category')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('首屏条目使用 LoadedContentSequence / LoadedContentItem 入场', (
+      tester,
+    ) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('a', title: '甲书'));
+        await ShelfStore.instance.add(_item('b', title: '乙书'));
+      });
+      await tester.pumpWidget(_app(cache: MemoryChapterCache()));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoadedContentSequence), findsOneWidget);
+      expect(find.byType(LoadedContentItem), findsNWidgets(2));
       expect(tester.takeException(), isNull);
     });
 
@@ -763,6 +784,42 @@ void main() {
       expect(LibraryStore.instance.historySnapshot(), isEmpty);
       // 搜索入口仍然指向搜索页。
       expect(find.byKey(const Key('library-search-button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('离线缓存扫描状态', () {
+    testWidgets('扫描未完成时显示「正在检查离线缓存…」', (tester) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      final pending = Completer<List<CachedBookSummary>>();
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('a', title: '甲书'));
+      });
+      await tester.pumpWidget(_app(cache: _ScanCache(() => pending.future)));
+      await tester.pump();
+      expect(find.text('正在检查离线缓存…'), findsOneWidget);
+
+      pending.complete(const []);
+      await tester.pumpAndSettle();
+      expect(find.text('正在检查离线缓存…'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('扫描失败时显示「离线缓存暂不可用」', (tester) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('a', title: '甲书'));
+      });
+      await tester.pumpWidget(
+        _app(cache: _ScanCache(() async => throw StateError('cache broken'))),
+      );
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+      expect(find.text('离线缓存暂不可用'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
@@ -1001,6 +1058,27 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
+    testWidgets('冷启动读取书架直读偏好：关闭时宽屏信息栏显示「查看详情」', (tester) async {
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      // 新进程：内存里还是默认 true，磁盘上用户已关掉书架直读。
+      setSingleChapterPrefs({BookOpenPreferences.shelfKey: false});
+      ShelfViewStore.instance.resetForTest();
+      BookOpenPreferences.instance.resetForTest();
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item('wide', title: '宽屏的书'));
+      });
+      await tester.binding.setSurfaceSize(const Size(1000, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(_app(cache: MemoryChapterCache()));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('archive-shelf-wide')), findsOneWidget);
+      expect(find.text('查看详情'), findsOneWidget);
+      expect(find.text('继续阅读'), findsNothing);
+      expect(find.text('开始阅读'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('无网且本地有缓存时，点书直接进阅读器而不是详情页', (tester) async {
       await tester.runAsync(() async {
         await ShelfStore.instance.add(_item('offline-book', title: '离线直读的书'));
@@ -1165,3 +1243,14 @@ MediaItem _item(
   kind: kind,
   seriesId: seriesId,
 );
+
+/// A `ChapterCacheStore` whose catalogue scan the test controls, so the page's
+/// pending/failed scan states can be observed without a real Hive box.
+class _ScanCache extends ChapterCacheStore {
+  _ScanCache(this.scan);
+
+  final Future<List<CachedBookSummary>> Function() scan;
+
+  @override
+  Future<List<CachedBookSummary>> books() => scan();
+}

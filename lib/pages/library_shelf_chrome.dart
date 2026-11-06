@@ -72,6 +72,7 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
             selected: _collectionFilter,
             onChanged: (value) => setState(() => _collectionFilter = value),
           ),
+          _cacheStatus(),
         ],
       );
     }
@@ -94,7 +95,14 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
       filterKey: const Key('shelf-filter'),
       viewKey: const Key('shelf-view'),
     );
-    if (_tab != 0 || !narrow) return toolbar;
+    // 浏览历史不筛来源，不需要缓存扫描状态。
+    if (_tab != 0) return toolbar;
+    if (!narrow) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [toolbar, _cacheStatus()],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -104,7 +112,28 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
         ),
         const SizedBox(height: 8),
         toolbar,
+        _cacheStatus(),
       ],
+    );
+  }
+
+  /// 离线缓存扫描状态：完成前提示正在检查，失败时说明筛选暂不可用。
+  /// 只有带「来源」筛选的书架 / 收藏 tab 需要它（design §3.5/§7.2）。
+  Widget _cacheStatus() {
+    if (_cacheScanComplete) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: AppText(
+          _cacheScanFailed ? '离线缓存暂不可用' : '正在检查离线缓存…',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.4,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
     );
   }
 
