@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,13 +7,14 @@ import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/library_page.dart';
-import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
-import 'package:fqapp/widgets/home/home_chip.dart';
 import 'package:fqapp/widgets/shelf/shelf_empty.dart';
+import 'package:fqapp/widgets/wenku/shelf_toolbar.dart';
+import 'package:fqapp/widgets/wenku/wenku_icons.dart';
+import 'package:fqapp/widgets/wenku/wenku_theme.dart';
 
-/// 书架视觉对齐回归：三种空态同一套尺度、今日已读胶囊与筛选 chip 同款描边。
+/// 书架视觉对齐回归：archive 空态尺度、今日已读胶囊描边、收藏类型筛选选中态。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
@@ -37,75 +39,108 @@ void main() {
     }
   });
 
-  testWidgets('三种书架空态统一 48dp 图标砖、20dp 内边距与 16sp 标题', (tester) async {
+  Widget host(Widget child) => MaterialApp(
+    theme: WenkuTheme.create(Brightness.light),
+    home: Scaffold(body: child),
+  );
+
+  testWidgets('三种空态与筛选空态统一 34dp 图标、17sp 标题、12sp 说明', (tester) async {
     final cases = <(Widget, String)>[
       (const ShelfEmptyState(), '书架暂无书籍'),
       (const ShelfCollectionEmptyState(text: '暂无收藏内容'), '暂无收藏内容'),
       (const ShelfEmptyHint(text: '未找到相关内容'), '未找到相关内容'),
+      (const ShelfFilteredEmptyState(text: '没有符合筛选的书籍'), '没有符合筛选的书籍'),
     ];
-    // 每个空态的图标砖都是 build 里的第一个 Icon。
     for (final (state, title) in cases) {
-      await tester.pumpWidget(MaterialApp(home: Scaffold(body: state)));
+      await tester.pumpWidget(host(state));
       await tester.pumpAndSettle();
-      final iconFinder = find.byType(Icon).first;
-      expect(tester.widget<Icon>(iconFinder).size, 48);
-      final brick = tester.widget<Container>(
-        find.ancestor(of: iconFinder, matching: find.byType(Container)).first,
-      );
-      expect(brick.padding, const EdgeInsets.all(20));
+      final icon = tester.widget<ArchiveIcon>(find.byType(ArchiveIcon).first);
+      expect(icon.size, 34);
       final text = tester.widget<Text>(find.text(title));
-      expect(text.style?.fontSize, 16);
+      expect(text.style?.fontSize, 17);
       expect(text.style?.fontWeight, FontWeight.w600);
     }
   });
 
-  testWidgets('浅色下今日已读胶囊不描边，与未选中 HomeChip 同款', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: LibraryPage()));
+  testWidgets('空书架保留去书城 / 离线缓存 Key，筛选空态保留清除筛选 Key', (tester) async {
+    await tester.pumpWidget(
+      host(ShelfEmptyState(onBrowse: () {}, onCachedBooks: () {})),
+    );
     await tester.pumpAndSettle();
-    final pill = tester.widget<Container>(
+    expect(find.byKey(const Key('shelf-browse-button')), findsOneWidget);
+    expect(find.byKey(const Key('shelf-cached-books-button')), findsOneWidget);
+    final message = tester.widget<Text>(find.text('去书城发现海量故事，随时随地畅读'));
+    expect(message.style?.fontSize, 12);
+
+    await tester.pumpWidget(
+      host(ShelfFilteredEmptyState(text: '没有符合筛选的书籍', onClearFilters: () {})),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('shelf-clear-filters')), findsOneWidget);
+  });
+
+  testWidgets('今日已读胶囊常规无描边、墨水屏有黑描边', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: WenkuTheme.create(Brightness.light),
+        home: const Scaffold(body: ShelfTodayReadingPill(minutes: 0)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    var pill = tester.widget<Container>(
       find
           .ancestor(of: find.text('今日已读0分钟'), matching: find.byType(Container))
           .first,
     );
     expect((pill.decoration! as BoxDecoration).border, isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
 
-  testWidgets('墨水屏下今日已读胶囊有黑描边，收藏筛选 chip 选中/未选中可区分', (tester) async {
-    final original = einkModeNotifier.value;
-    einkModeNotifier.value = true;
-    addTearDown(() => einkModeNotifier.value = original);
-
-    await tester.pumpWidget(const MaterialApp(home: LibraryPage()));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: WenkuTheme.create(Brightness.light, eink: true),
+        home: const Scaffold(body: ShelfTodayReadingPill(minutes: 0)),
+      ),
+    );
     await tester.pumpAndSettle();
-
-    final pill = tester.widget<Container>(
+    pill = tester.widget<Container>(
       find
           .ancestor(of: find.text('今日已读0分钟'), matching: find.byType(Container))
           .first,
     );
-    final pillBorder = (pill.decoration! as BoxDecoration).border;
-    expect(pillBorder, isNotNull, reason: '白底胶囊需要黑描边才可见');
-    expect((pillBorder! as Border).top.color, Colors.black);
+    final border = (pill.decoration! as BoxDecoration).border;
+    expect(border, isNotNull);
+    expect((border! as Border).top.color, Colors.black);
+  });
 
+  testWidgets('收藏 tab 的类型筛选保留生产 Key 且选中态可区分', (tester) async {
+    final handle = tester.ensureSemantics();
+    await tester.pumpWidget(const MaterialApp(home: LibraryPage()));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('收藏'));
     await tester.pumpAndSettle();
+
     final all = find.byKey(const Key('library-collection-filter-all'));
     final video = find.byKey(const Key('library-collection-filter-video'));
-    expect(tester.widget(all), isA<HomeChip>());
-    expect(tester.widget(video), isA<HomeChip>());
-    final selected = _chipDecoration(tester, all);
-    final unselected = _chipDecoration(tester, video);
-    expect(selected.color, Colors.black);
-    expect(unselected.color, Colors.white);
-    expect((unselected.shape as StadiumBorder).side.color, Colors.black);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-}
+    expect(all, findsOneWidget);
+    expect(video, findsOneWidget);
+    expect(
+      tester.getSemantics(all).flagsCollection.isSelected,
+      Tristate.isTrue,
+    );
+    expect(
+      tester.getSemantics(video).flagsCollection.isSelected,
+      Tristate.isFalse,
+    );
 
-ShapeDecoration _chipDecoration(WidgetTester tester, Finder chip) {
-  final container = tester.widget<Container>(
-    find.descendant(of: chip, matching: find.byType(Container)).first,
-  );
-  return container.decoration! as ShapeDecoration;
+    await tester.tap(video);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(all).flagsCollection.isSelected,
+      Tristate.isFalse,
+    );
+    expect(
+      tester.getSemantics(video).flagsCollection.isSelected,
+      Tristate.isTrue,
+    );
+    handle.dispose();
+  });
 }
