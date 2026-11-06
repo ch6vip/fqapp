@@ -1,17 +1,44 @@
+import 'dart:io';
 import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_ce/hive.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/pages/library_page.dart';
+import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/widgets/shelf/shelf_empty.dart';
 import 'package:fqapp/widgets/wenku/shelf_toolbar.dart';
-import 'package:fqapp/widgets/wenku/wenku_glass.dart';
 import 'package:fqapp/widgets/wenku/wenku_icons.dart';
-import 'package:fqapp/widgets/wenku/wenku_segments.dart';
 import 'package:fqapp/widgets/wenku/wenku_theme.dart';
 
 /// 书架视觉对齐回归：archive 空态尺度、今日已读胶囊描边、收藏类型筛选选中态。
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory directory;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    directory = await Directory.systemTemp.createTemp('fqapp-shelf-visual-');
+    Hive.init(directory.path);
+    await LibraryStore.instance.init();
+    await ShelfStore.instance.init();
+  });
+
+  tearDown(() async {
+    await Hive.close().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => const <void>[],
+    );
+    try {
+      await directory.delete(recursive: true);
+    } catch (_) {
+      // 临时目录清理失败只是噪音。
+    }
+  });
+
   Widget host(Widget child) => MaterialApp(
     theme: WenkuTheme.create(Brightness.light),
     home: Scaffold(body: child),
@@ -84,41 +111,35 @@ void main() {
     expect((border! as Border).top.color, Colors.black);
   });
 
-  testWidgets('收藏类型筛选的 GlassTextButton 选中态可区分', (tester) async {
+  testWidgets('收藏 tab 的类型筛选保留生产 Key 且选中态可区分', (tester) async {
     final handle = tester.ensureSemantics();
-    await tester.pumpWidget(
-      host(
-        GlassChoiceGroup<String>(
-          name: 'collection-filter',
-          label: '类型',
-          value: 'all',
-          options: const {'all': '全部', 'video': '短剧'},
-          onChanged: (_) {},
-        ),
-      ),
-    );
+    await tester.pumpWidget(const MaterialApp(home: LibraryPage()));
     await tester.pumpAndSettle();
-    final all = tester.widget<GlassTextButton>(
-      find.byKey(const ValueKey('collection-filter-all')),
-    );
-    final video = tester.widget<GlassTextButton>(
-      find.byKey(const ValueKey('collection-filter-video')),
-    );
-    expect(all.selected, isTrue);
-    expect(video.selected, isFalse);
+    await tester.tap(find.text('收藏'));
+    await tester.pumpAndSettle();
+
+    final all = find.byKey(const Key('library-collection-filter-all'));
+    final video = find.byKey(const Key('library-collection-filter-video'));
+    expect(all, findsOneWidget);
+    expect(video, findsOneWidget);
     expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('collection-filter-all')))
-          .flagsCollection
-          .isSelected,
+      tester.getSemantics(all).flagsCollection.isSelected,
       Tristate.isTrue,
     );
     expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('collection-filter-video')))
-          .flagsCollection
-          .isSelected,
+      tester.getSemantics(video).flagsCollection.isSelected,
       Tristate.isFalse,
+    );
+
+    await tester.tap(video);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(all).flagsCollection.isSelected,
+      Tristate.isFalse,
+    );
+    expect(
+      tester.getSemantics(video).flagsCollection.isSelected,
+      Tristate.isTrue,
     );
     handle.dispose();
   });
