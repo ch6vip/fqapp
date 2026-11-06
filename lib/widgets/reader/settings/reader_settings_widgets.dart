@@ -7,10 +7,10 @@
 //
 // Mechanical substitutions:
 // - `app_ui.dart` GlassIconButton -> shared `lib/widgets/wenku` export.
-// - `AppControls.toggle` -> `ReaderGlassControls.toggle` (plain Switch when the
-//   host disables glass or on e-ink).
-// - `GlassChoiceGroup`'s compact chip -> `ReaderGlassControls.chip` so the
-//   existing 34 px row height and one-line chord layout are preserved.
+// - `AppControls.toggle` -> `GlassControls.toggle` with `plainFallback` (plain
+//   Switch when the host disables glass or on e-ink).
+// - `GlassChoiceGroup`'s compact chip -> `GlassControls.chip` so the existing
+//   34 px row height and one-line chord layout are preserved.
 // - The e-ink / high-contrast sheet disables the lens through PerformanceScope.
 
 import 'package:flutter/cupertino.dart';
@@ -18,7 +18,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/reader_preferences.dart';
-import '../../wenku/reader_glass_controls.dart';
 import '../../wenku/wenku_ui.dart';
 import '../reader_theme.dart';
 
@@ -258,7 +257,7 @@ class ReaderSettingsChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
-    return ReaderGlassControls.chip(
+    return GlassControls.chip(
       context,
       selected: selected,
       onPressed: onTap,
@@ -350,7 +349,7 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
               ),
             ),
           ),
-          ReaderGlassControls.toggle(
+          GlassControls.toggle(
             context,
             value: value,
             onChanged: onChanged,
@@ -358,6 +357,7 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
             trackColor: preset.borderColor,
             thumbColor: preset.isDark ? preset.textColor : Colors.white,
             tint: preset.panelColor,
+            plainFallback: true,
           ),
         ],
       ),

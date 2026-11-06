@@ -9,8 +9,8 @@
 // - The upstream engine/voice sheet (`SystemSpeechEnginesPanel`, GlassTextButton
 //   rows) maps to this page's engine selector and rate slider; fqapp's engine
 //   and preference services (`SystemTts`, `SystemTtsPreferences`) are kept.
-// - `AppControls.toggle/slider` -> `SettingsGlassControls`
-//   (`lib/widgets/wenku/settings_glass_controls.dart`).
+// - `AppControls.toggle/slider` -> `GlassControls`
+//   (`lib/widgets/wenku/glass_controls.dart`).
 // - `showNovelFeedback` -> the existing SnackBar messages (same text).
 // - Empty/error states use `ContentNotice`, the shared archive state widget.
 
@@ -20,7 +20,6 @@ import 'package:flutter/material.dart';
 import '../services/audio_floating_routes.dart';
 import '../services/system_tts.dart';
 import '../widgets/settings/settings_archive_rows.dart';
-import '../widgets/wenku/settings_glass_controls.dart';
 import '../widgets/wenku/settings_glass_menu.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
@@ -249,7 +248,7 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
           ],
         ),
         const SizedBox(height: 4),
-        SettingsGlassControls.slider(
+        GlassControls.slider(
           context,
           value: rate,
           min: .5,

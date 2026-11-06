@@ -1,5 +1,6 @@
 export 'app_search_field.dart';
 export 'book_collection_layout.dart';
+export 'glass_controls.dart';
 export 'glass_dock.dart';
 export 'src/app_haptics.dart';
 export 'src/app_text.dart';

@@ -7,8 +7,8 @@
 // Mechanical substitutions:
 // - `app_ui.dart` AppText/GlassIconButton/LiquidGlass/JellyTapSurface ->
 //   the shared `lib/widgets/wenku` exports.
-// - `app_ui.dart` AppControls.slider -> ReaderGlassControls.slider
-//   (`lib/widgets/wenku/reader_glass_controls.dart`).
+// - `app_ui.dart` AppControls.slider -> GlassControls.slider
+//   (`lib/widgets/wenku/glass_controls.dart`).
 // - `NovelMotion` -> `WenkuMotion`; `DockLayout` is the already-ported shared
 //   geometry file.
 // - The upstream ProgressCapsule scrubs *within a chapter* through
@@ -23,7 +23,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/reader_preferences.dart';
-import '../wenku/reader_glass_controls.dart';
 import '../wenku/wenku_ui.dart';
 import 'reader_theme.dart';
 
@@ -176,7 +175,7 @@ class ReaderControls extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Expanded(
-              child: ReaderGlassControls.slider(
+              child: GlassControls.slider(
                 context,
                 key: const ValueKey('reader-chapter-seek'),
                 value: value,

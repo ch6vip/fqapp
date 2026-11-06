@@ -14,9 +14,8 @@
 // - `liquid_glass_easy` is the vendored third_party path package fqapp already
 //   depends on, so the package API is used unchanged.
 //
-// AppGlassSwitch and AppGlassSlider are intentionally not carried: they share
-// no private code with AppGlassSegments, and this batch only needs segmented
-// choices.
+// AppGlassSwitch and AppGlassSlider live in `glass_controls.dart`; this file
+// only carries the segmented choices.
 
 import 'dart:math' as math;
 

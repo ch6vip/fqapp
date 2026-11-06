@@ -8,14 +8,13 @@
 // onChanged/onChangeEnd contract, covered by reader_interface_test.
 //
 // Mechanical substitutions: shared `lib/widgets/wenku` exports and
-// `ReaderGlassControls.chip` in place of `AppControls` / `GlassTextButton`.
+// `GlassControls.chip` in place of `AppControls` / `GlassTextButton`.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
-import '../wenku/reader_glass_controls.dart';
 import '../wenku/wenku_ui.dart';
 import 'reader_theme.dart';
 import 'settings/reader_turn_settings.dart';
@@ -507,7 +506,7 @@ class _FontSizeStepper extends StatelessWidget {
         child: Center(
           child: Tooltip(
             message: tooltip,
-            child: ReaderGlassControls.chip(
+            child: GlassControls.chip(
               context,
               selected: false,
               onPressed: next < _min || next > _max

@@ -8,7 +8,7 @@
 // Mechanical substitutions:
 // - `SettingsScaffold` / `SettingsGroupCard` / `SettingsRow` / `SettingsSwitch`
 //   -> `ArchiveFeaturePage`, `SettingsPanel`, `SettingsToggleRow`,
-//   `SettingsGlassControls.toggle`.
+//   `GlassControls.toggle`.
 // - `HomeStateView` -> `ContentNotice` (same title/message).
 // - The fixed bottom action is a floating `GlassPillButton` over the list
 //   because `ArchiveFeaturePage` has no bottomNavigationBar slot.
@@ -21,7 +21,6 @@ import '../services/chapter_text_formatter.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
 import '../widgets/settings/settings_archive_rows.dart';
-import '../widgets/wenku/settings_glass_controls.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
 class TextReplacementPage extends StatefulWidget {
@@ -236,7 +235,7 @@ class _TextReplacementPageState extends State<TextReplacementPage> {
                 const SizedBox(width: 12),
                 Semantics(
                   label: '第 ${i + 1} 条规则启用',
-                  child: SettingsGlassControls.toggle(
+                  child: GlassControls.toggle(
                     context,
                     value: rule.enabled,
                     onChanged: _saving
@@ -460,7 +459,7 @@ class _RuleEditorState extends State<_RuleEditor> {
           ),
         ),
       ),
-      SettingsGlassControls.toggle(
+      GlassControls.toggle(
         context,
         value: _regex,
         semanticLabel: '使用正则表达式',

@@ -6,7 +6,7 @@ import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/settings/settings_archive_rows.dart';
-import 'package:fqapp/widgets/wenku/settings_glass_controls.dart';
+import 'package:fqapp/widgets/wenku/glass_controls.dart';
 import 'package:fqapp/widgets/wenku/settings_glass_menu.dart';
 import 'package:fqapp/widgets/wenku/wenku_theme.dart';
 
@@ -135,16 +135,12 @@ void main() {
             body: Builder(
               builder: (context) => Column(
                 children: [
-                  SettingsGlassControls.toggle(
+                  GlassControls.toggle(
                     context,
                     value: false,
                     onChanged: (_) {},
                   ),
-                  SettingsGlassControls.toggle(
-                    context,
-                    value: false,
-                    onChanged: null,
-                  ),
+                  GlassControls.toggle(context, value: false, onChanged: null),
                 ],
               ),
             ),
@@ -213,7 +209,7 @@ void main() {
           child: Scaffold(
             body: Builder(
               builder: (context) => Center(
-                child: SettingsGlassControls.toggle(
+                child: GlassControls.toggle(
                   context,
                   value: false,
                   onChanged: (_) {},
@@ -236,7 +232,7 @@ void main() {
           child: Scaffold(
             body: Builder(
               builder: (context) => Center(
-                child: SettingsGlassControls.toggle(
+                child: GlassControls.toggle(
                   context,
                   value: true,
                   onChanged: (_) {},

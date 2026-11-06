@@ -13,8 +13,6 @@ import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'package:fqapp/widgets/shelf/shelf_design.dart';
-import 'package:fqapp/widgets/wenku/settings_glass_controls.dart';
-import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 /// 设置与「我的」的 Wenku8 档案化收敛：首页是 ArchiveMasthead + 分类
 /// FeatureEntry，分类页是 ArchiveFeaturePage + ContentPanel，控制件走
