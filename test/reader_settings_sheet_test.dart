@@ -63,10 +63,12 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('reader-mode-scroll')));
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 150));
       expect(changes.last.pageMode, ReaderPageMode.scroll);
 
       await tester.tap(find.byKey(const ValueKey('reader-mode-paged')));
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 150));
       expect(changes.last.pageMode, ReaderPageMode.paged);
       expect(changes.last.pageTurnStyle, ReaderPageTurnStyle.cover);
     });
@@ -107,6 +109,8 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('reader-spacing-loose')));
       await tester.pumpAndSettle();
+      // 面板按 120ms 尾随合并写入阅读页，等合并窗口过去再取终值。
+      await tester.pump(const Duration(milliseconds: 150));
       final loose = changes.last;
       expect(loose.lineHeight, 2.1);
       expect(loose.paragraphSpacing, 20);
@@ -115,6 +119,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('reader-spacing-compact')));
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 150));
       final compact = changes.last;
       expect(compact.lineHeight, 1.5);
       expect(compact.paragraphSpacing, 6);

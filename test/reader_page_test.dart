@@ -336,7 +336,7 @@ void main() {
       await tester.tap(find.text('目录'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byTooltip('已缓存'), findsNWidgets(3));
+      expect(find.text('已缓存'), findsNWidgets(3));
       await tester.tap(
         find.descendant(of: find.byType(ListTile), matching: find.text('尾声')),
       );
