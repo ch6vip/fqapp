@@ -210,6 +210,18 @@ void main() {
     expect(find.text('已有同名分类'), findsOneWidget);
     expect(result.value, isNull);
     expect(find.text('保存分类'), findsOneWidget);
+    // The notice lives in the root Overlay, not a page-level SnackBar that the
+    // pushed sheet would cover.
+    expect(find.byType(SnackBar), findsNothing);
+    expect(
+      find.ancestor(
+        of: find.byKey(const ValueKey('shelf-feedback')),
+        matching: find.byType(Overlay),
+      ),
+      findsOneWidget,
+    );
+    // Let the transient notice's timer fire before the test zone ends.
+    await tester.pump(const Duration(seconds: 3));
   });
 
   testWidgets('分类名输入限制 30 字', (tester) async {
@@ -245,6 +257,7 @@ void main() {
 
     expect(find.text('分类记录已满，请合并现有分类'), findsOneWidget);
     expect(result.value, isNull);
+    await tester.pump(const Duration(seconds: 3));
   });
 
   testWidgets('墓碑后分类从列表消失但归属保留', (tester) async {
@@ -298,5 +311,19 @@ void main() {
     await pumpHost(tester, result: result);
     await openSheet(tester);
     expect(find.text('分类暂不可用，请稍后再试'), findsOneWidget);
+  });
+
+  testWidgets('分组未就绪时分配面板直接返回 null，不会返回 _all', (tester) async {
+    await store.init();
+    await tester.runAsync(() => Hive.close());
+    expect(store.isReady, isFalse);
+
+    final result = ValueNotifier<String?>('unchanged');
+    await pumpHost(tester, result: result, choose: true);
+    await openSheet(tester);
+    expect(find.text('移至分类'), findsNothing);
+    // `_all` is not a valid assignment target; the caller must keep its
+    // current category instead.
+    expect(result.value, isNull);
   });
 }

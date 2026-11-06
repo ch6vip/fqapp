@@ -104,35 +104,34 @@ class ShelfToolbar extends StatelessWidget {
                           key: categoryKey,
                           compact: true,
                           onPressed: onCategory,
-                          child: LayoutBuilder(
-                            builder: (context, constraints) => Row(
-                              children: [
-                                if (constraints.maxWidth >= 100) ...[
-                                  const ArchiveIcon(
-                                    CupertinoIcons.folder,
-                                    size: 16,
-                                  ),
-                                  const SizedBox(width: 8),
-                                ],
-                                Expanded(
-                                  child: AppText(
-                                    category,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      height: 1.4,
-                                      fontWeight: FontWeight.w500,
-                                    ),
+                          // fqapp has no compact main-page scope, so the
+                          // upstream `!compact || width >= 100` guard is
+                          // always true: the folder glyph stays visible.
+                          child: Row(
+                            children: [
+                              const ArchiveIcon(
+                                CupertinoIcons.folder,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: AppText(
+                                  category,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    height: 1.4,
+                                    fontWeight: FontWeight.w500,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
-                                const ArchiveIcon(
-                                  CupertinoIcons.chevron_down,
-                                  size: 11,
-                                ),
-                              ],
-                            ),
+                              ),
+                              const SizedBox(width: 6),
+                              const ArchiveIcon(
+                                CupertinoIcons.chevron_down,
+                                size: 11,
+                              ),
+                            ],
                           ),
                         ),
                       ),

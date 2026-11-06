@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -60,6 +61,24 @@ void main() {
     final categoryY = tester.getTopLeft(find.text('全部书籍')).dy;
     final countY = tester.getTopLeft(find.text('筛选 · 12 本')).dy;
     expect(countY, greaterThan(categoryY));
+  });
+
+  testWidgets('窄分类通道仍显示文件夹图标（fqapp 没有 compact 作用域）', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ShelfToolbar(
+          category: '全部书籍',
+          count: 3,
+          onCategory: () {},
+          showFilter: false,
+          showView: false,
+        ),
+        width: 120,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byIcon(CupertinoIcons.folder), findsOneWidget);
   });
 
   testWidgets('分类 / 筛选 / 视图三个入口保留各自的 Key 与回调', (tester) async {

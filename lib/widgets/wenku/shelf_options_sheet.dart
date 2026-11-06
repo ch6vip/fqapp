@@ -13,8 +13,8 @@
 //   secondary anchored menu is needed.
 // - `BookShelfContentPreferences` follow toggle is intentionally absent
 //   (decisions #9: followCollection is fixed true and the UI never exposes it).
-// - `showNovelFeedback` -> a local SnackBar helper (the page owns its own
-//   feedback seam).
+// - `showNovelFeedback` -> `shelf_feedback.dart`'s `showShelfFeedback`, which
+//   inserts into the root Overlay so the notice stays visible above the sheet.
 //
 // fqapp additions:
 // - `ShelfViewTarget` is the frozen three-target enum; `all` shows the four
@@ -27,11 +27,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/shelf_view_state.dart';
+import '../shelf/shelf_feedback.dart';
 import 'book_collection_layout.dart';
 import 'src/app_text.dart';
 import 'wenku_archive.dart';
 import 'wenku_glass.dart';
 import 'wenku_icons.dart';
+import 'wenku_reveal.dart';
 import 'wenku_segments.dart';
 
 /// Region-specific view sheets never change the other region's presentation.
@@ -111,75 +113,79 @@ class ShelfViewOptions extends StatelessWidget {
                 : (grid ? BookCollectionMode.grid : BookCollectionMode.list),
           ),
         ),
-      if (target != ShelfViewTarget.collection &&
-          onPreferencesChanged != null &&
-          mode.hasShelf)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (target == ShelfViewTarget.all)
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: AppText(
-                      '上方 · 立体书架',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+      if (target != ShelfViewTarget.collection && onPreferencesChanged != null)
+        AnimatedOptionSection(
+          expanded: mode.hasShelf,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (target == ShelfViewTarget.all)
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: AppText(
+                        '上方 · 立体书架',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ShelfCountSetting(
-                key: const ValueKey('shelf-minimum-books'),
-                inputKey: const ValueKey('shelf-minimum-books-input'),
-                label: '显示所需最少本数',
-                value: preferences.minimumBooks,
-                onChanged: (value) => onPreferencesChanged!(
-                  preferences.copyWith(minimumBooks: value),
-                ),
-              ),
-              const SizedBox(height: 8),
-              ShelfCountSetting(
-                key: const ValueKey('shelf-maximum-books'),
-                inputKey: const ValueKey('shelf-maximum-books-input'),
-                label: '最多展示本数',
-                value: preferences.maximumBooks,
-                onChanged: (value) => onPreferencesChanged!(
-                  preferences.copyWith(maximumBooks: value),
-                ),
-              ),
-              const SizedBox(height: 8),
-              ShelfToggle(
-                key: const ValueKey('shelf-repeat-fill'),
-                label: '重复填充',
-                value: preferences.repeatFill,
-                onChanged: (value) => onPreferencesChanged!(
-                  preferences.copyWith(repeatFill: value),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: AppText(
-                  '关闭重复填充时，每本书只展示一次。展示本数不限制藏书数量。',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ShelfCountSetting(
+                  key: const ValueKey('shelf-minimum-books'),
+                  inputKey: const ValueKey('shelf-minimum-books-input'),
+                  label: '显示所需最少本数',
+                  value: preferences.minimumBooks,
+                  onChanged: (value) => onPreferencesChanged!(
+                    preferences.copyWith(minimumBooks: value),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                ShelfCountSetting(
+                  key: const ValueKey('shelf-maximum-books'),
+                  inputKey: const ValueKey('shelf-maximum-books-input'),
+                  label: '最多展示本数',
+                  value: preferences.maximumBooks,
+                  onChanged: (value) => onPreferencesChanged!(
+                    preferences.copyWith(maximumBooks: value),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ShelfToggle(
+                  key: const ValueKey('shelf-repeat-fill'),
+                  label: '重复填充',
+                  value: preferences.repeatFill,
+                  onChanged: (value) => onPreferencesChanged!(
+                    preferences.copyWith(repeatFill: value),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: AppText(
+                    '关闭重复填充时，每本书只展示一次。展示本数不限制藏书数量。',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      if (target != ShelfViewTarget.shelf && mode.isGrid)
-        ShelfGridDensityOptions(
-          value: density,
-          viewport: gridViewport,
-          onChanged: onDensityChanged,
+      if (target != ShelfViewTarget.shelf)
+        AnimatedOptionSection(
+          expanded: mode.isGrid,
+          child: ShelfGridDensityOptions(
+            value: density,
+            viewport: gridViewport,
+            onChanged: onDensityChanged,
+          ),
         ),
       if (target != ShelfViewTarget.all && onShowLayoutOptions != null) ...[
         const SizedBox(height: 20),
@@ -375,12 +381,7 @@ class _ShelfCountSettingState extends State<ShelfCountSetting> {
     _commit((value + delta).clamp(1, BookShelfPreferences.maximum));
   }
 
-  void _feedback(String message) {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
-  }
+  void _feedback(String message) => showShelfFeedback(context, message);
 
   @override
   void didUpdateWidget(ShelfCountSetting oldWidget) {
