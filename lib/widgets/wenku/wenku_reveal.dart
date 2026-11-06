@@ -13,10 +13,9 @@
 // - `archive_motion.dart` -> `src/archive_motion.dart` (`ArchiveReveal`,
 //   `ArchiveRevealAxis`).
 // - `loading_handoff.dart` has no separate fqapp file. `LoadingHandoff` and
-//   its private remainder render object are copied below, with the class
-//   renamed `_LoadingHandoff` because only `RevealFromTop` needs them. Its
-//   unused `crossfade` option is omitted; every caller here uses the
-//   skeleton-remainder path.
+//   its private remainder render object are copied below. The class is public
+//   so the archive carousel's caption can use the upstream `crossfade` branch;
+//   `RevealFromTop` keeps the skeleton-remainder branch.
 // - `SizeTransition.axisAlignment` is deprecated in this Flutter SDK;
 //   `axisAlignment: -1` (its vertical default) is expressed as
 //   `alignment: AlignmentDirectional.topStart`, the same directional value.
@@ -254,7 +253,7 @@ class RevealFromTop extends StatelessWidget {
     );
     return placeholder == null
         ? revealed
-        : _LoadingHandoff(
+        : LoadingHandoff(
             animation: animation,
             start: start,
             end: end,
@@ -272,9 +271,12 @@ class RevealFromTop extends StatelessWidget {
 
 /// Copy of upstream `loading_handoff.dart` `LoadingHandoff`. The arriving
 /// content owns layout. Its static skeleton remains below the unrevealed
-/// portion, so a delayed cut-in never exposes an empty page.
-class _LoadingHandoff extends StatefulWidget {
-  const _LoadingHandoff({
+/// portion, so a delayed cut-in never exposes an empty page. With
+/// [crossfade] the placeholder already owns the final geometry and is replaced
+/// in place by an opacity handoff instead of the clipped remainder.
+class LoadingHandoff extends StatefulWidget {
+  const LoadingHandoff({
+    super.key,
     required this.animation,
     required this.placeholder,
     required this.child,
@@ -282,6 +284,7 @@ class _LoadingHandoff extends StatefulWidget {
     this.end = 1,
     this.axis = Axis.vertical,
     this.travel = Offset.zero,
+    this.crossfade = false,
   });
   final Animation<double> animation;
   final Widget placeholder, child;
@@ -289,11 +292,14 @@ class _LoadingHandoff extends StatefulWidget {
   final Axis axis;
   final Offset travel;
 
+  /// Replace ink in place when the placeholder already has the final geometry.
+  final bool crossfade;
+
   @override
-  State<_LoadingHandoff> createState() => _LoadingHandoffState();
+  State<LoadingHandoff> createState() => _LoadingHandoffState();
 }
 
-class _LoadingHandoffState extends State<_LoadingHandoff> {
+class _LoadingHandoffState extends State<LoadingHandoff> {
   @override
   void initState() {
     super.initState();
@@ -308,7 +314,7 @@ class _LoadingHandoffState extends State<_LoadingHandoff> {
   }
 
   @override
-  void didUpdateWidget(_LoadingHandoff oldWidget) {
+  void didUpdateWidget(LoadingHandoff oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.animation != widget.animation) {
       oldWidget.animation.removeStatusListener(_status);
@@ -325,6 +331,11 @@ class _LoadingHandoffState extends State<_LoadingHandoff> {
   @override
   Widget build(BuildContext context) {
     if (MediaQuery.disableAnimationsOf(context)) return widget.child;
+    final opacity = widget.animation.drive(
+      CurveTween(
+        curve: Interval(widget.start, widget.end, curve: Curves.easeOutCubic),
+      ),
+    );
     return Stack(
       fit: StackFit.passthrough,
       children: [
@@ -333,18 +344,25 @@ class _LoadingHandoffState extends State<_LoadingHandoff> {
           Positioned.fill(
             child: IgnorePointer(
               child: ExcludeSemantics(
-                child: _SkeletonRemainder(
-                  animation: widget.animation,
-                  start: widget.start,
-                  end: widget.end,
-                  axis: widget.axis,
-                  travel: widget.travel,
-                  child: RepaintBoundary(child: widget.placeholder),
-                ),
+                child: widget.crossfade
+                    ? FadeTransition(
+                        opacity: ReverseAnimation(opacity),
+                        child: RepaintBoundary(child: widget.placeholder),
+                      )
+                    : _SkeletonRemainder(
+                        animation: widget.animation,
+                        start: widget.start,
+                        end: widget.end,
+                        axis: widget.axis,
+                        travel: widget.travel,
+                        child: RepaintBoundary(child: widget.placeholder),
+                      ),
               ),
             ),
           ),
-        widget.child,
+        widget.crossfade
+            ? FadeTransition(opacity: opacity, child: widget.child)
+            : widget.child,
       ],
     );
   }

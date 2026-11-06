@@ -19,6 +19,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/library_backup.dart';
 import '../services/library_backup_service.dart';
+import '../services/shelf_group_store.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'fanqie_history_import_page.dart';
 
@@ -90,6 +91,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
   Future<void> _export() => _run('正在导出，请在系统窗口选择保存位置…', () async {
     final backup = await _service.capture();
     if (!mounted) return;
+    final groupsReady = ShelfGroupStore.instance.isReady;
     final saved = await _service.export(backup);
     if (!mounted) return;
     setState(() {
@@ -97,6 +99,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
           ? '备份文件已保存：${_counts(backup)}。\n'
                 '将这个文件传到新手机，在本页选择导入即可。'
                 '${backup.excludedLocalRecords > 0 ? '\n已排除 ${backup.excludedLocalRecords} 条本地书籍相关记录。' : ''}'
+                '${groupsReady ? '' : '\n本次备份不含书架分组。'}'
           : '已取消导出';
     });
   });
@@ -119,9 +122,12 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       if (!mounted) return;
       setState(() {
         _preview = null;
+        final groups = backup.groupsIncluded
+            ? '、${result.groups} 个分组（${result.assignments} 条分类归属）'
+            : '';
         _message =
             '恢复完成：新增 ${result.shelf} 条收藏、${result.history} 条进度、'
-            '${result.episodes} 集已看标记。\n'
+            '${result.episodes} 集已看标记$groups。\n'
             '保留本机已有收藏/进度 '
             '${backup.shelf.length + backup.history.length - result.shelf - result.history} 条。';
       });
@@ -130,7 +136,8 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
 
   static String _counts(LibraryBackup backup) =>
       '${backup.shelf.length} 条收藏、${backup.history.length} 条进度、'
-      '${backup.episodeCount} 集已看标记';
+      '${backup.episodeCount} 集已看标记'
+      '${backup.groupsIncluded ? '、${backup.groupCount} 个分组（${backup.assignmentCount} 条分类归属）' : ''}';
 
   @override
   Widget build(BuildContext context) {
@@ -223,7 +230,9 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                     _PreviewCounts(backup: preview),
                     const SizedBox(height: 14),
                     AppText(
-                      '只补充缺失的收藏与进度，保留本机已有记录。已看剧集会合并，可重复导入。',
+                      preview.groupsIncluded
+                          ? '只补充缺失的收藏、进度与分组，保留本机已有分组与记录。已看剧集会合并，可重复导入。'
+                          : '只补充缺失的收藏与进度，保留本机已有记录。已看剧集会合并，可重复导入。',
                       style: muted.copyWith(fontSize: 12),
                     ),
                     if (preview.excludedLocalRecords > 0) ...[
@@ -267,11 +276,24 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
               ),
             ],
             const SizedBox(height: 24),
-            AppText(
-              '备份包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存进度，'
-              '以及已看剧集。本地原文件、下载缓存、阅读时长、划线和应用设置需另行保留。'
-              '导出前请退出阅读或暂停播放，让当前进度保存。',
-              style: muted.copyWith(fontSize: 12),
+            ContentPanel(
+              child: ExpansionTile(
+                title: AppText(
+                  '备份包含哪些内容？',
+                  style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                ),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                children: [
+                  AppText(
+                    '包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存进度、'
+                    '已看剧集与书架分组。\n\n'
+                    '本地 TXT / EPUB 原文件、下载缓存、阅读时长、划线和应用设置需另行保留。\n\n'
+                    '导出前请退出阅读或暂停播放，让当前进度保存；换手机时传输备份文件，再在这里恢复。',
+                    style: muted.copyWith(fontSize: 13),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -280,24 +302,29 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
   }
 }
 
-/// 预览面板里的三列统计，用等宽数字对齐。
+/// 预览面板里的统计，用等宽数字对齐；备份含分组时追加分组与归属两列。
 class _PreviewCounts extends StatelessWidget {
   const _PreviewCounts({required this.backup});
 
   final LibraryBackup backup;
 
   @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context) => Wrap(
+    spacing: 14,
+    runSpacing: 12,
     children: [
       _count(context, '收藏', backup.shelf.length),
-      const SizedBox(width: 14),
       _count(context, '进度', backup.history.length),
-      const SizedBox(width: 14),
       _count(context, '已看剧集', backup.episodeCount),
+      if (backup.groupsIncluded) ...[
+        _count(context, '分组', backup.groupCount),
+        _count(context, '归属', backup.assignmentCount),
+      ],
     ],
   );
 
-  Widget _count(BuildContext context, String label, int value) => Expanded(
+  Widget _count(BuildContext context, String label, int value) => SizedBox(
+    width: 72,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

@@ -59,3 +59,71 @@ Non-identical mechanical substitutions:
   the upstream 420ms `ArchivePlaneTransition` diagonal entrance.
 - Search covers continue to use fqapp's existing media/cover pipeline. The
   upstream `NovelCover` and `StoryCover` widgets are not part of this slice.
+
+## Shelf port (U3–U6)
+
+The shelf batch adds the following upstream files. Each file header records
+its own mechanical substitutions; this list is the index.
+
+- `wenku_overlay.dart` — upstream `app_ui.dart` `showJellySheet` /
+  `showGlassMenu` / `GlassMenuAnchor` / `GlassMenuItem` /
+  `GlassOverlaySurface` / `GlassMenuSource` / `GlassMenuSurface` and
+  `confirmNovelAction` (as `confirmArchiveAction`). `GlassMenuItem` gains a
+  fqapp desktop extension: `FocusableActionDetector` + Enter/Space
+  activation + arrow-key traversal + a visible focus ring. The confirmation
+  keeps the upstream jelly sheet but exposes `confirmKey`/`cancelKey` and a
+  one-function seam back to `showDialog`.
+- `src/glass_overlay_motion.dart` — upstream `motion_ui.dart` overlay
+  transition (`GlassMenuStretch` / `GlassMenuContents` /
+  `GlassOverlayTransition`).
+- `src/glass_morph.dart` — upstream `glass_morph.dart`, renamed
+  `WenkuGlassMorph` to avoid the page-level `GlassMorph` name.
+- `archive_shelf.dart` — upstream `archive_wave.dart` `ArchiveFileCarousel`
+  and its render objects. `Novel` + `LibraryState` are flattened into
+  `ArchiveShelfEntry`; `NovelCover` becomes `ShelfCoverImage`; long-press
+  recognisers live inside the volume so `ArchiveBoxDepthRender.hitTest`
+  still sees the projected cap; edit mode adds `interactive`/`selecting`/
+  `selected`.
+- `src/archive_shelf_entry.dart` — fqapp row model for the carousel
+  (identity, progress, source label, file code).
+- `src/archive_shelf_geometry.dart`, `src/archive_scroll_simulation.dart`,
+  `src/archive_shelf_loading.dart`, `src/archive_spine_title.dart` —
+  verbatim/near-verbatim upstream helpers.
+- `shelf_toolbar.dart` — upstream `library_toolbar.dart`,
+  `book_collection_region_toolbar.dart` and the today-reading pill.
+  `NativeGlassGroup` maps to the vendored `LiquidGlassBatch`; the compact
+  main-page scope is a constant false; `ShelfToolbar.leading` hosts fqapp's
+  today-reading pill.
+- `shelf_options_sheet.dart` — upstream `book_collection_view_options.dart`
+  and `book_grid_density_controls.dart`. The follow-collection toggle is
+  intentionally absent (decisions #9); `ShelfViewTarget` is the fqapp
+  three-target enum.
+- `book_source_badge.dart` — upstream `book_source_badge.dart`.
+- `../shelf/shelf_cover_image.dart` — fqapp's single `PosterCache` cover
+  pipeline (file/svg/e-ink), replacing upstream `NovelCover`.
+- `../shelf/shelf_performance_scope.dart` — merges the persisted 立体书架
+  switch with e-ink and reduced-motion signals inside the page body.
+- `../shelf/book_collection_tiles.dart` — upstream `NovelRow`,
+  `BookGridTile`, `BookGridFailure` and the archive selection mark.
+  `Novel` becomes `MediaItem`; `NovelCover` becomes `ShelfCoverImage`;
+  `ArchiveDesign.fileCode` uses fqapp's FQ-/SQ- convention.
+- `../shelf/shelf_collection_view.dart` — upstream
+  `BookCollectionView.builder` composition with a region toolbar and an
+  optional carousel as leading slivers; an empty collection renders a plain
+  `CustomScrollView` because the shared builder asserts
+  `itemCount >= leadingCount + trailingCount`.
+- `../shelf/shelf_groups_sheet.dart` — upstream `book_categories.dart`.
+  `LocalLibraryPreferences` becomes `ShelfGroupStore`; `showJellySheet` /
+  `confirmNovelAction` become `showJellySheet` / `confirmArchiveAction`;
+  a not-ready store renders a read-only notice (never writes a fallback
+  category back to disk).
+
+The shelf page itself (`lib/pages/library_page*.dart`) keeps fqapp's
+three-tab data model, edit/undo, history confirmation, direct-read routing,
+offline cache, update detection, local import, pull-to-refresh, edit-mode
+back interception and hidden-tab retention. Its visual grammar is the
+upstream archive page: `WenkuPage`/`WenkuScope`, `ArchiveMasthead`,
+`WenkuControls.segments`, `ShelfToolbar`, `ArchiveFileCarousel`,
+`ShelfNovelRow`/`ShelfBookGridTile`, `showJellySheet`, `GlassMenuAnchor` and
+`confirmArchiveAction`.
+
