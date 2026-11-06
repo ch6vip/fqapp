@@ -14,9 +14,9 @@
 //   range, so the measured trace only needs the entrance reveal and the
 //   selected-day cursor. Geometry, colors, axis text and semantics are the
 //   upstream ones.
-// - `ReadingRhythmChart` -> `MiscReadingRhythmChart`,
-//   `ReadingActivityRing` -> `MiscReadingActivityRing` so integration can
-//   deduplicate names later.
+// - Class names are kept as upstream (`ReadingRhythmChart`,
+//   `ReadingActivityRing`); the integration pass dropped the temporary
+//   `Misc` prefix and the `misc_reading_charts.dart` filename.
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
@@ -26,8 +26,8 @@ import 'wenku_theme.dart';
 
 /// A bounded reading trace. Null days deliberately break both curves:
 /// absence of a measurement must never look like a measured zero.
-class MiscReadingRhythmChart extends StatelessWidget {
-  const MiscReadingRhythmChart({
+class ReadingRhythmChart extends StatelessWidget {
+  const ReadingRhythmChart({
     super.key,
     required this.dates,
     required this.minutes,
@@ -476,8 +476,8 @@ class _RhythmPainter extends CustomPainter {
 
 /// The dashboard's activity ratio. Percent text is rendered by widgets so the
 /// value stays selectable and legible at any text scale.
-class MiscReadingActivityRing extends StatelessWidget {
-  const MiscReadingActivityRing({
+class ReadingActivityRing extends StatelessWidget {
+  const ReadingActivityRing({
     super.key,
     required this.ratio,
     this.size = 190,

@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/player_layout_preferences.dart';
-import 'package:fqapp/widgets/wenku/settings_glass_menu.dart';
+import 'package:fqapp/widgets/wenku/wenku_overlay.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

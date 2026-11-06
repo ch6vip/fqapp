@@ -9,6 +9,7 @@ export 'book_collection_layout.dart';
 export 'book_source_badge.dart';
 export 'glass_controls.dart';
 export 'glass_dock.dart';
+export 'setting_menu.dart';
 export 'shelf_options_sheet.dart';
 export 'shelf_toolbar.dart';
 export 'src/app_haptics.dart';

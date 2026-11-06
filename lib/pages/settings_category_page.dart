@@ -7,7 +7,7 @@
 // Mechanical substitutions:
 // - `AppControls.toggle` / `GlassSettingMenu` are provided by fqapp's ported
 //   settings components (`lib/widgets/wenku/glass_controls.dart`,
-//   `settings_glass_menu.dart`) through `SettingsToggleRow` /
+//   `setting_menu.dart`) through `SettingsToggleRow` /
 //   `GlassSettingMenu`.
 // - `ArchiveFeaturePage` -> `SettingsArchivePage`, which renders the same
 //   header but omits the back button when the nearest Navigator has no route

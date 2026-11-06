@@ -27,7 +27,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../models/reading_stats.dart';
-import '../wenku/misc_reading_charts.dart';
+import '../wenku/reading_charts.dart';
 import '../wenku/wenku_ui.dart';
 
 /// 首屏摘要：本机累计时长作大字，活跃天数 / 读过的书 / 连续天数作一行
@@ -156,7 +156,7 @@ class MineSummary extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    MiscReadingActivityRing(ratio: ratio, size: 56),
+                    ReadingActivityRing(ratio: ratio, size: 56),
                   ],
                 ),
                 const SizedBox(height: 7),
