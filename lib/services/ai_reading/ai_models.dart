@@ -125,13 +125,15 @@ enum AiRunKind {
   formalRefresh,
   formalPrefetch,
   trial,
-  promptOptimize;
+  promptOptimize,
+  probe;
 
   static AiRunKind parse(Object? value) => switch (value) {
     'formalRefresh' => AiRunKind.formalRefresh,
     'formalPrefetch' => AiRunKind.formalPrefetch,
     'trial' => AiRunKind.trial,
     'promptOptimize' => AiRunKind.promptOptimize,
+    'probe' => AiRunKind.probe,
     _ => AiRunKind.formalFirst,
   };
 

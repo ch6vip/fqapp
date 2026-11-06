@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../services/ai_reading/ai_client.dart';
 import '../../../services/ai_reading/ai_credentials.dart';
 import '../../../services/ai_reading/ai_models.dart';
+import '../../../services/ai_reading/ai_probe_service.dart';
 import '../../../services/ai_reading/ai_settings.dart';
 import '../../../widgets/ai_reading/ai_ui.dart';
 import '../../../widgets/home/home_design.dart';
@@ -97,7 +98,6 @@ class _ProviderEditPage extends StatefulWidget {
 class _ProviderEditPageState extends State<_ProviderEditPage> {
   final _settings = AiSettingsStore.instance;
   final _credentials = AiCredentialStore.instance;
-  final _client = AiChatCompletionsClient();
 
   late final TextEditingController _label;
   late final TextEditingController _baseUrl;
@@ -269,7 +269,7 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
     AiProviderProfile profile,
     String apiKey,
     String model,
-  ) => _client.probe(
+  ) => AiProbeService.instance.probe(
     profile: profile,
     apiKey: apiKey,
     model: model,

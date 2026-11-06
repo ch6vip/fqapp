@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/ai_reading/ai_budget.dart';
-import '../../../services/ai_reading/ai_client.dart';
+import '../../../services/ai_reading/ai_probe_service.dart';
 import '../../../services/ai_reading/ai_controller.dart';
 import '../../../services/ai_reading/ai_credentials.dart';
 import '../../../services/ai_reading/ai_models.dart';
@@ -34,7 +34,6 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   final _settings = AiSettingsStore.instance;
   final _controller = AiReadingController.instance;
   final _credentials = AiCredentialStore.instance;
-  final _client = AiChatCompletionsClient();
 
   AiBudgetSnapshot? _budget;
   bool _probing = false;
@@ -237,7 +236,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
       _probeResult = null;
     });
     try {
-      final capability = await _client.probe(
+      final capability = await AiProbeService.instance.probe(
         profile: profile,
         apiKey: apiKey,
         model: model,
