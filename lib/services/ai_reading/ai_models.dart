@@ -2132,8 +2132,8 @@ class AiBudgetProjection {
   final int reservedRequestCount;
   final int reservedTaskCount;
 
-  /// Request IDs behind the reserved counters. Empty on legacy records; the
-  /// recovery path can still synthesize IDs from the counts.
+  /// Request IDs behind the reserved counters. A record with a non-zero
+  /// count and no ID is not a valid reservation in the current format.
   final List<String> reservedRequestIds;
   final List<String> reservedTaskIds;
 
