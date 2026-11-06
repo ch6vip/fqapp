@@ -65,20 +65,32 @@ class LibraryBackup {
     }
 
     bool includeShelf(ShelfRecord record) {
-      if (!ShelfIdentity.isLocalContentKey(
-        ShelfIdentity.contentKeyOf(record.item),
-      )) {
-        return true;
-      }
+      final item = record.item;
+      // Keep the pre-migration rule: any record whose raw id (or series id)
+      // carries the local prefix is device-local, even when the id is
+      // malformed and no longer matches the strict `local_<millis>_<hex>`
+      // shape. Such a record would otherwise be exported and then rejected by
+      // `_id`, failing the whole export.
+      final local =
+          item.id.startsWith('local_') ||
+          (item.seriesId?.startsWith('local_') ?? false) ||
+          ShelfIdentity.isLocalContentKey(ShelfIdentity.contentKeyOf(item));
+      if (!local) return true;
       excluded++;
       return false;
     }
 
     // Never export tombstones, local-book assignments, or assignments whose
     // group is gone. Validation happens before the document is embedded.
-    final portableGroups = groups.isEmpty
-        ? const <String, dynamic>{}
-        : ShelfGroupStore.portableOrganization(groups);
+    // A ready store with no visible groups still yields the three-key
+    // document; normalize that to "no groups" so the field is omitted (D-B1).
+    var portableGroups = const <String, dynamic>{};
+    if (groups.isNotEmpty) {
+      final candidate = ShelfGroupStore.portableOrganization(groups);
+      final hasGroups = (candidate['groups'] as Map).isNotEmpty;
+      final hasAssignments = (candidate['assignments'] as Map).isNotEmpty;
+      if (hasGroups || hasAssignments) portableGroups = candidate;
+    }
 
     // The same validation is used before export and before any restore writes.
     return LibraryBackup._fromJson({
@@ -298,7 +310,14 @@ class LibraryBackup {
     if (value == null) return const {};
     if (value is Map && value.isEmpty) return const {};
     if (value is! Map) throw const FormatException('分类数据格式有误');
-    return ShelfGroupStore.validateOrganization(value);
+    final valid = ShelfGroupStore.validateOrganization(value);
+    // An explicit but empty organization is the same as no groups (D-B1):
+    // never make restore require a ready group store for it.
+    if ((valid['groups'] as Map).isEmpty &&
+        (valid['assignments'] as Map).isEmpty) {
+      return const {};
+    }
+    return valid;
   }
 
   static String _source(dynamic value) {
