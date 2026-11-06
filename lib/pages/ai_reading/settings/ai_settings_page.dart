@@ -337,7 +337,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     final profile = _settings.provider(global.providerId);
     final daily = _budget?.daily;
     final tokens = daily?.tokenSum ?? 0;
-    final requests = daily?.requestCount ?? 0;
+    final requests = daily?.totalRequestCount ?? 0;
     final currency = daily?.currency ?? global.costCurrency;
     final tokenRatio = _ratio(tokens, global.dailyTokenLimit);
     final requestRatio = _ratio(requests, global.dailyRequestLimit);
@@ -680,7 +680,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
           title: '今日用量',
           value:
               '${aiFormatTokens(daily?.tokenSum ?? 0)} tokens / '
-              '${daily?.requestCount ?? 0} 次',
+              '${daily?.totalRequestCount ?? 0} 次',
           onTap: () async {
             await Navigator.of(context).push<void>(
               MaterialPageRoute(

@@ -158,9 +158,9 @@ class _AiUsagePageState extends State<AiUsagePage> {
     final global = snapshot?.settings.global;
     final currency = daily?.currency ?? global?.costCurrency ?? 'CNY';
     final dailyTokens = daily?.tokenSum ?? 0;
-    final dailyRequests = daily?.requestCount ?? 0;
+    final dailyRequests = daily?.totalRequestCount ?? 0;
     final bookTokens = book?.tokenSum ?? 0;
-    final bookRequests = book?.requestCount ?? 0;
+    final bookRequests = book?.totalRequestCount ?? 0;
     final dailyTokenLimit = global?.dailyTokenLimit ?? 0;
     final bookTokenLimit = global?.bookTokenLimit ?? 0;
     final dailyRequestLimit = global?.dailyRequestLimit ?? 0;
