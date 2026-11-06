@@ -28,11 +28,16 @@ class AiBudgetReservation {
     required this.day,
     required this.bookId,
     required this.displayCurrency,
+    required this.countTask,
   });
 
   final String day;
   final String bookId;
   final String displayCurrency;
+
+  /// Whether this reservation incremented the task counter. Retries share a
+  /// task and must not decrement it when their reservation is released.
+  final bool countTask;
 }
 
 class AiBudgetSnapshot {
@@ -167,6 +172,7 @@ class AiBudgetService {
         day: day,
         bookId: bookId,
         displayCurrency: displayCurrency,
+        countTask: countTask,
       );
       final nextDaily = daily.copyWith(
         requestCount: daily.requestCount + 1,
@@ -220,12 +226,16 @@ class AiBudgetService {
           );
       final nextDaily = daily.copyWith(
         requestCount: daily.requestCount > 0 ? daily.requestCount - 1 : 0,
-        taskCount: daily.taskCount > 0 ? daily.taskCount - 1 : 0,
+        taskCount: reservation.countTask && daily.taskCount > 0
+            ? daily.taskCount - 1
+            : daily.taskCount,
         updatedAt: DateTime.now(),
       );
       final nextBook = book.copyWith(
         requestCount: book.requestCount > 0 ? book.requestCount - 1 : 0,
-        taskCount: book.taskCount > 0 ? book.taskCount - 1 : 0,
+        taskCount: reservation.countTask && book.taskCount > 0
+            ? book.taskCount - 1
+            : book.taskCount,
         updatedAt: DateTime.now(),
       );
       try {
@@ -291,6 +301,44 @@ class AiBudgetService {
         }
         rethrow;
       }
+    });
+  }
+
+  /// Monotonic restore of a usage projection. It shares the budget queue with
+  /// [reserve] and [settle], so an in-flight request cannot be overwritten by
+  /// an older backup snapshot.
+  Future<void> mergeUsage(AiBudgetProjection incoming) {
+    return _enqueue(() async {
+      final current = await _store.projection(
+        incoming.bucketDay,
+        incoming.bookId,
+      );
+      final costs = <String, int>{...?current?.costsByCurrency};
+      for (final entry in incoming.costsByCurrency.entries) {
+        final previous = costs[entry.key] ?? 0;
+        if (entry.value > previous) costs[entry.key] = entry.value;
+      }
+      final merged = current == null
+          ? incoming.copyWith(costsByCurrency: Map.unmodifiable(costs))
+          : incoming.copyWith(
+              requestCount: incoming.requestCount > current.requestCount
+                  ? incoming.requestCount
+                  : current.requestCount,
+              taskCount: incoming.taskCount > current.taskCount
+                  ? incoming.taskCount
+                  : current.taskCount,
+              tokenSum: incoming.tokenSum > current.tokenSum
+                  ? incoming.tokenSum
+                  : current.tokenSum,
+              unknownUsageCount:
+                  incoming.unknownUsageCount > current.unknownUsageCount
+                  ? incoming.unknownUsageCount
+                  : current.unknownUsageCount,
+              costsByCurrency: Map.unmodifiable(costs),
+              currency: current.currency,
+              costMicros: costs[current.currency] ?? 0,
+            );
+      await _store.putProjection(merged);
     });
   }
 

@@ -143,20 +143,34 @@ class AiPromptService {
     final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
     final rateProfile = _settings.rateFor(provider.id, model);
     final rate = rateProfile?.snapshot();
-    await _store.putRun(
-      AiRunRecord(
-        runId: runId,
-        kind: AiRunKind.promptOptimize,
-        bookId: bookId,
-        chapterId: '',
-        canonicalHash: '',
-        configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
-        state: AiRunState.running,
-        attemptCount: 0,
-        formalEligible: false,
-        startedAt: started,
-      ),
+    final runRecord = AiRunRecord(
+      runId: runId,
+      kind: AiRunKind.promptOptimize,
+      bookId: bookId,
+      chapterId: '',
+      canonicalHash: '',
+      configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
+      state: AiRunState.running,
+      attemptCount: 0,
+      formalEligible: false,
+      startedAt: started,
     );
+    await _store.putRun(runRecord);
+    // The run write is asynchronous. Re-check consent after it, immediately
+    // before the request body is sent; the budget queue may have waited too.
+    final blocked = _liveGate(bookId);
+    if (blocked != null) {
+      await AiBudgetService.instance.release(reservation);
+      await _store.putRun(
+        runRecord.copyWith(
+          state: AiRunState.cancelled,
+          finishedAt: DateTime.now(),
+          errorCodes: [blocked.code],
+          detail: blocked.message,
+        ),
+      );
+      throw blocked;
+    }
     AiProviderResponse response;
     try {
       response = await _client.complete(
@@ -328,6 +342,20 @@ class AiPromptService {
 
   Future<void> setGlobalPrompt(String? text) =>
       _settings.saveGlobal(_settings.global.copyWith(behaviorPrompt: text));
+
+  AiNetworkException? _liveGate(String bookId) {
+    final live = _settings.resolve(bookId);
+    if (!live.enabled) {
+      return const AiNetworkException('AI_DISABLED', 'AI 阅读优化未开启');
+    }
+    if (_settings.device.deviceDisabled) {
+      return const AiNetworkException('DEVICE_DISABLED', '本机已停用 AI 请求');
+    }
+    if (!_settings.device.cloudConsent) {
+      return const AiNetworkException('NO_CONSENT', '还没有同意云端正文传输');
+    }
+    return null;
+  }
 
   static String _hash(String value) {
     var hash = 2166136261;
