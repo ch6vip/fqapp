@@ -65,6 +65,15 @@ void main() {
           aggregateRevision: 3,
           cases: [feedback],
           protections: [protection],
+          conflicts: [
+            AiRestoreConflict(
+              kind: 'case',
+              itemId: 'fb_1',
+              localJson: '{"v":1}',
+              incomingJson: '{"v":2}',
+              detectedAt: now,
+            ),
+          ],
           updatedAt: now,
         ),
       ],
@@ -119,6 +128,7 @@ void main() {
       restored.feedback.single.protections.single.approvedEdit!.replacement,
       '天色已晚',
     );
+    expect(restored.feedback.single.conflicts.single.itemId, 'fb_1');
     expect(restored.trialResults.single.rawValidatedEdits, isNull);
     expect(restored.globalPrompt, '全局提示词');
     expect(restored.bookPrompts['book_1'], '本书提示词');

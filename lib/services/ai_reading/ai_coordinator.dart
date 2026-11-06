@@ -203,10 +203,8 @@ class AiCoordinator {
     while (true) {
       final gate = await _preflight(
         bookId: bookId,
-        effective: effective,
         automatic: automatic,
         confirmedOverBudget: overBudgetConfirmed,
-        kind: kind,
       );
       if (gate != null) {
         debugPrint('[AI] preflight blocked ${gate.code}: ${gate.message}');
@@ -245,7 +243,14 @@ class AiCoordinator {
         confirmedOverBudget: overBudgetConfirmed,
       );
       if (reserved.reservation == null) {
-        final blockedState = reserved.needsConfirmation
+        final blockedCode = reserved.needsConfirmation
+            ? 'BUDGET_CONFIRM'
+            : reserved.code ?? 'BUDGET_EXCEEDED';
+        final blockedState =
+            reserved.needsConfirmation ||
+                blockedCode == 'CONSENT_REQUIRED' ||
+                blockedCode == 'DEVICE_DISABLED' ||
+                blockedCode == 'DISABLED'
             ? AiRunState.cancelled
             : AiRunState.failed;
         await _store.putRun(
@@ -253,9 +258,7 @@ class AiCoordinator {
             state: blockedState,
             attemptCount: requestCount,
             finishedAt: DateTime.now(),
-            errorCodes: [
-              reserved.needsConfirmation ? 'BUDGET_CONFIRM' : 'BUDGET_EXCEEDED',
-            ],
+            errorCodes: [blockedCode],
             detail: reserved.reason ?? '预算已达上限',
           ),
         );
@@ -265,11 +268,47 @@ class AiCoordinator {
           runId: runId,
           snapshot: snapshot,
           error: reserved.reason ?? '预算已达上限',
-          errorCodes: [
-            reserved.needsConfirmation ? 'BUDGET_CONFIRM' : 'BUDGET_EXCEEDED',
-          ],
+          errorCodes: [blockedCode],
           needsBudgetConfirmation: reserved.needsConfirmation,
           budgetMessage: reserved.needsConfirmation ? reserved.reason : null,
+          requestCount: requestCount,
+        );
+      }
+      final reservation = reserved.reservation!;
+      // The reservation queue can wait behind another request. Re-check the
+      // privacy/device gates immediately before the HTTP call and give the
+      // reserved slot back if the user revoked consent meanwhile.
+      final live = _settings.resolve(bookId);
+      final liveBlock = !live.enabled
+          ? 'DISABLED'
+          : _settings.device.deviceDisabled
+          ? 'DEVICE_DISABLED'
+          : !_settings.device.cloudConsent
+          ? 'CONSENT_REQUIRED'
+          : null;
+      if (liveBlock != null) {
+        await _budget.release(reservation);
+        final message = switch (liveBlock) {
+          'DISABLED' => 'AI 阅读优化未开启',
+          'DEVICE_DISABLED' => '本机已停用 AI 请求',
+          _ => '还没有同意把章节正文发送给第三方',
+        };
+        await _store.putRun(
+          run.copyWith(
+            state: AiRunState.cancelled,
+            attemptCount: requestCount,
+            finishedAt: DateTime.now(),
+            errorCodes: [liveBlock],
+            detail: message,
+          ),
+        );
+        onState?.call(AiRunState.cancelled);
+        return AiTaskResult(
+          ok: false,
+          runId: runId,
+          snapshot: snapshot,
+          error: message,
+          errorCodes: [liveBlock],
           requestCount: requestCount,
         );
       }
@@ -277,7 +316,6 @@ class AiCoordinator {
       overBudgetConfirmed = false;
       requestCount++;
       final attemptNo = requestCount;
-      final reservation = reserved.reservation!;
       final started = DateTime.now();
       AiProviderResponse? response;
       AiNetworkException? networkError;
@@ -565,12 +603,12 @@ class AiCoordinator {
 
   Future<_Gate?> _preflight({
     required String bookId,
-    required AiEffectiveSettings effective,
     required bool automatic,
     required bool confirmedOverBudget,
-    required AiRunKind kind,
   }) async {
-    if (!effective.enabled) {
+    // Settings can change between retry attempts; always read the live view.
+    final live = _settings.resolve(bookId);
+    if (!live.enabled) {
       return const _Gate('DISABLED', 'AI 阅读优化未开启');
     }
     if (_settings.device.deviceDisabled) {
