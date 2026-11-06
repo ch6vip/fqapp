@@ -8,6 +8,7 @@ import 'package:fqapp/services/ai_reading/ai_display_composition.dart';
 import 'package:fqapp/services/ai_reading/ai_feedback.dart';
 import 'package:fqapp/services/ai_reading/ai_models.dart';
 import 'package:fqapp/services/ai_reading/ai_protocol.dart';
+import 'package:fqapp/services/ai_reading/ai_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/text_replacement_engine.dart';
 
@@ -301,13 +302,37 @@ void main() {
       costMicros: 5,
       currency: 'CNY',
       costsByCurrency: const {'CNY': 5, 'USD': 2},
+      reservedRequestCount: 3,
+      reservedTaskCount: 1,
       updatedAt: DateTime(2026, 11, 6),
     );
     expect(projection.costFor('CNY'), 5);
+    expect(projection.totalRequestCount, 5);
     expect(projection.costFor('USD'), 2);
     final decoded = AiBudgetProjection.fromJson(projection.toJson())!;
     expect(decoded.costFor('CNY'), 5);
     expect(decoded.costFor('USD'), 2);
+    expect(decoded.totalRequestCount, 5);
+    expect(decoded.totalTaskCount, 2);
+  });
+
+  test('usage writes fail closed when AI storage is unavailable', () async {
+    await expectLater(
+      AiStore.instance.putProjection(
+        AiBudgetProjection(
+          bucketDay: '2026-11-06',
+          bookId: null,
+          requestCount: 0,
+          taskCount: 0,
+          tokenSum: 0,
+          unknownUsageCount: 0,
+          costMicros: 0,
+          currency: 'CNY',
+          updatedAt: DateTime(2026, 11, 6),
+        ),
+      ),
+      throwsStateError,
+    );
   });
 
   test('cost estimate prices cache and reasoning tokens separately', () {
