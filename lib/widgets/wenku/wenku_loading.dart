@@ -7,10 +7,10 @@
 // - `app_palette.dart` `AppTonalColors` -> `wenku_theme.dart`
 //   `WenkuTonalColors`; the `milk` / `glassSurface` lookups are the same.
 // - `archive_design.dart` -> `wenku_archive.dart` `ArchiveDesign`.
-// - `archive_shelf_geometry.dart` -> private `_ArchiveShelfGeometry`, copied
-//   verbatim for `ArchiveShelfSkeleton` and the library skeleton.
-// - `archive_shelf_loading.dart` `archiveLoadingLift` -> private
-//   `_archiveLoadingLift`, copied verbatim.
+// - `archive_shelf_geometry.dart` -> the public sibling port
+//   `src/archive_shelf_geometry.dart` (U4 also uses it for the loaded bank).
+// - `archive_shelf_loading.dart` `archiveLoadingLift` -> the public sibling
+//   port `src/archive_shelf_loading.dart`.
 // - `book_collection_layout.dart` -> the sibling fqapp port
 //   `book_collection_layout.dart`. That port also carries the upstream
 //   `book_grid_density.dart` types (`BookGridDensity`, `BookGridViewport`,
@@ -24,6 +24,8 @@ import 'package:flutter/scheduler.dart';
 
 import 'book_collection_layout.dart';
 import 'src/app_text.dart';
+import 'src/archive_shelf_geometry.dart';
+import 'src/archive_shelf_loading.dart';
 import 'src/performance_preferences.dart';
 import 'wenku_archive.dart';
 import 'wenku_theme.dart';
@@ -98,6 +100,7 @@ class LoadingSkeleton extends StatelessWidget {
               painter: _SkeletonPainter(
                 layout: layout,
                 top: topInset,
+                shelf3d: PerformanceScope.of(context).shelf3d,
                 ink: Theme.of(context).colorScheme.onSurface,
                 dark: Theme.of(context).brightness == Brightness.dark,
                 base: Theme.of(context).brightness == Brightness.dark
@@ -121,12 +124,14 @@ class _SkeletonPainter extends CustomPainter {
   const _SkeletonPainter({
     required this.layout,
     required this.top,
+    required this.shelf3d,
     required this.ink,
     required this.dark,
     required this.base,
   });
   final SkeletonLayout layout;
   final double top;
+  final bool shelf3d;
   final Color ink;
   final bool dark;
   final Color base;
@@ -261,23 +266,42 @@ class _SkeletonPainter extends CustomPainter {
       y += 58;
       final bankWidth = math.min(
         content,
-        _ArchiveShelfGeometry.maxViewportWidth,
+        ArchiveShelfGeometry.maxViewportWidth,
       );
       final bankLeft = left + (content - bankWidth) / 2;
-      final cover = _ArchiveShelfGeometry.coverFor(bankWidth);
-      final rowHeight = _ArchiveShelfGeometry.rowHeight(
+      final cover = ArchiveShelfGeometry.coverFor(bankWidth);
+      final rowHeight = ArchiveShelfGeometry.rowHeight(
         cover,
-        _ArchiveShelfGeometry.bodyHeight(cover),
+        ArchiveShelfGeometry.bodyHeight(cover),
       );
-      canvas.save();
-      canvas.translate(bankLeft, y);
-      _ArchiveShelfSkeletonPainter(
-        dark: dark,
-        ink: ink,
-        base: base,
-      ).paint(canvas, Size(bankWidth, rowHeight));
-      canvas.restore();
-      y += rowHeight + 16;
+      if (shelf3d) {
+        canvas.save();
+        canvas.translate(bankLeft, y);
+        _ArchiveShelfSkeletonPainter(
+          dark: dark,
+          ink: ink,
+          base: base,
+        ).paint(canvas, Size(bankWidth, rowHeight));
+        canvas.restore();
+        y += rowHeight + 16;
+      } else {
+        // Flat carousel: one centred cover face, no projected bank.
+        final flatWidth = math.min(bankWidth, 440.0);
+        final flatLeft = left + (content - flatWidth) / 2;
+        final flatCover = flatWidth * .62;
+        final flatHeight = flatCover * 166 / 118;
+        block(
+          flatLeft + (flatWidth - flatCover) / 2,
+          y,
+          flatCover,
+          flatHeight,
+          ArchiveDesign.coverRadius,
+        );
+        y += flatHeight + 16;
+        block(flatLeft, y, flatWidth * .5, 15);
+        block(flatLeft, y + 29, flatWidth * .34, 10);
+        y += 60;
+      }
       block(bankLeft, y, bankWidth * .65, 15);
       block(bankLeft, y + 29, bankWidth * .43, 10);
       block(bankLeft, y + 65, bankWidth * .5, 7);
@@ -304,6 +328,7 @@ class _SkeletonPainter extends CustomPainter {
   bool shouldRepaint(_SkeletonPainter oldDelegate) =>
       layout != oldDelegate.layout ||
       top != oldDelegate.top ||
+      shelf3d != oldDelegate.shelf3d ||
       ink != oldDelegate.ink ||
       base != oldDelegate.base ||
       dark != oldDelegate.dark;
@@ -392,45 +417,24 @@ class _ArchiveShelfSkeletonState extends State<ArchiveShelfSkeleton>
   }
 
   @override
-  Widget build(BuildContext context) => IgnorePointer(
-    child: ExcludeSemantics(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: _ArchiveShelfGeometry.maxViewportWidth,
-          ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final cover = _ArchiveShelfGeometry.coverFor(
-                constraints.maxWidth,
-              );
-              final height = _ArchiveShelfGeometry.bodyHeight(cover);
-              final scale = MediaQuery.textScalerOf(context).scale(17) / 17;
-              return Column(
+  Widget build(BuildContext context) {
+    final shelf3d = PerformanceScope.of(context).shelf3d;
+    if (!shelf3d) {
+      // The planar carousel replaces the projected bank. The loading placeholder
+      // must switch with it, or the page would show 3D bones then a flat face.
+      final scale = MediaQuery.textScalerOf(context).scale(17) / 17;
+      return IgnorePointer(
+        child: ExcludeSemantics(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  RepaintBoundary(
-                    child: CustomPaint(
-                      key: const ValueKey('archive-shelf-skeleton'),
-                      painter: _ArchiveShelfSkeletonPainter(
-                        wave: _animated ? _wave : null,
-                        dark: Theme.of(context).brightness == Brightness.dark,
-                        ink: Theme.of(context).colorScheme.onSurface,
-                        base: Theme.of(context).brightness == Brightness.dark
-                            ? Theme.of(context)
-                                      .extension<WenkuTonalColors>()
-                                      ?.glassSurface ??
-                                  ArchiveDesign.darkSurface
-                            : Theme.of(
-                                    context,
-                                  ).extension<WenkuTonalColors>()?.milk ??
-                                  ArchiveDesign.milk,
-                      ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: _ArchiveShelfGeometry.rowHeight(cover, height),
-                      ),
-                    ),
+                  SizedBox(
+                    key: const ValueKey('archive-shelf-skeleton'),
+                    height: 300,
+                    child: const LoadingSkeleton(layout: SkeletonLayout.cover),
                   ),
                   SizedBox(
                     height: 16 + 17 * 1.35 * 2 * scale + 12 * 1.4 * scale,
@@ -443,13 +447,71 @@ class _ArchiveShelfSkeletonState extends State<ArchiveShelfSkeleton>
                     child: LoadingSkeleton(layout: SkeletonLayout.inline),
                   ),
                 ],
-              );
-            },
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return IgnorePointer(
+      child: ExcludeSemantics(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: ArchiveShelfGeometry.maxViewportWidth,
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final cover = ArchiveShelfGeometry.coverFor(
+                  constraints.maxWidth,
+                );
+                final height = ArchiveShelfGeometry.bodyHeight(cover);
+                final scale = MediaQuery.textScalerOf(context).scale(17) / 17;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        key: const ValueKey('archive-shelf-skeleton'),
+                        painter: _ArchiveShelfSkeletonPainter(
+                          wave: _animated ? _wave : null,
+                          dark: Theme.of(context).brightness == Brightness.dark,
+                          ink: Theme.of(context).colorScheme.onSurface,
+                          base: Theme.of(context).brightness == Brightness.dark
+                              ? Theme.of(context)
+                                        .extension<WenkuTonalColors>()
+                                        ?.glassSurface ??
+                                    ArchiveDesign.darkSurface
+                              : Theme.of(
+                                      context,
+                                    ).extension<WenkuTonalColors>()?.milk ??
+                                    ArchiveDesign.milk,
+                        ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: ArchiveShelfGeometry.rowHeight(cover, height),
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      height: 16 + 17 * 1.35 * 2 * scale + 12 * 1.4 * scale,
+                      child: const LoadingSkeleton(
+                        layout: SkeletonLayout.actions,
+                      ),
+                    ),
+                    const SizedBox(
+                      height: 40,
+                      child: LoadingSkeleton(layout: SkeletonLayout.inline),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _ArchiveShelfSkeletonPainter extends CustomPainter {
@@ -465,14 +527,14 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
   final Listenable? wave;
   @override
   void paint(Canvas canvas, Size size) {
-    final g = _ArchiveShelfGeometry.coverFor(size.width);
-    final h = _ArchiveShelfGeometry.bodyHeight(g);
-    final spine = _ArchiveShelfGeometry.spineFor(size.width);
-    final pitch = _ArchiveShelfGeometry.pitchFor(size.width);
+    final g = ArchiveShelfGeometry.coverFor(size.width);
+    final h = ArchiveShelfGeometry.bodyHeight(g);
+    final spine = ArchiveShelfGeometry.spineFor(size.width);
+    final pitch = ArchiveShelfGeometry.pitchFor(size.width);
     final centre =
         size.width / 2 -
-        _ArchiveShelfGeometry.footprint(spine, g) / 2 +
-        _ArchiveShelfGeometry.pullDistance(g) * _ArchiveShelfGeometry.depthX;
+        ArchiveShelfGeometry.footprint(spine, g) / 2 +
+        ArchiveShelfGeometry.pullDistance(g) * ArchiveShelfGeometry.depthX;
     final edge = (size.width / pitch / 2).ceil() + 5;
     final rule = Paint()
       ..color = ink.withValues(alpha: .12)
@@ -487,13 +549,13 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
           ? math.pow(math.cos(i / 1.48 * math.pi / 2), 2).toDouble()
           : 0.0;
       final origin =
-          _ArchiveShelfGeometry.origin(g, h, weight) +
+          ArchiveShelfGeometry.origin(g, h, weight) +
           Offset(
             centre + i * pitch,
-            _ArchiveShelfGeometry.railY(i.toDouble()) +
+            ArchiveShelfGeometry.railY(i.toDouble()) +
                 (wave == null
                     ? 0
-                    : _archiveLoadingLift(
+                    : archiveLoadingLift(
                         i.toDouble(),
                         SchedulerBinding.instance.currentSystemFrameTimeStamp,
                         1,
@@ -501,8 +563,8 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
           );
       final front = Offset(spine, spine * .1);
       final depth = Offset(
-        g * _ArchiveShelfGeometry.depthX,
-        g * _ArchiveShelfGeometry.depthY,
+        g * ArchiveShelfGeometry.depthX,
+        g * ArchiveShelfGeometry.depthY,
       );
       final side = Path()
         ..addPolygon([
@@ -518,8 +580,8 @@ class _ArchiveShelfSkeletonPainter extends CustomPainter {
       canvas.save();
       canvas.transform(
         (Matrix4.identity()
-              ..setEntry(0, 0, _ArchiveShelfGeometry.depthX)
-              ..setEntry(1, 0, _ArchiveShelfGeometry.depthY)
+              ..setEntry(0, 0, ArchiveShelfGeometry.depthX)
+              ..setEntry(1, 0, ArchiveShelfGeometry.depthY)
               ..setEntry(0, 3, origin.dx + spine)
               ..setEntry(1, 3, origin.dy + spine * .1))
             .storage,
@@ -788,43 +850,4 @@ class BookGridSkeleton extends StatelessWidget {
       },
     );
   }
-}
-
-/// Verbatim copy of upstream `archive_shelf_geometry.dart`, kept private
-/// because the loaded archive shelf is outside this batch.
-abstract final class _ArchiveShelfGeometry {
-  // A physical bank, not a full-window banner. Keep the same projection and
-  // book proportions on phones, tablets and retained browsing panes.
-  static const maxViewportWidth = 520.0;
-  static const depthX = .66, depthY = -.30, rowStep = 2.5;
-  static double spineFor(double width) => (width * .043).clamp(14.0, 18.0);
-  static double pitchFor(double width) => spineFor(width) + 11;
-  static double coverFor(double width) => (width * .32).clamp(100.0, 128.0);
-  static double bodyHeight(double cover) => (cover - 20) * 166 / 118 + 54;
-  static double footprint(double spine, double cover) => spine + cover * depthX;
-  static double pullDistance(double cover) => cover * .84;
-  static double baseY(double cover, double height) =>
-      -cover * depthY + height * .60 + 12;
-  static double rowHeight(double cover, double height) =>
-      baseY(cover, height) + height + 60;
-  static double railY(double distance) {
-    final d = distance.clamp(-7.0, 7.0);
-    return d * rowStep + d * d * .45;
-  }
-
-  static Offset origin(double cover, double height, double weight) {
-    final pull = pullDistance(cover) * weight * (1.24 - .24 * weight);
-    final lift = weight * weight * (3 - 2 * weight);
-    return Offset(
-      -pull * depthX,
-      baseY(cover, height) - pull * depthY - height * .60 * lift,
-    );
-  }
-}
-
-/// Verbatim copy of upstream `archive_shelf_loading.dart`'s wave function.
-double _archiveLoadingLift(double lane, Duration frame, double remaining) {
-  final phase = frame.inMicroseconds / 1700000 - lane * .075;
-  final crest = (1 + math.sin(phase * math.pi * 2)) / 2;
-  return -9 * crest * crest * remaining;
 }

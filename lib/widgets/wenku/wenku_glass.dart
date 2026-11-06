@@ -7,6 +7,7 @@ import 'src/app_haptics.dart';
 import 'src/app_text.dart';
 import 'src/dock_layout.dart';
 import 'src/easy_glass.dart';
+import 'src/glass_morph.dart';
 import 'src/glass_optics.dart';
 import 'src/performance_preferences.dart';
 import 'wenku_archive.dart';
@@ -321,6 +322,7 @@ class WenkuPage extends StatelessWidget {
     this.archiveBackdrop = true,
     this.resizeToAvoidBottomInset = true,
     this.extraHeight = 0,
+    this.bottomNavigationBar,
   });
 
   final Widget child;
@@ -329,6 +331,9 @@ class WenkuPage extends StatelessWidget {
   final bool archiveBackdrop;
   final bool resizeToAvoidBottomInset;
   final double extraHeight;
+
+  /// Forwarded to the page [Scaffold] unchanged.
+  final Widget? bottomNavigationBar;
 
   @override
   Widget build(BuildContext context) {
@@ -339,6 +344,7 @@ class WenkuPage extends StatelessWidget {
   Widget _buildPage(BuildContext context) => Scaffold(
     resizeToAvoidBottomInset: resizeToAvoidBottomInset,
     backgroundColor: Colors.transparent,
+    bottomNavigationBar: bottomNavigationBar,
     body: Atmosphere(
       archiveBackdrop: archiveBackdrop,
       child: GlassHeaderLayout(
@@ -410,6 +416,7 @@ class LiquidGlass extends StatefulWidget {
     this.shadowStrength = 1,
     this.preserveOptics = false,
     this.transparent = false,
+    this.morph,
   });
 
   final Widget child;
@@ -428,6 +435,9 @@ class LiquidGlass extends StatefulWidget {
   final double shadowStrength;
   final bool preserveOptics;
   final bool transparent;
+
+  /// Overlay menus resolve the material from their originating control.
+  final WenkuGlassMorph? morph;
 
   @override
   State<LiquidGlass> createState() => _LiquidGlassState();
@@ -520,6 +530,7 @@ class _LiquidGlassState extends State<LiquidGlass> {
             (1 + .12 * math.max(widget.activation, _pressed ? 1 : 0)),
         activation: widget.activation,
         physicalOptics: widget.preserveOptics,
+        morph: widget.morph,
         child: interaction,
       );
     }
@@ -798,6 +809,21 @@ class _PaintedIconActionState extends State<_PaintedIconAction> {
   );
   final hit = math.max(48.0, face + 8);
   return (face: face, hit: hit, scale: face / hit);
+}
+
+/// Menu source foreground for compact main-page controls: the upstream
+/// `_CompactControlFace` scale is folded into the captured foreground, so the
+/// stretched material keeps the glyph's rendered proportions.
+Widget wrapCompactGlassSource(BuildContext context, Widget child) {
+  final compactFace = context
+      .findAncestorWidgetOfExactType<_CompactControlFace>();
+  return compactFace == null
+      ? child
+      : Transform.scale(
+          scaleX: compactFace.scaleX,
+          scaleY: compactFace.scaleY,
+          child: child,
+        );
 }
 
 Widget _scaleCompactFace({

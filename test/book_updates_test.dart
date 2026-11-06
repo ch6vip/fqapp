@@ -12,6 +12,7 @@ import 'package:fqapp/services/book_open_preferences.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/services/shelf_view_store.dart';
 
 import 'support/fakes.dart';
 
@@ -31,10 +32,7 @@ final _book = MediaItem(
 );
 
 void main() {
-  setUp(
-    () =>
-        setSingleChapterPrefs({'reader_page_mode': 'scroll'}),
-  );
+  setUp(() => setSingleChapterPrefs({'reader_page_mode': 'scroll'}));
 
   testWidgets('更新目录按章节 ID 保留当前章节和滚动位置，并保存新目录', (tester) async {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -90,6 +88,12 @@ void main() {
   group('书架更新提示', () {
     late Directory directory;
     setUp(() async {
+      // 行级断言用纯列表，避免立体书架把行推到首屏之外。
+      setSingleChapterPrefs({
+        'reader_page_mode': 'scroll',
+        'shelfLayout': 'list',
+      });
+      ShelfViewStore.instance.resetForTest();
       directory = await Directory.systemTemp.createTemp('fqapp-updates-');
       Hive.init(directory.path);
       await LibraryStore.instance.init();
@@ -100,10 +104,14 @@ void main() {
       await directory.delete(recursive: true);
     });
 
-    for (final layout in [0, 1, 2]) {
-      testWidgets('版式 $layout 显示新增章节，阅读新目录后清除更新提示', (tester) async {
+    for (final mode in ['list', 'shelf', 'shelfGrid', 'grid']) {
+      testWidgets('版式 $mode 显示新增章节，阅读新目录后清除更新提示', (tester) async {
         addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-        setSingleChapterPrefs({'bookshelf_layout': layout});
+        setSingleChapterPrefs({
+          'reader_page_mode': 'scroll',
+          'shelfLayout': mode,
+        });
+        ShelfViewStore.instance.resetForTest();
         await tester.runAsync(() async {
           await ShelfStore.instance.add(_book);
           await LibraryStore.instance.addHistory({
@@ -273,7 +281,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('更新'), findsOneWidget);
-      await tester.tap(find.text(_book.title));
+      await tester.tap(
+        find.byKey(const ValueKey('shelf-book-book:updated-book')),
+      );
       await tester.pumpAndSettle();
       expect(
         tester.widget<ReaderPage>(find.byType(ReaderPage)).chapters,
@@ -404,7 +414,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('更新'), findsOneWidget);
-      expect(find.text('检测失败的书'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('shelf-book-book:failing')),
+        findsOneWidget,
+      );
       expect(LibraryStore.instance.historySnapshot().single['chapterId'], '2');
       expect(tester.takeException(), isNull);
     });
