@@ -67,6 +67,9 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
     final selected = await showGlassMenu<T>(
       context: source,
       reduceMotion: widget.reduceMotion,
+      // The row already owns the visible trigger; do not paint a second copy
+      // of its foreground inside the route.
+      captureSource: false,
       builder: (menu) => SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,

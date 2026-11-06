@@ -137,6 +137,10 @@ Future<T?> showGlassMenu<T>({
   required WidgetBuilder builder,
   bool reduceMotion = false,
   bool preferBelow = false,
+  // The settings row adapter keeps its previous behaviour: the trigger stays
+  // in the tree (hidden by `GlassMenuAnchor`) and the route does not paint a
+  // second copy of its foreground. Archive menus keep the upstream morph.
+  bool captureSource = true,
 }) async {
   if (!context.mounted) return null;
   if (_activeGlassOverlays[context] == true) return null;
@@ -153,7 +157,7 @@ Future<T?> showGlassMenu<T>({
     return null;
   }
   final appearance = GlassAppearance.of(context);
-  final source = _captureGlassSource(context, navigator);
+  final source = captureSource ? _captureGlassSource(context, navigator) : null;
   final sourceBox = source?.box ?? box;
   // The page's performance/e-ink/reduce-motion choice lives below the root
   // Navigator (`WenkuScope` is inside the page), so the route must carry it
