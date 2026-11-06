@@ -235,12 +235,16 @@ class AiCoordinator {
         );
       }
       // Admission is atomic: two chapters cannot both pass the last request
-      // slot between the read-only preflight and the actual HTTP call.
+      // slot between the read-only preflight and the actual HTTP call. The
+      // request ID is reserved with the slot so crash recovery can join the
+      // ledger row without creating a duplicate.
+      final requestId = _newId('req');
       final reserved = await _budget.reserve(
         bookId: bookId,
         automatic: automatic,
         countTask: requestCount == 0,
         confirmedOverBudget: overBudgetConfirmed,
+        requestId: requestId,
       );
       if (reserved.reservation == null) {
         final blockedCode = reserved.needsConfirmation
@@ -339,7 +343,7 @@ class AiCoordinator {
       final rateProfile = _settings.rateFor(provider.id, model);
       final rate = rateProfile?.snapshot();
       final requestRecord = AiRequestRecord(
-        requestId: _newId('req'),
+        requestId: requestId,
         runId: runId,
         attemptNo: attemptNo,
         providerId: provider.id,

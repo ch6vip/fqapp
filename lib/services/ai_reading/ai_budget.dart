@@ -29,11 +29,15 @@ class AiBudgetReservation {
     required this.bookId,
     required this.displayCurrency,
     required this.countTask,
+    required this.requestId,
   });
 
   final String day;
-  final String bookId;
+
+  /// `null` means a global-only reservation (legacy/global recovery).
+  final String? bookId;
   final String displayCurrency;
+  final String requestId;
 
   /// Whether this reservation incremented the task counter. Retries share a
   /// task and must not decrement it when their reservation is released.
@@ -131,7 +135,11 @@ class AiBudgetService {
     bool confirmedOverBudget = false,
     bool requireEnabled = true,
     bool requireConsent = true,
+    String? requestId,
   }) {
+    final reservedRequestId =
+        requestId ??
+        'req_reserved_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
     return _enqueue(() async {
       // Re-read every gate inside the serialized queue. Consent can be revoked
       // while this task waits behind another budget write.
@@ -191,6 +199,7 @@ class AiBudgetService {
         bookId: bookId,
         displayCurrency: displayCurrency,
         countTask: countTask,
+        requestId: reservedRequestId,
       );
       final nextDaily = daily.copyWith(
         reservedRequestCount: daily.reservedRequestCount + 1,
@@ -232,44 +241,45 @@ class AiBudgetService {
   /// Returns a reservation whose HTTP call was cancelled before it was sent.
   Future<void> release(AiBudgetReservation reservation) {
     return _enqueue(() async {
-      final daily =
-          await _store.projection(reservation.day, null) ??
-          _emptyProjection(reservation.day, null, reservation.displayCurrency);
-      final book =
-          await _store.projection(reservation.day, reservation.bookId) ??
-          _emptyProjection(
-            reservation.day,
-            reservation.bookId,
-            reservation.displayCurrency,
-          );
-      final nextDaily = daily.copyWith(
-        reservedRequestCount: daily.reservedRequestCount > 0
-            ? daily.reservedRequestCount - 1
-            : 0,
-        reservedTaskCount: reservation.countTask && daily.reservedTaskCount > 0
-            ? daily.reservedTaskCount - 1
-            : daily.reservedTaskCount,
-        updatedAt: DateTime.now(),
-      );
-      final nextBook = book.copyWith(
-        reservedRequestCount: book.reservedRequestCount > 0
-            ? book.reservedRequestCount - 1
-            : 0,
-        reservedTaskCount: reservation.countTask && book.reservedTaskCount > 0
-            ? book.reservedTaskCount - 1
-            : book.reservedTaskCount,
-        updatedAt: DateTime.now(),
-      );
+      final targets = <String?, AiBudgetProjection>{};
       try {
-        await _store.putProjection(nextDaily);
-        await _store.putProjection(nextBook);
+        for (final bookId in <String?>[
+          null,
+          if (reservation.bookId != null) reservation.bookId,
+        ]) {
+          final current =
+              await _store.projection(reservation.day, bookId) ??
+              _emptyProjection(
+                reservation.day,
+                bookId,
+                reservation.displayCurrency,
+              );
+          targets[bookId] = current;
+          await _store.putProjection(
+            current.copyWith(
+              reservedRequestCount: current.reservedRequestCount > 0
+                  ? current.reservedRequestCount - 1
+                  : 0,
+              reservedTaskCount:
+                  reservation.countTask && current.reservedTaskCount > 0
+                  ? current.reservedTaskCount - 1
+                  : current.reservedTaskCount,
+              reservedRequestIds: current.reservedRequestIds
+                  .where((id) => id != reservation.requestId)
+                  .toList(growable: false),
+              reservedTaskIds: current.reservedTaskIds
+                  .where((id) => id != reservation.requestId)
+                  .toList(growable: false),
+              updatedAt: DateTime.now(),
+            ),
+          );
+        }
       } catch (_) {
-        try {
-          await _store.putProjection(daily);
-        } catch (_) {}
-        try {
-          await _store.putProjection(book);
-        } catch (_) {}
+        for (final entry in targets.entries) {
+          try {
+            await _store.putProjection(entry.value);
+          } catch (_) {}
+        }
         rethrow;
       }
     });
@@ -287,7 +297,10 @@ class AiBudgetService {
     return _enqueue(() async {
       final targets = <String?, AiBudgetProjection>{};
       try {
-        for (final bookId in <String?>[null, reservation.bookId]) {
+        for (final bookId in <String?>[
+          null,
+          if (reservation.bookId != null) reservation.bookId,
+        ]) {
           final current =
               await _store.projection(reservation.day, bookId) ??
               _emptyProjection(
@@ -312,6 +325,12 @@ class AiBudgetService {
                   reservation.countTask && current.reservedTaskCount > 0
                   ? current.reservedTaskCount - 1
                   : current.reservedTaskCount,
+              reservedRequestIds: current.reservedRequestIds
+                  .where((id) => id != reservation.requestId)
+                  .toList(growable: false),
+              reservedTaskIds: current.reservedTaskIds
+                  .where((id) => id != reservation.requestId)
+                  .toList(growable: false),
               tokenSum: current.tokenSum + request.usage.knownTokenSum,
               unknownUsageCount:
                   current.unknownUsageCount +
@@ -336,114 +355,142 @@ class AiBudgetService {
   }
 
   /// Reconciles reservations left behind by a process kill. The HTTP request
-  /// may or may not have been sent, so count it as a settled request with
-  /// unknown usage rather than silently freeing the slot. This is deliberately
-  /// conservative: it can over-count one crashed request, but never lowers
-  /// imported usage or leaves the day permanently locked.
-  Future<void> recoverOrphanedReservations() {
-    return _enqueue(() async {
-      if (!_store.isAvailable) return;
-      final projections = await _store.projections();
-      final global = projections
-          .where((projection) => projection.bookId == null)
-          .firstOrNull;
-      final books = projections
-          .where((projection) => projection.bookId != null)
-          .toList(growable: false);
-      var bookReserved = 0;
-      for (final projection in books) {
-        bookReserved += projection.reservedRequestCount;
-        if (projection.reservedRequestCount > 0 ||
-            projection.reservedTaskCount > 0) {
-          await _recoverProjection(
-            projection,
-            runBookId: projection.bookId!,
-            requestCount: projection.reservedRequestCount,
-          );
+  /// may or may not have been sent. If its request ledger row already exists,
+  /// settle it with the real usage; otherwise write one deterministic synthetic
+  /// row with unknown usage. The synthetic row is keyed by the reservation's
+  /// request ID, so a second recovery never duplicates it.
+  Future<void> recoverOrphanedReservations() async {
+    if (!_store.isAvailable) return;
+    final projections = await _store.projections();
+    final books = projections
+        .where((projection) => projection.bookId != null)
+        .toList(growable: false);
+    final seen = <String>{};
+
+    for (final projection in books) {
+      final ids = <String>[...projection.reservedRequestIds];
+      for (var i = ids.length; i < projection.reservedRequestCount; i++) {
+        ids.add(_legacyReservationId(projection, i));
+      }
+      for (final requestId in ids) {
+        if (!seen.add(requestId)) continue;
+        await _recoverReservation(
+          day: projection.bucketDay,
+          bookId: projection.bookId,
+          requestId: requestId,
+          displayCurrency: projection.currency,
+          countTask: projection.reservedTaskIds.contains(requestId),
+        );
+      }
+    }
+
+    // Global-only reservations exist only in legacy data or a global recovery
+    // path. Never process the book IDs a second time, and do not invent legacy
+    // global IDs when book projections already accounted for the same slots.
+    final hadBookReservations = seen.isNotEmpty;
+    for (final projection in projections.where((p) => p.bookId == null)) {
+      final ids = <String>[...projection.reservedRequestIds];
+      if (!hadBookReservations) {
+        for (var i = ids.length; i < projection.reservedRequestCount; i++) {
+          ids.add(_legacyReservationId(projection, i));
         }
       }
-      if (global != null) {
-        // Every normal reservation increments both global and its book bucket.
-        // Only the part not represented by a book projection needs a synthetic
-        // global-only run; otherwise the same request is counted twice.
-        final globalOnly = global.reservedRequestCount - bookReserved;
-        if (globalOnly > 0 || global.reservedTaskCount > 0) {
-          await _recoverProjection(
-            global,
-            runBookId: '',
-            requestCount: globalOnly > 0 ? globalOnly : 0,
-          );
-        }
+      for (final requestId in ids) {
+        if (!seen.add(requestId)) continue;
+        await _recoverReservation(
+          day: projection.bucketDay,
+          bookId: null,
+          requestId: requestId,
+          displayCurrency: projection.currency,
+          countTask: projection.reservedTaskIds.contains(requestId),
+        );
       }
-    });
+    }
   }
 
-  Future<void> _recoverProjection(
-    AiBudgetProjection projection, {
-    required String runBookId,
-    required int requestCount,
+  String _legacyReservationId(AiBudgetProjection projection, int index) {
+    final scope = projection.bookId ?? 'global';
+    return 'legacy_${projection.bucketDay}_${scope.hashCode.toRadixString(36)}_$index';
+  }
+
+  Future<void> _recoverReservation({
+    required String day,
+    required String? bookId,
+    required String requestId,
+    required String displayCurrency,
+    required bool countTask,
   }) async {
     final now = DateTime.now();
-    final stamp = now.microsecondsSinceEpoch.toRadixString(36);
-    final scope = runBookId.isEmpty
-        ? 'global'
-        : runBookId.hashCode.toRadixString(36);
-    final runId = requestCount > 0 ? 'run_crash_${stamp}_$scope' : null;
-    if (runId != null) {
+    var request = await _store.request(requestId);
+    if (request == null) {
+      request = AiRequestRecord(
+        requestId: requestId,
+        runId: 'run_crash_$requestId',
+        attemptNo: 1,
+        providerId: 'recovered',
+        endpoint: '',
+        model: '',
+        mode: AiOutputMode.jsonObject,
+        usage: const AiUsage(),
+        startedAt: now,
+        latencyMs: 0,
+        errorCode: 'CRASH_RECOVERED',
+        reason: 'crash_recovered',
+      );
+      try {
+        await _store.putRequest(request);
+      } catch (_) {
+        // The projection recovery below must still happen.
+      }
+    }
+
+    final run = await _store.run(request.runId);
+    if (run == null) {
       try {
         await _store.putRun(
           AiRunRecord(
-            runId: runId,
+            runId: request.runId,
             kind: AiRunKind.recovered,
-            bookId: runBookId,
+            bookId: bookId ?? '',
             chapterId: '',
             canonicalHash: '',
             configSnapshotHash: '',
             state: AiRunState.interrupted,
-            attemptCount: requestCount,
+            attemptCount: 1,
             formalEligible: false,
-            startedAt: now,
+            startedAt: request.startedAt,
             finishedAt: now,
             errorCodes: const ['CRASH_RECOVERED'],
-            detail: '应用异常退出，用量按未知保守计入',
+            detail: '应用异常退出，用量按账本或未知值保守计入',
           ),
         );
       } catch (_) {
-        // The counter recovery below must still happen.
+        // Counter recovery is still useful without the run row.
       }
-      for (var i = 0; i < requestCount; i++) {
-        try {
-          await _store.putRequest(
-            AiRequestRecord(
-              requestId: 'req_crash_${stamp}_${scope}_$i',
-              runId: runId,
-              attemptNo: 1,
-              providerId: 'recovered',
-              endpoint: '',
-              model: '',
-              mode: AiOutputMode.jsonObject,
-              usage: const AiUsage(),
-              startedAt: now,
-              latencyMs: 0,
-              errorCode: 'CRASH_RECOVERED',
-              reason: 'crash_recovered',
-            ),
-          );
-        } catch (_) {
-          // The counter is more important than the audit row.
-        }
-      }
+    } else if (run.state == AiRunState.running ||
+        run.state == AiRunState.validating ||
+        run.state == AiRunState.repairing) {
+      try {
+        await _store.putRun(
+          run.copyWith(
+            state: AiRunState.interrupted,
+            finishedAt: now,
+            errorCodes: const ['CRASH_RECOVERED'],
+            detail: '应用异常退出，已恢复未结算请求',
+          ),
+        );
+      } catch (_) {}
     }
-    await _store.putProjection(
-      projection.copyWith(
-        requestCount: projection.requestCount + projection.reservedRequestCount,
-        taskCount: projection.taskCount + projection.reservedTaskCount,
-        unknownUsageCount:
-            projection.unknownUsageCount + projection.reservedRequestCount,
-        reservedRequestCount: 0,
-        reservedTaskCount: 0,
-        updatedAt: now,
+
+    await settle(
+      reservation: AiBudgetReservation(
+        day: day,
+        bookId: bookId,
+        displayCurrency: displayCurrency,
+        countTask: countTask,
+        requestId: requestId,
       ),
+      request: request,
     );
   }
 
@@ -478,6 +525,8 @@ class AiBudgetService {
               // current process knows which reservations it can release.
               reservedRequestCount: current.reservedRequestCount,
               reservedTaskCount: current.reservedTaskCount,
+              reservedRequestIds: current.reservedRequestIds,
+              reservedTaskIds: current.reservedTaskIds,
               tokenSum: incoming.tokenSum > current.tokenSum
                   ? incoming.tokenSum
                   : current.tokenSum,
