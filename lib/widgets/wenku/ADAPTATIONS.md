@@ -34,16 +34,24 @@ Non-identical mechanical substitutions:
   shared UI slice.
 - E-ink/high-contrast headers omit the transparent feather's height when using
   an opaque plate, so that plate cannot hide the first content row.
-- `glass_controls.dart` carries upstream `glass_controls.dart`
-  (`AppGlassSwitch` / `AppGlassSlider`) and `AppControls.toggle` / `slider` as
-  `GlassControls`, plus the reader's compact `chip`. The reader and settings
-  units originally vendored prefixed copies (`reader_glass_controls.dart`,
-  `settings_glass_controls.dart`); this is the single shared copy. Archive
-  surfaces use the `WenkuTonalColors` palette; reader surfaces pass their paper
-  palette explicitly and opt into the plain-switch fallback. The retired
-  optical reflection painter is still not carried. `wenku_segments.dart`
-  carries `AppGlassSegments`, `GlassChoiceGroup` and upstream
-  `AppControls.segments` as `WenkuControls`.
+- `glass_controls.dart` carries upstream `AppGlassSlider` and
+  `AppControls.toggle` / `slider` as `GlassControls`, plus the reader's compact
+  `chip`. The reader and settings units originally vendored prefixed copies
+  (`reader_glass_controls.dart`, `settings_glass_controls.dart`); this is the
+  single shared copy. Archive surfaces use the `WenkuTonalColors` palette;
+  reader surfaces pass their paper palette explicitly and opt into the
+  plain-switch fallback. The retired optical reflection painter is still not
+  carried. `wenku_segments.dart` carries `AppGlassSegments`,
+  `GlassChoiceGroup`, the single shared `AppGlassSwitch` (with the settings
+  line's `optimistic` / `semanticLabel` additions) and upstream
+  `AppControls.segments` as `WenkuControls`; the shelf's
+  `WenkuControls.toggle` is the archive-palette adapter over that switch.
+- `setting_menu.dart` carries upstream `setting_menu.dart` as
+  `GlassSettingMenu` (including fqapp's `valueLabel`). Its vendored
+  `GlassMenuAnchor` / `showGlassMenu` / `GlassMenuItem` /
+  `_GlassMenuPlacement` copies were removed; those classes come from the
+  single `wenku_overlay.dart` implementation, which keeps the desktop focus
+  ring, keyboard activation and traversal.
 - `glass_dock.dart` is upstream `glass_dock.dart` with `NovelMotion` renamed to
   `WenkuMotion`. `lib/widgets/shell_dock.dart` hosts it with upstream's
   `DockUnderlay` geometry; the bottom blur uses the vendored scroll-edge pass
@@ -55,6 +63,10 @@ Non-identical mechanical substitutions:
   (`book_collection_layout.dart`, `book_collection_mode.dart`,
   `book_grid_density.dart`) are ported with their file headers listing each
   substitution. The collection takes an item builder instead of `Novel`.
+- `reading_charts.dart` carries upstream `reading_statistics_charts.dart`
+  (`ReadingRhythmChart`) and `reading_statistics_shared_charts.dart`
+  (`ReadingActivityRing`). The integration pass dropped the temporary `Misc`
+  class prefix and the `misc_reading_charts.dart` filename.
 - Search is a route, not the upstream in-shell overlay. `SearchRoute` keeps
   the upstream 420ms `ArchivePlaneTransition` diagonal entrance.
 - Search covers continue to use fqapp's existing media/cover pipeline. The

@@ -15,7 +15,7 @@
 //   single scroll. Upstream's module configuration sheet has no fqapp
 //   counterpart and is therefore absent rather than faked.
 // - `appText`/`NovelMotion` substitutions match the rest of the shared layer;
-//   charts come from `lib/widgets/wenku/misc_reading_charts.dart`.
+//   charts come from `lib/widgets/wenku/reading_charts.dart`.
 // - The existing store reload / visibility gating (TickerMode, debounce,
 //   history + read-time listeners) is unchanged.
 import 'dart:async';
@@ -31,7 +31,7 @@ import '../services/shelf_store.dart';
 import '../widgets/mine/mine_heatmap.dart';
 import '../widgets/mine/mine_summary.dart';
 import '../widgets/mine/mine_top_books.dart';
-import '../widgets/wenku/misc_reading_charts.dart';
+import '../widgets/wenku/reading_charts.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'detail_page.dart';
 
@@ -191,7 +191,7 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
       children: [
         const ArchiveSection(title: '阅读节律', code: 'READING / RHYTHM'),
         const SizedBox(height: 22),
-        MiscReadingRhythmChart(
+        ReadingRhythmChart(
           dates: dates,
           minutes: minutes,
           averageMinutes: averages,

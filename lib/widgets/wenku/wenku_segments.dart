@@ -259,8 +259,16 @@ class AppGlassSwitch extends StatefulWidget {
     required this.style,
     required this.reduceMotion,
     this.haptics = true,
+    this.optimistic = true,
+    this.semanticLabel,
   });
   final bool value, reduceMotion, haptics;
+
+  /// Whether the thumb may move before an asynchronous [onChanged] settles.
+  /// Confirmation / permission flows pass false so the control keeps showing
+  /// the persisted value until the callback actually commits it.
+  final bool optimistic;
+  final String? semanticLabel;
   final FutureOr<void> Function(bool)? onChanged;
   final Color activeColor, inactiveColor, thumbColor;
   final easy.LiquidGlassStyle style;
@@ -272,13 +280,14 @@ class _AppGlassSwitchState extends State<AppGlassSwitch> {
   bool? _pending;
   int _request = 0;
   bool get _value => _pending ?? widget.value;
-
   Future<void> _change(bool value) async {
     final action = widget.onChanged;
     if (action == null || value == _value) return;
     if (widget.haptics) AppHaptics.play(context, HapticCue.selection);
     final request = ++_request;
-    setState(() => _pending = value);
+    // Non-optimistic controls keep the controlled value on screen until the
+    // callback commits (or rejects) the change.
+    if (widget.optimistic) setState(() => _pending = value);
     try {
       await action(value);
     } finally {
@@ -298,6 +307,7 @@ class _AppGlassSwitchState extends State<AppGlassSwitch> {
   Widget build(BuildContext context) {
     final enabled = widget.onChanged != null;
     return Semantics(
+      label: widget.semanticLabel,
       toggled: _value,
       enabled: enabled,
       onTap: enabled ? () => _change(!_value) : null,
