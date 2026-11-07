@@ -331,14 +331,32 @@ class AiChatCompletionsClient {
       );
     }
     if (streamed.statusCode != 200) {
-      final text = await utf8.decoder
-          .bind(streamed.stream)
-          .join()
-          .timeout(const Duration(seconds: 30))
-          .catchError((Object error, StackTrace stack) {
-            if (!localAbort.isCompleted) localAbort.complete();
-            Error.throwWithStackTrace(error, stack);
-          });
+      String text;
+      try {
+        text = await utf8.decoder
+            .bind(streamed.stream)
+            .join()
+            .timeout(const Duration(seconds: 30));
+      } on TimeoutException {
+        if (!localAbort.isCompleted) localAbort.complete();
+        throw const AiNetworkException(
+          'TIMEOUT',
+          '读取错误响应超时。请求可能已经到达服务商，未自动重发',
+          retryable: false,
+        );
+      } on http.RequestAbortedException {
+        throw const AiNetworkException(
+          'REQUEST_ABORTED',
+          '请求已停止。请求可能已经到达服务商，未自动重发',
+          retryable: false,
+        );
+      } on http.ClientException catch (error) {
+        throw AiNetworkException(
+          'NETWORK_ERROR',
+          '网络请求失败：${error.message}',
+          retryable: true,
+        );
+      }
       throw AiNetworkException(
         _statusCode(streamed.statusCode),
         _errorMessage(text),

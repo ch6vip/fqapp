@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
@@ -21,6 +23,22 @@ class _HangingClient extends http.BaseClient {
     // Never returns a response. The client must abort the transport when its
     // own header timeout fires, rather than merely abandoning the future.
     return Completer<http.StreamedResponse>().future;
+  }
+}
+
+class _HangingErrorClient extends http.BaseClient {
+  _HangingErrorClient(this.body, this.aborted);
+
+  final Stream<List<int>> body;
+  final Completer<void> aborted;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final abortable = request as http.AbortableRequest;
+    abortable.abortTrigger?.then((_) {
+      if (!aborted.isCompleted) aborted.complete();
+    });
+    return http.StreamedResponse(body, 429);
   }
 }
 
@@ -76,6 +94,53 @@ void main() {
       ),
     );
     await aborted.future.timeout(const Duration(seconds: 2));
+  });
+
+  test('non-200 body timeout is classified and aborts the request', () {
+    fakeAsync((async) {
+      final aborted = Completer<void>();
+      final body = StreamController<List<int>>();
+      final client = AiChatCompletionsClient(
+        client: _HangingErrorClient(body.stream, aborted),
+      );
+      final profile = AiProviderProfile(
+        id: 'custom',
+        label: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        credentialRef: 'ref',
+        outputMode: AiOutputMode.jsonObject,
+        reasoningEffort: AiReasoningEffort.high,
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      );
+      Object? failure;
+      unawaited(
+        client
+            .complete(
+              profile: profile,
+              apiKey: 'sk-test',
+              model: 'deepseek-flash',
+              messages: const [
+                {'role': 'system', 'content': 'system'},
+                {'role': 'user', 'content': '正文'},
+              ],
+              outputMode: AiOutputMode.jsonObject,
+              timeout: const Duration(seconds: 5),
+            )
+            .then<void>(
+              (_) {},
+              onError: (Object error) {
+                failure = error;
+              },
+            ),
+      );
+      async.elapse(const Duration(seconds: 31));
+      async.flushMicrotasks();
+      expect(failure, isA<AiNetworkException>());
+      expect((failure! as AiNetworkException).code, 'TIMEOUT');
+      expect(aborted.isCompleted, isTrue);
+      body.close();
+    });
   });
 
   test('stream reports progress and accepts output beyond 8K', () async {
