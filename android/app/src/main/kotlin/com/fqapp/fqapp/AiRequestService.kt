@@ -135,10 +135,9 @@ class AiRequestService : Service() {
             ?: return
         val modes = buildList {
             add(WifiManager.WIFI_MODE_FULL)
+            add(WifiManager.WIFI_MODE_FULL_HIGH_PERF)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 add(WifiManager.WIFI_MODE_FULL_LOW_LATENCY)
-            } else {
-                add(WifiManager.WIFI_MODE_FULL_HIGH_PERF)
             }
         }
         for (mode in modes.distinct()) {
