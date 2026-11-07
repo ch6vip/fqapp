@@ -10,6 +10,7 @@ import '../../../services/ai_reading/ai_controller.dart';
 import '../../../services/ai_reading/ai_credentials.dart';
 import '../../../services/ai_reading/ai_models.dart';
 import '../../../services/ai_reading/ai_prompt.dart';
+import '../../../services/ai_reading/ai_request_foreground.dart';
 import '../../../services/ai_reading/ai_settings.dart';
 import '../../../widgets/ai_reading/ai_ui.dart';
 import '../../../widgets/home/home_design.dart';
@@ -111,6 +112,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         return;
       }
     }
+    await AiRequestForeground.ensureNotificationPermission();
     await _saveGlobal(_settings.global.copyWith(enabled: true));
   }
 

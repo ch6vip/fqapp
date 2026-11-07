@@ -91,6 +91,7 @@ class _AiReaderSheetState extends State<_AiReaderSheet> {
   AiStreamProgress? _progress;
   String? _lastNotice;
   bool _busy = false;
+  bool _stopping = false;
   bool _showEdits = false;
 
   @override
@@ -132,6 +133,7 @@ class _AiReaderSheetState extends State<_AiReaderSheet> {
       setState(() {});
       return;
     }
+    if (_stopping) _stopping = false;
     final view = await widget.controller.viewFor(
       bookId: widget.bookId,
       chapterId: widget.chapterId,
@@ -164,10 +166,19 @@ class _AiReaderSheetState extends State<_AiReaderSheet> {
     } catch (error) {
       if (mounted) showAiTopToast(context, '校对失败：$error');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _stopping = false;
+        });
+      }
     }
     if (!mounted || result == null) return;
     if (!result.ok) {
+      if (result.errorCodes.contains('REQUEST_ABORTED')) {
+        showAiTopToast(context, '已停止本次校对');
+        return;
+      }
       showAiTopToast(context, '校对失败：${result.error ?? '未知错误'}');
       return;
     }
@@ -178,8 +189,15 @@ class _AiReaderSheetState extends State<_AiReaderSheet> {
   bool get _running =>
       widget.controller.statusFor(widget.bookId, widget.chapterId).running;
 
+  void _stop() {
+    if (!_running || _stopping) return;
+    setState(() => _stopping = true);
+    widget.controller.cancelChapterRequest(widget.bookId, widget.chapterId);
+  }
+
   String _buttonLabel(bool hasFormal) {
     if (_running) {
+      if (_stopping) return '正在停止…';
       final progress = _progress;
       if (progress == null) return '准备中…';
       final attempt = progress.attempt > 1 ? '第 ${progress.attempt} 次 · ' : '';
@@ -190,6 +208,7 @@ class _AiReaderSheetState extends State<_AiReaderSheet> {
   }
 
   String _statusText() {
+    if (_stopping) return '正在停止…';
     if (_running) {
       final progress = _progress;
       if (progress == null) return '正在连接…';
@@ -327,6 +346,21 @@ class _AiReaderSheetState extends State<_AiReaderSheet> {
                 ),
               ],
             ),
+            if (_running) ...[
+              const SizedBox(height: 2),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _stopping ? null : _stop,
+                  style: TextButton.styleFrom(
+                    foregroundColor: preset.mutedTextColor,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+                  icon: const Icon(LucideIcons.circle_stop, size: 15),
+                  label: Text(_stopping ? '正在停止…' : '停止校对'),
+                ),
+              ),
+            ],
             const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerLeft,

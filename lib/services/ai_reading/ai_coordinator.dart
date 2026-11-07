@@ -79,6 +79,7 @@ class AiCoordinator {
     bool confirmedOverBudget = false,
     bool automatic = false,
     String? behaviorPromptOverride,
+    Future<void>? cancelTrigger,
     void Function(AiRunState state)? onState,
     void Function(AiStreamProgress progress)? onProgress,
     void Function(String message)? onNotice,
@@ -225,6 +226,13 @@ class AiCoordinator {
       );
     }
 
+    final foregroundAbort = foreground.abortTrigger;
+    final abortTrigger = foregroundAbort == null
+        ? cancelTrigger
+        : cancelTrigger == null
+        ? foregroundAbort
+        : Future.any<void>([foregroundAbort, cancelTrigger]);
+
     try {
       while (true) {
         final gate = await _preflight(
@@ -361,7 +369,7 @@ class AiCoordinator {
             stream: true,
             attempt: attemptNo,
             onProgress: onProgress,
-            abortTrigger: foreground.abortTrigger,
+            abortTrigger: abortTrigger,
           );
         } on AiNetworkException catch (error) {
           networkError = error;
@@ -397,6 +405,26 @@ class AiCoordinator {
         await _budget.settle(reservation: reservation, request: requestRecord);
 
         if (networkError != null) {
+          if (networkError.code == 'REQUEST_ABORTED') {
+            await _store.putRun(
+              run.copyWith(
+                state: AiRunState.cancelled,
+                attemptCount: requestCount,
+                finishedAt: DateTime.now(),
+                errorCodes: const ['REQUEST_ABORTED'],
+                detail: '用户停止了本次校对',
+              ),
+            );
+            onState?.call(AiRunState.cancelled);
+            return AiTaskResult(
+              ok: false,
+              runId: runId,
+              snapshot: snapshot,
+              error: '已停止本次校对',
+              errorCodes: const ['REQUEST_ABORTED'],
+              requestCount: requestCount,
+            );
+          }
           final truncatedThinking =
               networkError.code == 'FINISH_REASON_LENGTH' ||
               networkError.code == 'RESPONSE_EMPTY';

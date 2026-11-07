@@ -104,6 +104,24 @@ void main() {
     },
   );
 
+  test(
+    'notification permission is requested through the native bridge',
+    () async {
+      var requests = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'requestNotifications') {
+              requests++;
+              return true;
+            }
+            return null;
+          });
+
+      expect(await AiRequestForeground.ensureNotificationPermission(), isTrue);
+      expect(requests, 1);
+    },
+  );
+
   test('stopping the service aborts every outstanding lease', () async {
     var next = 0;
     final releases = <String>[];
