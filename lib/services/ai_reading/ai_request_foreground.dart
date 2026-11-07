@@ -44,6 +44,8 @@ class AiRequestForeground {
   static Future<AiRequestLease> acquire() async {
     if (!Platform.isAndroid) return const AiRequestLease._noop();
     _installHandler();
+    final abort = Completer<void>();
+    _aborts.add(abort);
     final String leaseId;
     try {
       final result = await _channel.invokeMethod<String>('acquire');
@@ -52,19 +54,29 @@ class AiRequestForeground {
       }
       leaseId = result;
     } on AiNetworkException {
+      _aborts.remove(abort);
       rethrow;
     } on PlatformException catch (error) {
+      _aborts.remove(abort);
       throw AiNetworkException(error.code, error.message ?? '无法启动 AI 前台服务');
     } on MissingPluginException {
+      _aborts.remove(abort);
       throw const AiNetworkException(
         'FOREGROUND_UNAVAILABLE',
         '当前安装包缺少 AI 前台服务',
       );
     } catch (error) {
+      _aborts.remove(abort);
       throw AiNetworkException('FOREGROUND_UNAVAILABLE', '$error');
     }
-    final abort = Completer<void>();
-    _aborts.add(abort);
+    if (abort.isCompleted) {
+      try {
+        await _channel.invokeMethod<void>('release', {'leaseId': leaseId});
+      } catch (error) {
+        debugPrint('[AI] foreground handshake release failed: $error');
+      }
+      throw const AiNetworkException('FOREGROUND_STOPPED', 'AI 前台服务在启动握手期间已停止');
+    }
     return AiRequestLease._(leaseId, abort);
   }
 
