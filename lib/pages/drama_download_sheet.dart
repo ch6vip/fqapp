@@ -614,7 +614,7 @@ class _DramaDownloadSheetState extends State<DramaDownloadSheet> {
     final selected = _selected.contains(itemId);
     return _cellContainer(
       key: ValueKey('download-cell-$itemId'),
-      label: '第 $number 集',
+      label: episode.hasKnownIndex ? '第 $number 集' : '当前视频',
       foreground: selected ? const Color(0xFFFA6725) : palette.ink,
       background: selected ? const Color(0x14FA6725) : idleBackground,
       border: selected ? const Color(0xFFFA6725) : Colors.transparent,
