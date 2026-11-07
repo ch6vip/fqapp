@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/audio_preferences.dart';
+import 'package:fqapp/widgets/wenku/wenku_overlay.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -13,6 +14,11 @@ void main() {
   });
 
   tearDown(() => AudioPreferences.instance.resetForTest());
+
+  Finder menuOption(String label) => find.descendant(
+    of: find.byType(GlassMenuItem),
+    matching: find.text(label),
+  );
 
   // issue #129 / #170：听书高倍速的电音/金属感来自 Media3 内建的 Sonic 时伸缩，
   // 但 1.0.133 把默认换成 WSOLA 后部分设备一直「缓冲中」没有任何声音，所以默认
@@ -27,9 +33,10 @@ void main() {
 
     await tester.tap(find.text('听书变速引擎'));
     await tester.pumpAndSettle();
-    expect(find.text('Media3 内建 Sonic，最稳（默认，1.0.121 的行为）'), findsOneWidget);
+    expect(menuOption(AudioRateEngine.wsola.label), findsOneWidget);
+    expect(menuOption(AudioRateEngine.builtIn.label), findsOneWidget);
 
-    await tester.tap(find.text(AudioRateEngine.wsola.label));
+    await tester.tap(menuOption(AudioRateEngine.wsola.label));
     await tester.pumpAndSettle();
 
     expect(AudioPreferences.instance.rateEngine.value, AudioRateEngine.wsola);

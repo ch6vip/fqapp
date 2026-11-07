@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/reading_stats.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/mine_page.dart';
 import 'package:fqapp/pages/reading_statistics_page.dart';
@@ -12,6 +13,7 @@ import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/widgets/home/home_sheet.dart';
+import 'package:fqapp/widgets/mine/mine_heatmap.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/mine_navigation.dart';
@@ -58,20 +60,25 @@ void main() {
       );
       await tester.pumpAndSettle();
       await openMineStatistics(tester);
-      expect(find.text('今日阅读'), findsOneWidget);
-      expect(find.text('阅读热力图'), findsOneWidget);
-      for (final weekday in {0: '周一', 2: '周三', 4: '周五'}.entries) {
-        final label = find.text(weekday.value);
-        final cell = find.byKey(
-          ValueKey('reading-heatmap-cell-${weekday.key}'),
-        );
-        expect(label, findsOneWidget);
-        expect(cell, findsOneWidget);
-        expect(
-          tester.getCenter(label).dy,
-          closeTo(tester.getCenter(cell).dy, 0.01),
-          reason: '${weekday.value} must align with its calendar row',
-        );
+      expect(find.text('阅读总览'), findsOneWidget);
+      await _scrollToCalendar(tester);
+      expect(find.text('阅读日历'), findsOneWidget);
+      // 16 weeks split at 14 weeks per segment: two segments in this layout.
+      const segments = 2;
+      for (final weekday in {0: '一', 2: '三', 4: '五'}.entries) {
+        final labels = find.text(weekday.value);
+        expect(labels, findsNWidgets(segments));
+        for (var segment = 0; segment < segments; segment++) {
+          final cell = find.byKey(
+            ValueKey('reading-heatmap-cell-${segment * 14 * 7 + weekday.key}'),
+          );
+          expect(cell, findsOneWidget);
+          expect(
+            tester.getCenter(labels.at(segment)).dx,
+            closeTo(tester.getCenter(cell).dx, 0.01),
+            reason: '${weekday.value} 标签要与第 $segment 段对应列的水平中心对齐',
+          );
+        }
       }
       expect(tester.takeException(), isNull);
     });
@@ -140,6 +147,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: MinePage()));
     await tester.pumpAndSettle();
     await openMineStatistics(tester);
+    await _scrollToCalendar(tester);
     final readout = find.byKey(const ValueKey('reading-heatmap-day'));
     expect(tester.widget<Text>(readout).data, '今天 · 1分钟');
     // Column 0 is fifteen weeks back, so its Monday is never today.
@@ -159,6 +167,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: MinePage()));
     await tester.pumpAndSettle();
     await openMineStatistics(tester);
+    await _scrollToCalendar(tester);
     final empty = tester.widget<DecoratedBox>(
       find.descendant(
         of: find.byKey(const ValueKey('reading-heatmap-cell-0')),
@@ -168,6 +177,51 @@ void main() {
     final decoration = empty.decoration as BoxDecoration;
     expect(decoration.color, Colors.transparent);
     expect(decoration.border, isNotNull, reason: 'empty days are outlined');
+  });
+
+  testWidgets('recorded zero minutes use the first fill, not the outline', (
+    tester,
+  ) async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final stats = ReadingStats.from(
+      history: const [],
+      readTime: {
+        'zero-book': {readingDayKey(today): 0.0},
+      },
+    );
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MineHeatmap(stats: stats, today: today),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final index = readingHeatmapDates(
+      today,
+    ).indexWhere((day) => DateUtils.isSameDay(day, today));
+    final todayCell = find.byKey(ValueKey('reading-heatmap-cell-$index'));
+    final zero = tester.widget<DecoratedBox>(
+      find.descendant(of: todayCell, matching: find.byType(DecoratedBox)),
+    );
+    final zeroDecoration = zero.decoration as BoxDecoration;
+    expect(
+      zeroDecoration.border,
+      isNull,
+      reason: 'recorded days are not outlined',
+    );
+    expect(zeroDecoration.color, isNot(Colors.transparent));
+
+    final neverRead = tester.widget<DecoratedBox>(
+      find.descendant(
+        of: find.byKey(const ValueKey('reading-heatmap-cell-0')),
+        matching: find.byType(DecoratedBox),
+      ),
+    );
+    final neverDecoration = neverRead.decoration as BoxDecoration;
+    expect(neverDecoration.color, Colors.transparent);
+    expect(neverDecoration.border, isNotNull);
   });
 
   for (final media in const {'audio': '听书', 'manga': '漫画'}.entries) {
@@ -211,6 +265,8 @@ void main() {
       scrollable: statisticsScrollable,
     );
     expect(find.text('听书 book6'), findsNothing, reason: 'preview stops at 5');
+    await tester.ensureVisible(showAll);
+    await tester.pumpAndSettle();
     await tester.tap(showAll);
     await tester.pumpAndSettle();
     expect(find.text('全部 7 本'), findsOneWidget);
@@ -225,6 +281,8 @@ void main() {
           .descendant(of: sheet, matching: find.byType(Scrollable))
           .first,
     );
+    await tester.ensureVisible(last);
+    await tester.pumpAndSettle();
     final context = tester.element(find.byType(ReadingStatisticsPage));
     await tester.tap(last);
     await tester.pump();
@@ -234,6 +292,16 @@ void main() {
     expect(page.item.id, 'book6');
     expect(page.item.kind, 'audio');
   });
+}
+
+/// The archive statistics page keeps 阅读日历 below 阅读总览 and 阅读节律, so a
+/// phone viewport only builds it after scrolling the statistics list.
+Future<void> _scrollToCalendar(WidgetTester tester) async {
+  await tester.scrollUntilVisible(
+    find.byKey(const ValueKey('reading-heatmap-cell-0')),
+    220,
+    scrollable: statisticsScrollable,
+  );
 }
 
 /// Taps a 读得最多 row and returns the detail page it pushed.
@@ -247,6 +315,8 @@ Future<DetailPage> _openRankedTitle(WidgetTester tester, String title) async {
   await openMineStatistics(tester);
   final row = find.text(title);
   await tester.scrollUntilVisible(row, 200, scrollable: statisticsScrollable);
+  await tester.ensureVisible(row);
+  await tester.pumpAndSettle();
   final context = tester.element(find.byType(ReadingStatisticsPage));
   await tester.tap(row);
   await tester.pump();

@@ -1,8 +1,17 @@
+// Restyled with the shared Wenku8_Flutter (revision ebcd7f1) glass controls.
+// Upstream has no tap-zone editor, so this is not counted as a ported upstream
+// screen: the 3x3 editor, presets and action picker keep fqapp's own behaviour,
+// geometry and result contract, while the header uses `GlassIconButton`, the
+// presets use `GlassTextButton`, cells use `JellyTapSurface` and the confirm
+// action uses the same glass button.
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_preferences.dart';
 import '../../services/reader_tap_zones.dart';
+import '../wenku/wenku_ui.dart';
 import 'reader_theme.dart';
 
 /// 点击区域设置编辑器：全屏半透明弹窗里的 3x3 九宫格，布局参考 Legado 的
@@ -18,8 +27,21 @@ Future<List<ReaderTapZoneAction>?> showReaderTapZoneEditor({
     context: context,
     barrierColor: Colors.black54,
     barrierDismissible: true,
-    builder: (context) =>
-        _ReaderTapZoneEditor(initialZones: initialZones, preset: preset),
+    builder: (context) {
+      final editor = _ReaderTapZoneEditor(
+        initialZones: initialZones,
+        preset: preset,
+      );
+      // 墨水屏：弹窗在独立路由里，必须自己声明轻量作用域，否则面板里的
+      // 玻璃按钮仍会走实时折射并留残影。
+      return preset.isEink
+          ? PerformanceScope(
+              preferences: const PerformancePreferences(enabled: true),
+              explicitReduceMotion: true,
+              child: editor,
+            )
+          : editor;
+    },
   );
 }
 
@@ -91,19 +113,20 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
             children: [
               Row(
                 children: [
+                  const SizedBox(width: 4),
                   Expanded(
                     child: Text(
                       '点击区域设置',
                       style: TextStyle(
                         color: preset.textColor,
-                        fontSize: 20,
+                        fontSize: 18,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                  IconButton(
-                    tooltip: '关闭',
-                    icon: Icon(LucideIcons.x, color: preset.textColor),
+                  GlassIconButton(
+                    icon: CupertinoIcons.xmark,
+                    label: '关闭',
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -131,7 +154,7 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
                 ),
               ),
               const SizedBox(height: 12),
-              _PresetButtons(preset: preset, onApplyPreset: _applyPreset),
+              _PresetButtons(onApplyPreset: _applyPreset),
               const SizedBox(height: 8),
               Text(
                 hasMenu ? '点九宫格换动作；至少保留一个菜单区域' : '没有菜单区域，完成时中间自动恢复为菜单',
@@ -140,7 +163,7 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
+                child: GlassTextButton(
                   onPressed: () => Navigator.pop(
                     context,
                     ensureReaderTapZonesHaveMenu(_zones),
@@ -158,20 +181,16 @@ class _ReaderTapZoneEditorState extends State<_ReaderTapZoneEditor> {
 
 /// 预设按钮行：默认 / 单手模式 / 全屏翻页，一键套用整套九宫格。
 class _PresetButtons extends StatelessWidget {
-  const _PresetButtons({required this.onApplyPreset, required this.preset});
+  const _PresetButtons({required this.onApplyPreset});
 
   final ValueChanged<List<ReaderTapZoneAction>> onApplyPreset;
-  final ReaderThemePreset preset;
 
   Widget _button(String label, List<ReaderTapZoneAction> zones) {
     return Expanded(
-      child: OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: preset.textColor,
-          side: BorderSide(color: preset.borderColor),
-        ),
+      child: GlassTextButton(
+        compact: true,
         onPressed: () => onApplyPreset(zones),
-        child: Text(label),
+        child: Text(label, style: const TextStyle(fontSize: 12)),
       ),
     );
   }
@@ -203,7 +222,7 @@ class _ZoneCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return JellyTapSurface(
       onTap: onTap,
       child: Container(
         alignment: Alignment.center,

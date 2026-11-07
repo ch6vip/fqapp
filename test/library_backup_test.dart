@@ -11,6 +11,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/library_backup_service.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/media_history_store.dart';
+import 'package:fqapp/services/shelf_group_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 
 void main() {
@@ -18,6 +19,7 @@ void main() {
   late Directory directory;
   final library = LibraryStore.instance;
   final shelf = ShelfStore.instance;
+  final groups = ShelfGroupStore.instance;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -25,9 +27,11 @@ void main() {
     Hive.init(directory.path);
     await library.init();
     await shelf.init();
+    await groups.init();
   });
 
   tearDown(() async {
+    await groups.whenIdle();
     await Hive.close();
     await directory.delete(recursive: true);
   });
@@ -122,6 +126,8 @@ void main() {
         shelf: 1,
         history: 110,
         episodes: 1,
+        groups: 0,
+        assignments: 0,
       ));
       expect(library.historySnapshot(), hasLength(111));
       expect((await library.historyEntry('same'))?['episode'], 9);
@@ -133,10 +139,55 @@ void main() {
         shelf: 0,
         history: 0,
         episodes: 0,
+        groups: 0,
+        assignments: 0,
       ));
       expect(library.historySnapshot(), hasLength(111));
     },
   );
+
+  test('source and card metadata survive a round-trip', () async {
+    final backup = LibraryBackup.capture(
+      shelf: [
+        ShelfRecord(
+          item: _item('123', title: '番茄书'),
+          addedAt: DateTime(2020),
+        ),
+        ShelfRecord(
+          item: _item(
+            '123',
+            title: '书旗书',
+            source: 'shuqi',
+            intro: '简介',
+            categories: const ['玄幻', '热血'],
+            creationStatus: 0,
+            wordNumber: 123456,
+          ),
+          addedAt: DateTime(2021),
+        ),
+      ],
+      history: [],
+      watched: {},
+    );
+    final restored = LibraryBackup.decode(backup.encode());
+    expect(restored.shelf, hasLength(2));
+    final fanqie = restored.shelf.singleWhere((e) => e.item.source == 'fanqie');
+    final shuqi = restored.shelf.singleWhere((e) => e.item.source == 'shuqi');
+    expect(fanqie.item.title, '番茄书');
+    expect(shuqi.item.title, '书旗书');
+    expect(shuqi.item.intro, '简介');
+    expect(shuqi.item.categories, ['玄幻', '热血']);
+    expect(shuqi.item.creationStatus, 0);
+    expect(shuqi.item.wordNumber, 123456);
+    // Same numeric id, distinct source-qualified identities.
+    expect(ShelfStore.keyOf(fanqie.item), 'shelf_v1:book:123');
+    expect(ShelfStore.keyOf(shuqi.item), 'shelf_v1:shuqi/book:123');
+
+    await LibraryBackupService().restore(restored);
+    expect(shelf.records(), hasLength(2));
+    expect(shelf.contains('book', '123'), isTrue);
+    expect(shelf.contains('book', '123', source: 'shuqi'), isTrue);
+  });
 
   test(
     'file validation rejects malformed final records before any writes',
@@ -184,7 +235,15 @@ void main() {
   );
 }
 
-MediaItem _item(String id, {String title = '作品'}) => MediaItem(
+MediaItem _item(
+  String id, {
+  String title = '作品',
+  String source = 'fanqie',
+  String intro = '',
+  List<String> categories = const [],
+  int creationStatus = -1,
+  int wordNumber = 0,
+}) => MediaItem(
   id: id,
   title: title,
   cover: '',
@@ -192,6 +251,11 @@ MediaItem _item(String id, {String title = '作品'}) => MediaItem(
   badge: '',
   ep: '',
   kind: 'book',
+  source: source,
+  intro: intro,
+  categories: categories,
+  creationStatus: creationStatus,
+  wordNumber: wordNumber,
 );
 
 extension on LibraryBackup {

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/pages/settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/player_layout_preferences.dart';
+import 'package:fqapp/widgets/wenku/wenku_overlay.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +39,12 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // 设置菜单选项在弹层里的定位：行内 selector 与菜单项可能显示同一个文案。
+  Finder menuOption(String label) => find.descendant(
+    of: find.byType(GlassMenuItem),
+    matching: find.text(label),
+  );
+
   testWidgets('外观分类里的播放页布局三选一并落盘', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     try {
@@ -52,14 +59,12 @@ void main() {
       await tester.tap(find.text('播放页布局'));
       await tester.pumpAndSettle();
 
-      // 行标题 + 弹层标题各一个。
-      expect(find.text('播放页布局'), findsNWidgets(2));
+      // 上游 GlassSettingMenu 没有弹层标题，直接列出选项。
       for (final mode in PlayerLayoutMode.values) {
-        expect(find.text(mode.label), findsWidgets);
-        expect(find.text(mode.description), findsOneWidget);
+        expect(menuOption(mode.label), findsOneWidget);
       }
 
-      await tester.tap(find.text('始终分屏'));
+      await tester.tap(menuOption('始终分屏'));
       await tester.pumpAndSettle();
 
       expect(PlayerLayoutPreferences.mode.value, PlayerLayoutMode.split);
@@ -81,11 +86,14 @@ void main() {
       await mountSettings(tester);
       await tester.tap(find.text('外观'));
       await tester.pumpAndSettle();
+      // 行内保留短标签，弹层里仍是完整标签。
       expect(find.text('自动分屏'), findsOneWidget);
 
       await tester.tap(find.text('播放页布局'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('自动适配布局'));
+      expect(menuOption('自动适配布局'), findsOneWidget);
+      expect(find.text('自动分屏'), findsOneWidget);
+      await tester.tap(menuOption('自动适配布局'));
       await tester.pumpAndSettle();
 
       // 早退分支：偏好不变，也没有失败提示。

@@ -43,7 +43,9 @@ import 'services/player_style_config.dart';
 import 'services/short_series_font_scale.dart';
 import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
+import 'services/shelf_group_store.dart';
 import 'services/shelf_store.dart';
+import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
@@ -133,6 +135,11 @@ Future<void> _initializeLocalData() async {
     // The 加入书架 collection is optional data: a failure here must not block
     // startup, which is why it shares the retryable bootstrap with the history.
     ShelfStore.instance.init(),
+    // 书架分组与视图偏好都在书架数据之后装配：页面首帧就能读到版式，
+    // 分组只在就绪后参与筛选（未就绪时读 API 安全降级）。两者都是可选数据，
+    // 打不开时页面退化为「全部 / 默认版式」而不是拖住启动。
+    optional(ShelfGroupStore.instance.init),
+    optional(ShelfViewStore.instance.load),
     // 短剧 feed 的 点赞 也是可选本地数据，与书架同一处理：开箱失败不能让
     // 启动失败，否则一个纯装饰性的集合会拖住短剧页之外的所有功能。
     optional(() async {
@@ -268,17 +275,35 @@ class _FqAppState extends State<FqApp> {
                   navigatorKey: _navigatorKey,
                   navigatorObservers: [_audioRoutes],
                   builder: (context, child) {
+                    final palette = HomePalette.of(context);
                     final playback = AudioPlaybackScope(
                       key: _audioScopeKey,
                       navigatorKey: _navigatorKey,
                       recentListen: loadRecentListen,
                       child: child ?? const SizedBox.shrink(),
                     );
-                    return AudioFloatingRouteScope(
-                      routes: _audioRoutes,
-                      child: isWindowsDesktop
-                          ? DesktopAppFrame(child: playback)
-                          : playback,
+                    // Routes without an AppBar need a live fallback above the
+                    // Navigator; the covered root route cannot paint its style.
+                    // Reader/video annotations still override this default.
+                    return AnnotatedRegion<SystemUiOverlayStyle>(
+                      value:
+                          (palette.dark
+                                  ? SystemUiOverlayStyle.light
+                                  : SystemUiOverlayStyle.dark)
+                              .copyWith(
+                                statusBarColor: palette.canvas,
+                                systemNavigationBarColor: palette.canvas,
+                                systemNavigationBarDividerColor: palette.canvas,
+                                systemNavigationBarIconBrightness: palette.dark
+                                    ? Brightness.light
+                                    : Brightness.dark,
+                              ),
+                      child: AudioFloatingRouteScope(
+                        routes: _audioRoutes,
+                        child: isWindowsDesktop
+                            ? DesktopAppFrame(child: playback)
+                            : playback,
+                      ),
                     );
                   },
                   title: '什锦铺',
