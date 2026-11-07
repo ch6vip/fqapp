@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/ai_reading/ai_chapter_snapshot.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -10,49 +11,75 @@ import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('rendered paragraphs match their measured height below 1.0 scale', (
-    tester,
-  ) async {
-    // RichText auto-scales inline WidgetSpan children
-    // (_AutoScaleInlineWidget), so the unscaled indent span paints at
-    // indent * scale and must keep matching the measured placeholder at any
-    // system text scale — the suite previously only exercised scales >= 1.0.
-    final scale = 0.85;
-    final layout = _layout(scale: scale);
-    final spec = layout.spec;
-    for (final block in layout.blocks) {
-      if (block.isImage || block.text.isEmpty) continue;
-      final key = GlobalKey();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Align(
-            alignment: Alignment.topLeft,
-            child: SingleChildScrollView(
-              child: SizedBox(
-                width: spec.width,
-                child: RichText(
-                  key: key,
-                  text: block.span,
-                  textAlign: block.align,
-                  textDirection: TextDirection.ltr,
-                  textScaler: spec.textScaler,
-                  locale: const Locale('zh', 'CN'),
+  test('display selection maps to the AI snapshot without the title shift', () {
+    final content = ChapterContent(
+      blocks: const [ChapterParagraph('第一段。'), ChapterParagraph('第二段。')],
+    );
+    final title = '第一章 山间来信';
+    final layout = _layout(title: title, content: content);
+    final snapshot = AiChapterSnapshotBuilder.fromContent(content, title);
+
+    final first = layout.snapshotLocationForDisplayOffset(
+      layout.blocks[1].start + 2,
+      snapshot,
+    );
+    expect(first, isNotNull);
+    expect(first!.paragraph, 0);
+    expect(first.offset, 2);
+
+    final second = layout.snapshotLocationForDisplayOffset(
+      layout.blocks[2].start + 1,
+      snapshot,
+    );
+    expect(second, isNotNull);
+    expect(second!.paragraph, 1);
+    expect(second.offset, snapshot.paragraphStarts[1] + 1);
+  });
+
+  testWidgets(
+    'rendered paragraphs match their measured height below 1.0 scale',
+    (tester) async {
+      // RichText auto-scales inline WidgetSpan children
+      // (_AutoScaleInlineWidget), so the unscaled indent span paints at
+      // indent * scale and must keep matching the measured placeholder at any
+      // system text scale — the suite previously only exercised scales >= 1.0.
+      final scale = 0.85;
+      final layout = _layout(scale: scale);
+      final spec = layout.spec;
+      for (final block in layout.blocks) {
+        if (block.isImage || block.text.isEmpty) continue;
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Align(
+              alignment: Alignment.topLeft,
+              child: SingleChildScrollView(
+                child: SizedBox(
+                  width: spec.width,
+                  child: RichText(
+                    key: key,
+                    text: block.span,
+                    textAlign: block.align,
+                    textDirection: TextDirection.ltr,
+                    textScaler: spec.textScaler,
+                    locale: const Locale('zh', 'CN'),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      final rendered = key.currentContext!.size!.height;
-      expect(
-        rendered,
-        moreOrLessEquals(block.height, epsilon: 0.5),
-        reason:
-            'block ${block.index} renders ${rendered}px but was measured '
-            '${block.height}px',
-      );
-    }
-  });
+        );
+        final rendered = key.currentContext!.size!.height;
+        expect(
+          rendered,
+          moreOrLessEquals(block.height, epsilon: 0.5),
+          reason:
+              'block ${block.index} renders ${rendered}px but was measured '
+              '${block.height}px',
+        );
+      }
+    },
+  );
 
   for (final scenario in [
     (size: const Size(350, 640), scale: 1.0, font: 18.0, spacing: 12.0),

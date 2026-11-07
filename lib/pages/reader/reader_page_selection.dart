@@ -330,18 +330,24 @@ extension _ReaderPageSelection on _ReaderPageState {
     final layout = _chapterLayout;
     final snapshot = _aiView?.snapshot;
     if (selection == null || layout == null || snapshot == null) return;
-    final start = layout.sourceOffsetForDisplay(
+    final startLocation = layout.snapshotLocationForDisplayOffset(
       selection.start,
-      bias: TextBoundaryBias.start,
+      snapshot,
     );
-    final end = layout.sourceOffsetForDisplay(
+    final endLocation = layout.snapshotLocationForDisplayOffset(
       selection.end,
-      bias: TextBoundaryBias.end,
+      snapshot,
     );
-    final paragraph = snapshot.paragraphIndexAt(start);
-    if (paragraph == null ||
-        end <= start ||
-        end > snapshot.paragraphEnd(paragraph)) {
+    if (startLocation == null ||
+        endLocation == null ||
+        startLocation.paragraph != endLocation.paragraph) {
+      _showMessage('漏改了只能标在单个段落内');
+      return;
+    }
+    final start = startLocation.offset;
+    final end = endLocation.offset;
+    final paragraph = startLocation.paragraph;
+    if (end <= start || end > snapshot.paragraphEnd(paragraph)) {
       _showMessage('漏改了只能标在单个段落内');
       return;
     }
