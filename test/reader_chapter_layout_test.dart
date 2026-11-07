@@ -103,6 +103,25 @@ void main() {
     expect(second, isNotNull);
     expect(second!.paragraph, 1);
     expect(second.offset, snapshot.paragraphStarts[1] + 1);
+
+    // A selection entirely inside the replaced fragment must expand to the
+    // complete source range: display [1, 5) -> source [0, 4).
+    final rangeStart = layout.snapshotLocationForDisplayOffset(
+      paragraphs[0].start + 1,
+      snapshot,
+      bias: TextBoundaryBias.start,
+    );
+    final rangeEnd = layout.snapshotLocationForDisplayOffset(
+      paragraphs[0].start + 5,
+      snapshot,
+      bias: TextBoundaryBias.end,
+    );
+    expect(rangeStart, isNotNull);
+    expect(rangeEnd, isNotNull);
+    expect(rangeStart!.paragraph, 0);
+    expect(rangeEnd!.paragraph, 0);
+    expect(rangeStart.offset, 0);
+    expect(rangeEnd.offset, 4);
   });
 
   testWidgets(
