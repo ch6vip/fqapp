@@ -16,6 +16,17 @@ extension _ReaderPageIdeas on _ReaderPageState {
       final ideas = await (loader ?? _defaultIdeas)(chapter.itemId);
       if (!mounted || generation != _loadGeneration) return;
       if (chapter.itemId != widget.chapters[_index].itemId) return;
+      final cacheKey = '${widget.bookId}\u0000${chapter.itemId}';
+      final previous = _ideasCache[cacheKey];
+      _ideasCache[cacheKey] = (version: chapter.version, ideas: ideas);
+      while (_ideasCache.length > 12) {
+        _ideasCache.remove(_ideasCache.keys.first);
+      }
+      final unchanged =
+          previous?.version == chapter.version &&
+          mapEquals(previous!.ideas.bubbleCounts, ideas.bubbleCounts) &&
+          mapEquals(previous.ideas.bubbleVariants, ideas.bubbleVariants);
+      if (unchanged) return;
       _setState(() {
         _ideas = ideas;
         ++_ideasRevision;

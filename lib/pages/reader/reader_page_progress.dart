@@ -90,7 +90,9 @@ extension _ReaderPageProgress on _ReaderPageState {
     _layoutMode = _preferences.pageMode;
     // Late paragraph bubbles can add pages. Keep a backward chapter entry
     // anchored to the text end, not the first layout's last-page start.
-    _textOffset = initialRestore && _requestedStartAtEnd && _paged
+    _textOffset =
+        (initialRestore && _requestedStartAtEnd && _paged) ||
+            (_keepChapterEndAnchor && _paged)
         ? layout.textLength
         : restored.textOffset;
     _pageIndex = layout.pageForOffset(_textOffset);
@@ -184,6 +186,7 @@ extension _ReaderPageProgress on _ReaderPageState {
     // the action bar's anchor would be stale. Reselecting is one long press.
     _closeSelectionBar(clearSelection: true);
     if (!_progressReady || _changingChapter || page == _pageIndex) return;
+    _keepChapterEndAnchor = false;
     _setState(() {
       _pageIndex = page;
       _textOffset = _chapterLayout!.pages[page].start;

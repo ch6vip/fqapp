@@ -386,17 +386,30 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
         await _load(startAtEnd: startAtEnd, chapterTurn: chapterTurn);
         return;
       }
+      final cacheKey = '${widget.bookId}\u0000${chapter.itemId}';
+      final cachedIdeas = _ideasCache[cacheKey];
+      final cachedUnderlines = _underlineCache[cacheKey];
+      final ideas = cachedIdeas?.version == chapter.version
+          ? cachedIdeas!.ideas
+          : ChapterIdeas.empty;
+      final underlines = cachedUnderlines?.version == chapter.version
+          ? cachedUnderlines
+          : null;
       _setState(() {
         _replacement = replacement;
         _content = text;
         _chapterContent = content;
         _savedPosition = saved;
         _loading = false;
-        // Ideas and 划线 belong to the chapter, so they are dropped on every
-        // load and fetched again; a stale entry would point at another chapter.
-        _ideas = ChapterIdeas.empty;
-        _underlines = const {};
-        _rangeUnderlines = const [];
+        _keepChapterEndAnchor = startAtEnd;
+        // Reuse the last known decorations when the same chapter version is
+        // opened again. This keeps the first layout identical to the final one;
+        // refetching below may still update them if the data changed.
+        _ideas = ideas;
+        _underlines = underlines?.ids ?? const {};
+        _rangeUnderlines = underlines?.ranges ?? const [];
+        if (cachedIdeas != null) ++_ideasRevision;
+        if (underlines != null) ++_underlineRevision;
         _selection = null;
         _selectionBarOpen = false;
       });

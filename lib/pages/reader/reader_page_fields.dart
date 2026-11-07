@@ -40,6 +40,16 @@ mixin _ReaderPageFields on State<ReaderPage> {
   int _replacementGeneration = 0;
 
   ChapterIdeas _ideas = ChapterIdeas.empty;
+  final _ideasCache = <String, ({String version, ChapterIdeas ideas})>{};
+  final _underlineCache =
+      <
+        String,
+        ({String version, Set<int> ids, List<ReaderRangeUnderline> ranges})
+      >{};
+
+  /// True after entering a chapter backwards. Keeps the chapter end pinned
+  /// while late idea/underline data changes the page count.
+  bool _keepChapterEndAnchor = false;
   bool _loading = true;
   bool _progressReady = false;
   double _lastPosition = 0;
