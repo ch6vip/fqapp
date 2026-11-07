@@ -1,6 +1,7 @@
 import 'ai_budget.dart';
 import 'ai_client.dart';
 import 'ai_models.dart';
+import 'ai_request_foreground.dart';
 import 'ai_settings.dart';
 import 'ai_store.dart';
 
@@ -80,23 +81,41 @@ class AiProbeService {
     // Persist the Run before the request so a crash between request/ledger and
     // terminal update is recoverable instead of leaving an orphan request.
     await _store.putRun(runRecord);
+    try {
+      await AiRequestForeground.acquire();
+    } on AiNetworkException catch (error) {
+      await _budget.release(reservation);
+      await _store.putRun(
+        runRecord.copyWith(
+          state: AiRunState.failed,
+          finishedAt: DateTime.now(),
+          errorCodes: [error.code],
+          detail: error.message,
+        ),
+      );
+      rethrow;
+    }
 
     var usage = const AiUsage();
     String? errorCode;
     AiModelCapability? capability;
     Object? failure;
     try {
-      capability = await _client.probe(
-        profile: profile,
-        apiKey: apiKey,
-        model: model,
-        outputMode: outputMode,
-        timeout: timeout,
-        onUsage: (reported, reportedError) {
-          usage = reported;
-          errorCode = reportedError;
-        },
-      );
+      try {
+        capability = await _client.probe(
+          profile: profile,
+          apiKey: apiKey,
+          model: model,
+          outputMode: outputMode,
+          timeout: timeout,
+          onUsage: (reported, reportedError) {
+            usage = reported;
+            errorCode = reportedError;
+          },
+        );
+      } finally {
+        await AiRequestForeground.release();
+      }
     } catch (error) {
       failure = error;
       errorCode = error is AiNetworkException ? error.code : 'PROBE_FAILED';

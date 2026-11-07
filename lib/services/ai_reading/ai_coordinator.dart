@@ -11,6 +11,7 @@ import 'ai_client.dart';
 import 'ai_credentials.dart';
 import 'ai_models.dart';
 import 'ai_prompt.dart';
+import 'ai_request_foreground.dart';
 import 'ai_protocol.dart';
 import 'ai_settings.dart';
 import 'ai_store.dart';
@@ -200,249 +201,365 @@ class AiCoordinator {
     var requestProfile = provider;
     var overBudgetConfirmed = confirmedOverBudget;
 
-    while (true) {
-      final gate = await _preflight(
-        bookId: bookId,
-        automatic: automatic,
-        confirmedOverBudget: overBudgetConfirmed,
+    try {
+      await AiRequestForeground.acquire();
+    } on AiNetworkException catch (error) {
+      await _store.putRun(
+        run.copyWith(
+          state: AiRunState.failed,
+          attemptCount: requestCount,
+          finishedAt: DateTime.now(),
+          errorCodes: [error.code],
+          detail: error.message,
+        ),
       );
-      if (gate != null) {
-        debugPrint('[AI] preflight blocked ${gate.code}: ${gate.message}');
-        // Every exit path must close the persisted run. A budget confirmation
-        // is a cancelled run; the user's confirmation starts a new run.
-        final blockedState = gate.needsBudgetConfirmation
-            ? AiRunState.cancelled
-            : AiRunState.failed;
-        await _store.putRun(
-          run.copyWith(
-            state: blockedState,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+      onState?.call(AiRunState.failed);
+      return AiTaskResult(
+        ok: false,
+        runId: runId,
+        snapshot: snapshot,
+        error: error.message,
+        errorCodes: [error.code],
+        requestCount: requestCount,
+      );
+    }
+
+    try {
+      while (true) {
+        final gate = await _preflight(
+          bookId: bookId,
+          automatic: automatic,
+          confirmedOverBudget: overBudgetConfirmed,
+        );
+        if (gate != null) {
+          debugPrint('[AI] preflight blocked ${gate.code}: ${gate.message}');
+          // Every exit path must close the persisted run. A budget confirmation
+          // is a cancelled run; the user's confirmation starts a new run.
+          final blockedState = gate.needsBudgetConfirmation
+              ? AiRunState.cancelled
+              : AiRunState.failed;
+          await _store.putRun(
+            run.copyWith(
+              state: blockedState,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: [gate.code],
+              detail: gate.message,
+            ),
+          );
+          onState?.call(blockedState);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            error: gate.message,
             errorCodes: [gate.code],
-            detail: gate.message,
-          ),
-        );
-        onState?.call(blockedState);
-        return AiTaskResult(
-          ok: false,
+            needsBudgetConfirmation: gate.needsBudgetConfirmation,
+            budgetMessage: gate.needsBudgetConfirmation ? gate.message : null,
+            requestCount: requestCount,
+          );
+        }
+        // Admission is atomic: two chapters cannot both pass the last request
+        // slot between the read-only preflight and the actual HTTP call. The
+        // request ID is reserved with the slot so crash recovery can join the
+        // ledger row without creating a duplicate.
+        final requestId = _newId('req');
+        final reserved = await _budget.reserve(
+          bookId: bookId,
+          automatic: automatic,
+          countTask: requestCount == 0,
+          confirmedOverBudget: overBudgetConfirmed,
+          requestId: requestId,
           runId: runId,
-          snapshot: snapshot,
-          error: gate.message,
-          errorCodes: [gate.code],
-          needsBudgetConfirmation: gate.needsBudgetConfirmation,
-          budgetMessage: gate.needsBudgetConfirmation ? gate.message : null,
-          requestCount: requestCount,
         );
-      }
-      // Admission is atomic: two chapters cannot both pass the last request
-      // slot between the read-only preflight and the actual HTTP call. The
-      // request ID is reserved with the slot so crash recovery can join the
-      // ledger row without creating a duplicate.
-      final requestId = _newId('req');
-      final reserved = await _budget.reserve(
-        bookId: bookId,
-        automatic: automatic,
-        countTask: requestCount == 0,
-        confirmedOverBudget: overBudgetConfirmed,
-        requestId: requestId,
-        runId: runId,
-      );
-      if (reserved.reservation == null) {
-        final blockedCode = reserved.needsConfirmation
-            ? 'BUDGET_CONFIRM'
-            : reserved.code ?? 'BUDGET_EXCEEDED';
-        final blockedState =
-            reserved.needsConfirmation ||
-                blockedCode == 'CONSENT_REQUIRED' ||
-                blockedCode == 'DEVICE_DISABLED' ||
-                blockedCode == 'DISABLED'
-            ? AiRunState.cancelled
-            : AiRunState.failed;
-        await _store.putRun(
-          run.copyWith(
-            state: blockedState,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+        if (reserved.reservation == null) {
+          final blockedCode = reserved.needsConfirmation
+              ? 'BUDGET_CONFIRM'
+              : reserved.code ?? 'BUDGET_EXCEEDED';
+          final blockedState =
+              reserved.needsConfirmation ||
+                  blockedCode == 'CONSENT_REQUIRED' ||
+                  blockedCode == 'DEVICE_DISABLED' ||
+                  blockedCode == 'DISABLED'
+              ? AiRunState.cancelled
+              : AiRunState.failed;
+          await _store.putRun(
+            run.copyWith(
+              state: blockedState,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: [blockedCode],
+              detail: reserved.reason ?? '预算已达上限',
+            ),
+          );
+          onState?.call(blockedState);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            error: reserved.reason ?? '预算已达上限',
             errorCodes: [blockedCode],
-            detail: reserved.reason ?? '预算已达上限',
-          ),
-        );
-        onState?.call(blockedState);
-        return AiTaskResult(
-          ok: false,
-          runId: runId,
-          snapshot: snapshot,
-          error: reserved.reason ?? '预算已达上限',
-          errorCodes: [blockedCode],
-          needsBudgetConfirmation: reserved.needsConfirmation,
-          budgetMessage: reserved.needsConfirmation ? reserved.reason : null,
-          requestCount: requestCount,
-        );
-      }
-      final reservation = reserved.reservation!;
-      // The reservation queue can wait behind another request. Re-check the
-      // privacy/device gates immediately before the HTTP call and give the
-      // reserved slot back if the user revoked consent meanwhile.
-      final live = _settings.resolve(bookId);
-      final liveBlock = !live.enabled
-          ? 'DISABLED'
-          : _settings.device.deviceDisabled
-          ? 'DEVICE_DISABLED'
-          : !_settings.device.cloudConsent
-          ? 'CONSENT_REQUIRED'
-          : null;
-      if (liveBlock != null) {
-        await _budget.release(reservation);
-        final message = switch (liveBlock) {
-          'DISABLED' => 'AI 阅读优化未开启',
-          'DEVICE_DISABLED' => '本机已停用 AI 请求',
-          _ => '还没有同意把章节正文发送给第三方',
-        };
-        await _store.putRun(
-          run.copyWith(
-            state: AiRunState.cancelled,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+            needsBudgetConfirmation: reserved.needsConfirmation,
+            budgetMessage: reserved.needsConfirmation ? reserved.reason : null,
+            requestCount: requestCount,
+          );
+        }
+        final reservation = reserved.reservation!;
+        // The reservation queue can wait behind another request. Re-check the
+        // privacy/device gates immediately before the HTTP call and give the
+        // reserved slot back if the user revoked consent meanwhile.
+        final live = _settings.resolve(bookId);
+        final liveBlock = !live.enabled
+            ? 'DISABLED'
+            : _settings.device.deviceDisabled
+            ? 'DEVICE_DISABLED'
+            : !_settings.device.cloudConsent
+            ? 'CONSENT_REQUIRED'
+            : null;
+        if (liveBlock != null) {
+          await _budget.release(reservation);
+          final message = switch (liveBlock) {
+            'DISABLED' => 'AI 阅读优化未开启',
+            'DEVICE_DISABLED' => '本机已停用 AI 请求',
+            _ => '还没有同意把章节正文发送给第三方',
+          };
+          await _store.putRun(
+            run.copyWith(
+              state: AiRunState.cancelled,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: [liveBlock],
+              detail: message,
+            ),
+          );
+          onState?.call(AiRunState.cancelled);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            error: message,
             errorCodes: [liveBlock],
-            detail: message,
-          ),
-        );
-        onState?.call(AiRunState.cancelled);
-        return AiTaskResult(
-          ok: false,
+            requestCount: requestCount,
+          );
+        }
+        // The user's confirmation covers this one HTTP call, not every retry.
+        overBudgetConfirmed = false;
+        requestCount++;
+        final attemptNo = requestCount;
+        final started = DateTime.now();
+        AiProviderResponse? response;
+        AiNetworkException? networkError;
+        try {
+          response = await _client.complete(
+            profile: requestProfile,
+            apiKey: apiKey,
+            model: model,
+            messages: messages,
+            outputMode: outputMode,
+            timeout: timeout,
+            stream: true,
+            attempt: attemptNo,
+            onProgress: onProgress,
+          );
+        } on AiNetworkException catch (error) {
+          networkError = error;
+        }
+        final latency = DateTime.now().difference(started);
+        final usage = response?.usage ?? networkError?.usage ?? const AiUsage();
+        final rateProfile = _settings.rateFor(provider.id, model);
+        final rate = rateProfile?.snapshot();
+        final requestRecord = AiRequestRecord(
+          requestId: requestId,
           runId: runId,
-          snapshot: snapshot,
-          error: message,
-          errorCodes: [liveBlock],
-          requestCount: requestCount,
-        );
-      }
-      // The user's confirmation covers this one HTTP call, not every retry.
-      overBudgetConfirmed = false;
-      requestCount++;
-      final attemptNo = requestCount;
-      final started = DateTime.now();
-      AiProviderResponse? response;
-      AiNetworkException? networkError;
-      try {
-        response = await _client.complete(
-          profile: requestProfile,
-          apiKey: apiKey,
+          attemptNo: attemptNo,
+          providerId: provider.id,
+          endpoint: AiChatCompletionsClient.endpoint(
+            provider.baseUrl,
+          ).toString(),
           model: model,
-          messages: messages,
-          outputMode: outputMode,
-          timeout: timeout,
-          stream: true,
-          attempt: attemptNo,
-          onProgress: onProgress,
+          mode: outputMode,
+          usage: usage,
+          startedAt: started,
+          latencyMs: latency.inMilliseconds,
+          errorCode: networkError?.code,
+          rateSnapshot: rate,
+          costMicros: aiEstimateCostMicros(usage, rate),
+          currency: rate?.currency ?? effective.global.costCurrency,
+          reason: thinkingFallback
+              ? 'thinking_fallback'
+              : contentRepairs > 0
+              ? 'content_repair'
+              : 'first',
         );
-      } on AiNetworkException catch (error) {
-        networkError = error;
-      }
-      final latency = DateTime.now().difference(started);
-      final usage = response?.usage ?? networkError?.usage ?? const AiUsage();
-      final rateProfile = _settings.rateFor(provider.id, model);
-      final rate = rateProfile?.snapshot();
-      final requestRecord = AiRequestRecord(
-        requestId: requestId,
-        runId: runId,
-        attemptNo: attemptNo,
-        providerId: provider.id,
-        endpoint: AiChatCompletionsClient.endpoint(provider.baseUrl).toString(),
-        model: model,
-        mode: outputMode,
-        usage: usage,
-        startedAt: started,
-        latencyMs: latency.inMilliseconds,
-        errorCode: networkError?.code,
-        rateSnapshot: rate,
-        costMicros: aiEstimateCostMicros(usage, rate),
-        currency: rate?.currency ?? effective.global.costCurrency,
-        reason: thinkingFallback
-            ? 'thinking_fallback'
-            : contentRepairs > 0
-            ? 'content_repair'
-            : 'first',
-      );
-      await _store.putRequest(requestRecord);
-      await _budget.settle(reservation: reservation, request: requestRecord);
+        await _store.putRequest(requestRecord);
+        await _budget.settle(reservation: reservation, request: requestRecord);
 
-      if (networkError != null) {
-        final truncatedThinking =
-            networkError.code == 'FINISH_REASON_LENGTH' ||
-            networkError.code == 'RESPONSE_EMPTY';
-        final reasoningBurned =
-            (networkError.usage?.reasoningTokens ?? 0) > 0 &&
-            (networkError.usage?.completionTokens ?? 0) > 0;
-        if (!thinkingFallback &&
-            requestProfile.reasoningEffort != AiReasoningEffort.off &&
-            truncatedThinking &&
-            reasoningBurned) {
-          thinkingFallback = true;
-          requestProfile = provider.copyWith(
-            reasoningEffort: AiReasoningEffort.off,
-          );
-          onNotice?.call('本次校对失败：${networkError.message}；已切换为关闭思考重试');
+        if (networkError != null) {
+          final truncatedThinking =
+              networkError.code == 'FINISH_REASON_LENGTH' ||
+              networkError.code == 'RESPONSE_EMPTY';
+          final reasoningBurned =
+              (networkError.usage?.reasoningTokens ?? 0) > 0 &&
+              (networkError.usage?.completionTokens ?? 0) > 0;
+          if (!thinkingFallback &&
+              requestProfile.reasoningEffort != AiReasoningEffort.off &&
+              truncatedThinking &&
+              reasoningBurned) {
+            thinkingFallback = true;
+            requestProfile = provider.copyWith(
+              reasoningEffort: AiReasoningEffort.off,
+            );
+            onNotice?.call('本次校对失败：${networkError.message}；已切换为关闭思考重试');
+            debugPrint(
+              '[AI] thinking exhausted output; retrying with thinking disabled',
+            );
+            continue;
+          }
+          if (networkError.retryable &&
+              networkError.statusCode != null &&
+              transportRetries < effective.transportRetryLimit) {
+            transportRetries++;
+            final wait = networkError.retryAfter ?? const Duration(seconds: 1);
+            await Future<void>.delayed(wait);
+            continue;
+          }
           debugPrint(
-            '[AI] thinking exhausted output; retrying with thinking disabled',
+            '[AI] network failed ${networkError.code}: ${networkError.message}',
           );
-          continue;
-        }
-        if (networkError.retryable &&
-            networkError.statusCode != null &&
-            transportRetries < effective.transportRetryLimit) {
-          transportRetries++;
-          final wait = networkError.retryAfter ?? const Duration(seconds: 1);
-          await Future<void>.delayed(wait);
-          continue;
-        }
-        debugPrint(
-          '[AI] network failed ${networkError.code}: ${networkError.message}',
-        );
-        await _store.putRun(
-          run.copyWith(
-            state: AiRunState.failed,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+          await _store.putRun(
+            run.copyWith(
+              state: AiRunState.failed,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: [networkError.code],
+              detail: networkError.message,
+            ),
+          );
+          onState?.call(AiRunState.failed);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            error: networkError.message,
             errorCodes: [networkError.code],
-            detail: networkError.message,
-          ),
-        );
-        onState?.call(AiRunState.failed);
-        return AiTaskResult(
-          ok: false,
-          runId: runId,
-          snapshot: snapshot,
-          error: networkError.message,
-          errorCodes: [networkError.code],
-          requestCount: requestCount,
-        );
-      }
+            requestCount: requestCount,
+          );
+        }
 
-      final text = response!.content;
-      if (text.length > 128 * 1024) {
-        await _store.putRun(
-          run.copyWith(
-            state: AiRunState.failed,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+        final text = response!.content;
+        if (text.length > 128 * 1024) {
+          await _store.putRun(
+            run.copyWith(
+              state: AiRunState.failed,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
+              detail: '模型响应过大',
+            ),
+          );
+          onState?.call(AiRunState.failed);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            error: '模型响应过大，已停止纠错',
             errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
-            detail: '模型响应过大',
-          ),
-        );
-        onState?.call(AiRunState.failed);
-        return AiTaskResult(
-          ok: false,
-          runId: runId,
-          snapshot: snapshot,
-          error: '模型响应过大，已停止纠错',
-          errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
-          requestCount: requestCount,
-        );
-      }
-      lastValidation = _validator.validateContent(text, snapshot);
-      if (lastValidation.valid) {
-        if (kind == AiRunKind.trial || kind == AiRunKind.promptOptimize) {
+            requestCount: requestCount,
+          );
+        }
+        lastValidation = _validator.validateContent(text, snapshot);
+        if (lastValidation.valid) {
+          if (kind == AiRunKind.trial || kind == AiRunKind.promptOptimize) {
+            await _store.putRun(
+              run.copyWith(
+                state: AiRunState.success,
+                attemptCount: requestCount,
+                finishedAt: DateTime.now(),
+              ),
+            );
+            onState?.call(AiRunState.success);
+            return AiTaskResult(
+              ok: true,
+              runId: runId,
+              snapshot: snapshot,
+              validation: lastValidation,
+              requestCount: requestCount,
+            );
+          }
+          if ((_generations[key] ?? 0) != generation) {
+            await _store.putRun(
+              run.copyWith(
+                state: AiRunState.cancelled,
+                attemptCount: requestCount,
+                finishedAt: DateTime.now(),
+                errorCodes: const ['STALE_GENERATION'],
+              ),
+            );
+            onState?.call(AiRunState.cancelled);
+            return AiTaskResult(
+              ok: false,
+              runId: runId,
+              snapshot: snapshot,
+              error: '这次结果已被更新的刷新取代',
+              errorCodes: const ['STALE_GENERATION'],
+              requestCount: requestCount,
+            );
+          }
+          final entry = _formalEntry(
+            bookId: bookId,
+            snapshot: snapshot,
+            runId: runId,
+            edits: lastValidation.edits,
+            generation: generation,
+            model: model,
+            promptHash: prompt.hash,
+          );
+          try {
+            final committed = await _store.putFormal(entry);
+            if (!committed) {
+              final current = await _store.formal(
+                bookId,
+                snapshot.canonicalHash,
+              );
+              await _store.putRun(
+                run.copyWith(
+                  state: AiRunState.cancelled,
+                  attemptCount: requestCount,
+                  finishedAt: DateTime.now(),
+                  errorCodes: const ['STALE_GENERATION'],
+                ),
+              );
+              onState?.call(AiRunState.cancelled);
+              return AiTaskResult(
+                ok: current != null,
+                runId: runId,
+                snapshot: snapshot,
+                formal: current,
+                error: current == null ? '这次结果已被更新的刷新取代' : null,
+                errorCodes: const ['STALE_GENERATION'],
+                requestCount: requestCount,
+              );
+            }
+          } catch (error) {
+            await _store.putRun(
+              run.copyWith(
+                state: AiRunState.storageFailed,
+                attemptCount: requestCount,
+                finishedAt: DateTime.now(),
+                errorCodes: const ['STORAGE_FAILED'],
+                detail: '$error',
+              ),
+            );
+            onState?.call(AiRunState.storageFailed);
+            return AiTaskResult(
+              ok: false,
+              runId: runId,
+              snapshot: snapshot,
+              error: '校对结果写入失败，已保留旧缓存',
+              errorCodes: const ['STORAGE_FAILED'],
+              requestCount: requestCount,
+            );
+          }
           await _store.putRun(
             run.copyWith(
               state: AiRunState.success,
@@ -455,154 +572,73 @@ class AiCoordinator {
             ok: true,
             runId: runId,
             snapshot: snapshot,
+            formal: entry,
             validation: lastValidation,
             requestCount: requestCount,
           );
         }
-        if ((_generations[key] ?? 0) != generation) {
-          await _store.putRun(
-            run.copyWith(
-              state: AiRunState.cancelled,
-              attemptCount: requestCount,
-              finishedAt: DateTime.now(),
-              errorCodes: const ['STALE_GENERATION'],
-            ),
-          );
-          onState?.call(AiRunState.cancelled);
-          return AiTaskResult(
-            ok: false,
-            runId: runId,
-            snapshot: snapshot,
-            error: '这次结果已被更新的刷新取代',
-            errorCodes: const ['STALE_GENERATION'],
-            requestCount: requestCount,
-          );
-        }
-        final entry = _formalEntry(
-          bookId: bookId,
-          snapshot: snapshot,
-          runId: runId,
-          edits: lastValidation.edits,
-          generation: generation,
-          model: model,
-          promptHash: prompt.hash,
-        );
-        try {
-          final committed = await _store.putFormal(entry);
-          if (!committed) {
-            final current = await _store.formal(bookId, snapshot.canonicalHash);
-            await _store.putRun(
-              run.copyWith(
-                state: AiRunState.cancelled,
-                attemptCount: requestCount,
-                finishedAt: DateTime.now(),
-                errorCodes: const ['STALE_GENERATION'],
-              ),
-            );
-            onState?.call(AiRunState.cancelled);
-            return AiTaskResult(
-              ok: current != null,
-              runId: runId,
-              snapshot: snapshot,
-              formal: current,
-              error: current == null ? '这次结果已被更新的刷新取代' : null,
-              errorCodes: const ['STALE_GENERATION'],
-              requestCount: requestCount,
-            );
-          }
-        } catch (error) {
-          await _store.putRun(
-            run.copyWith(
-              state: AiRunState.storageFailed,
-              attemptCount: requestCount,
-              finishedAt: DateTime.now(),
-              errorCodes: const ['STORAGE_FAILED'],
-              detail: '$error',
-            ),
-          );
-          onState?.call(AiRunState.storageFailed);
-          return AiTaskResult(
-            ok: false,
-            runId: runId,
-            snapshot: snapshot,
-            error: '校对结果写入失败，已保留旧缓存',
-            errorCodes: const ['STORAGE_FAILED'],
-            requestCount: requestCount,
-          );
-        }
-        await _store.putRun(
-          run.copyWith(
-            state: AiRunState.success,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
-          ),
-        );
-        onState?.call(AiRunState.success);
-        return AiTaskResult(
-          ok: true,
-          runId: runId,
-          snapshot: snapshot,
-          formal: entry,
-          validation: lastValidation,
-          requestCount: requestCount,
-        );
-      }
 
-      if (contentRepairs >= effective.contentRepairLimit) {
-        final codes = lastValidation.errors.map((e) => e.code).toSet().toList();
-        debugPrint(
-          '[AI] validation failed codes=$codes '
-          'errors=${lastValidation.errors.map((e) => e.toJson()).toList()}',
-        );
-        await _store.putRun(
-          run.copyWith(
-            state: AiRunState.failed,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+        if (contentRepairs >= effective.contentRepairLimit) {
+          final codes = lastValidation.errors
+              .map((e) => e.code)
+              .toSet()
+              .toList();
+          debugPrint(
+            '[AI] validation failed codes=$codes '
+            'errors=${lastValidation.errors.map((e) => e.toJson()).toList()}',
+          );
+          await _store.putRun(
+            run.copyWith(
+              state: AiRunState.failed,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: codes,
+              detail: '内容纠错次数已用完',
+            ),
+          );
+          onState?.call(AiRunState.failed);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            validation: lastValidation,
+            error: '校对结果没有通过校验，已显示原文',
             errorCodes: codes,
-            detail: '内容纠错次数已用完',
-          ),
-        );
-        onState?.call(AiRunState.failed);
-        return AiTaskResult(
-          ok: false,
-          runId: runId,
-          snapshot: snapshot,
-          validation: lastValidation,
-          error: '校对结果没有通过校验，已显示原文',
-          errorCodes: codes,
-          requestCount: requestCount,
-        );
-      }
+            requestCount: requestCount,
+          );
+        }
 
-      contentRepairs++;
-      if (messages.length > 8) {
-        await _store.putRun(
-          run.copyWith(
-            state: AiRunState.failed,
-            attemptCount: requestCount,
-            finishedAt: DateTime.now(),
+        contentRepairs++;
+        if (messages.length > 8) {
+          await _store.putRun(
+            run.copyWith(
+              state: AiRunState.failed,
+              attemptCount: requestCount,
+              finishedAt: DateTime.now(),
+              errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
+            ),
+          );
+          onState?.call(AiRunState.failed);
+          return AiTaskResult(
+            ok: false,
+            runId: runId,
+            snapshot: snapshot,
+            validation: lastValidation,
+            error: '纠错上下文过长，已停止',
             errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
-          ),
-        );
-        onState?.call(AiRunState.failed);
-        return AiTaskResult(
-          ok: false,
-          runId: runId,
-          snapshot: snapshot,
-          validation: lastValidation,
-          error: '纠错上下文过长，已停止',
-          errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
-          requestCount: requestCount,
-        );
+            requestCount: requestCount,
+          );
+        }
+        messages
+          ..add({'role': 'assistant', 'content': text})
+          ..add({
+            'role': 'user',
+            'content': _repairMessage(lastValidation.errors),
+          });
+        onState?.call(AiRunState.repairing);
       }
-      messages
-        ..add({'role': 'assistant', 'content': text})
-        ..add({
-          'role': 'user',
-          'content': _repairMessage(lastValidation.errors),
-        });
-      onState?.call(AiRunState.repairing);
+    } finally {
+      await AiRequestForeground.release();
     }
   }
 
