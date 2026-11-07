@@ -15,6 +15,7 @@ import '../../../widgets/ai_reading/ai_ui.dart';
 import '../../../widgets/home/home_design.dart';
 import '../../../widgets/settings/settings_widgets.dart';
 import '../../library_backup_page.dart';
+import 'ai_cache_manage_page.dart';
 import 'ai_provider_page.dart';
 import 'ai_rate_page.dart';
 import 'ai_settings_widgets.dart';
@@ -869,8 +870,11 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         ),
         SettingsRow(
           icon: Icons.delete_sweep_outlined,
-          title: '清空 AI 缓存',
-          onTap: _clearCache,
+          title: '管理 AI 缓存',
+          subtitle: '按书或按章清理正式校对结果',
+          onTap: () => Navigator.of(context).push<void>(
+            MaterialPageRoute(builder: (_) => const AiCacheManagePage()),
+          ),
         ),
       ],
     );
@@ -917,23 +921,5 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         ),
       ),
     );
-  }
-
-  Future<void> _clearCache() async {
-    final confirmed = await showSettingsConfirmDialog(
-      context: context,
-      title: '清空 AI 缓存？',
-      message: '只删除已保存的正式校对结果，反馈、保护、提示词和用量账本不受影响。',
-      confirmLabel: '清空',
-      destructive: true,
-    );
-    if (!confirmed || !mounted) return;
-    try {
-      await AiReadingController.instance.init();
-      await AiReadingController.instance.clearFormalCache();
-      if (mounted) aiShowSnack(context, 'AI 缓存已清空');
-    } catch (error) {
-      if (mounted) aiShowSnack(context, '清空失败：$error');
-    }
   }
 }

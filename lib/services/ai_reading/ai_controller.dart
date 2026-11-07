@@ -475,10 +475,51 @@ class AiReadingController extends ChangeNotifier {
   }
 
   Future<void> clearFormalCache() async {
+    cancelPrefetch();
     await _store.clearFormal();
     _status.clear();
     _statusRecorded.clear();
     _invalidateDisplays();
+    revision++;
+    notifyListeners();
+  }
+
+  /// Removes the formal results for a set of books, leaving every other AI
+  /// asset (feedback, protections, prompts, usage) intact.
+  Future<void> clearFormalCacheForBooks(Set<String> bookIds) async {
+    if (bookIds.isEmpty) return;
+    cancelPrefetch();
+    await _store.clearFormalForBooks(bookIds);
+    _status.removeWhere((key, _) {
+      final separator = key.indexOf('\u0000');
+      return separator > 0 && bookIds.contains(key.substring(0, separator));
+    });
+    _statusRecorded.removeWhere((key) {
+      final separator = key.indexOf('\u0000');
+      return separator > 0 && bookIds.contains(key.substring(0, separator));
+    });
+    for (final bookId in bookIds) {
+      _invalidateDisplays(bookId: bookId);
+    }
+    revision++;
+    notifyListeners();
+  }
+
+  /// Removes formal results by canonical hash for one book. Chapters that
+  /// share the same 正文 hash share one formal entry, so their status rows are
+  /// removed together and the directory falls back to「未校验」.
+  Future<void> clearFormalCacheForHashes(
+    String bookId,
+    Set<String> hashes,
+  ) async {
+    if (hashes.isEmpty) return;
+    cancelPrefetch();
+    await _store.clearFormalForHashes(bookId, hashes);
+    _status.removeWhere((key, _) => key.startsWith('$bookId\u0000'));
+    _statusRecorded.removeWhere((key) => key.startsWith('$bookId\u0000'));
+    for (final hash in hashes) {
+      _invalidateDisplays(bookId: bookId, hash: hash);
+    }
     revision++;
     notifyListeners();
   }
