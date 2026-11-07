@@ -1,24 +1,24 @@
 // Ported from Wenku8_Flutter (revision ebcd7f1):
 //   lib/reader_selection.dart -> _selectionAction / the glass selection bar
 //
-// The action set, anchor resolution and selection lifecycle stay fqapp's own
-// (从本段听 / 复制 / 划线, anchored to the touched paragraph). The upstream
-// dark #303030 PopupWindow styling is replaced by one live glass bar with
-// horizontal icon + label actions, matching upstream's context menu.
-//
-// Mechanical substitutions:
-// - `app_ui.dart` AppText/ArchiveIcon/JellyTapSurface/LiquidGlass -> the
-//   shared `lib/widgets/wenku` exports.
-// - The upstream `GlassOverlaySurface` is not part of the shared slice yet;
-//   the bar uses `LiquidGlass` with the reader's paper/night tint.
-// - Arrow tips are dropped: upstream's glass bar sits 8dp from the anchor and
-//   has no pointer.
+// fqapp keeps its paragraph/range geometry and existing listening/underline
+// actions. The source glass surface now also exposes a real local bookmark;
+// narrow viewports scroll the actions without changing the selection anchor.
+// Mechanical substitutions: shared Wenku8 controls replace upstream app_ui;
+// GlassOverlaySurface is the shared port and uses the reader's Theme.
+// Arrow tips are omitted, as in the upstream selection toolbar.
 import 'package:flutter/cupertino.dart';
 
 import '../wenku/wenku_ui.dart';
 
 /// What the reader can do with a long-pressed paragraph.
-enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
+enum ReaderParagraphAction {
+  copy,
+  listen,
+  underline,
+  removeUnderline,
+  bookmark,
+}
 
 /// Floating action bar for a long-pressed paragraph or a dragged selection.
 ///
@@ -40,13 +40,6 @@ class ReaderParagraphMenu extends StatelessWidget {
   /// The bar floats 8dp away from the anchor (upstream `anchorAbove - 8`).
   static const _arrowHeight = 8.0;
 
-  static const _radius = 22.0;
-
-  /// Day tint stays the shared milk glass; night uses the reader's near-black
-  /// sheet so the white labels keep their contrast.
-  static const _barColor = Color(0xFFFEFDF8);
-  static const _barColorDark = Color(0xFF1C1C1C);
-
   static const _margin = 10.0;
 
   final bool underlined;
@@ -57,6 +50,8 @@ class ReaderParagraphMenu extends StatelessWidget {
   /// toolbar has no listen item either.
   final bool paragraphScoped;
   final bool showListening;
+  final bool showBookmark;
+  final double? maxWidth;
 
   /// True when the bar sits below the touched line. Kept because the reader
   /// page's anchor maths decides the flip side; the Wenku8 glass bar has no
@@ -75,17 +70,19 @@ class ReaderParagraphMenu extends StatelessWidget {
     this.isDark = false,
     this.paragraphScoped = true,
     this.showListening = true,
+    this.showBookmark = false,
+    this.maxWidth,
     this.belowAnchor = true,
   });
-
-  Color get _tint => isDark ? _barColorDark : _barColor;
 
   /// Number of items the bar will render; the caller sizes the anchor with it.
   static int itemCount({
     required bool underlined,
     required bool paragraphScoped,
     bool showListening = true,
-  }) => paragraphScoped ? (showListening ? 3 : 2) : 2;
+    bool showBookmark = false,
+  }) =>
+      (paragraphScoped ? (showListening ? 3 : 2) : 2) + (showBookmark ? 1 : 0);
 
   /// Clamped top-left for the bar anchored at [anchor] (window coordinates),
   /// plus which side of the anchor it ended up on.
@@ -106,6 +103,7 @@ class ReaderParagraphMenu extends StatelessWidget {
     required EdgeInsets safeArea,
     required bool underlined,
     bool showListening = true,
+    bool showBookmark = false,
     double avoidBottom = 0,
   }) {
     const flipClearance = 10.0;
@@ -113,8 +111,12 @@ class ReaderParagraphMenu extends StatelessWidget {
       underlined: underlined,
       paragraphScoped: paragraphScoped,
       showListening: showListening,
+      showBookmark: showBookmark,
     );
-    final barWidth = count * _itemWidth + _multiPadding * 2;
+    final barWidth = (count * _itemWidth + _multiPadding * 2).clamp(
+      0.0,
+      (view.width - _margin * 2).clamp(0.0, double.infinity),
+    );
     final barHeight = _itemHeight + _arrowHeight;
 
     final minLeft = _margin;
@@ -139,38 +141,56 @@ class ReaderParagraphMenu extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => LiquidGlass(
-    key: const ValueKey('reader-selection-glass-bar'),
-    radius: _radius,
-    tintColor: _tint,
-    padding: const EdgeInsets.symmetric(horizontal: _multiPadding, vertical: 0),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (paragraphScoped && showListening)
-          _Item(
-            key: const ValueKey('reader-action-listen'),
-            icon: CupertinoIcons.headphones,
-            label: '从本段听',
-            onTap: () => onAction(ReaderParagraphAction.listen),
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: BoxConstraints(
+      maxWidth: maxWidth ?? MediaQuery.sizeOf(context).width - _margin * 2,
+    ),
+    child: GlassOverlaySurface(
+      key: const ValueKey('reader-selection-glass-bar'),
+      preserveOptics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _multiPadding),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (paragraphScoped && showListening)
+                _Item(
+                  key: const ValueKey('reader-action-listen'),
+                  icon: CupertinoIcons.headphones,
+                  label: '从本段听',
+                  onTap: () => onAction(ReaderParagraphAction.listen),
+                ),
+              _Item(
+                key: const ValueKey('reader-action-copy'),
+                icon: CupertinoIcons.doc_on_doc,
+                label: '复制',
+                onTap: () => onAction(ReaderParagraphAction.copy),
+              ),
+              if (showBookmark)
+                _Item(
+                  key: const ValueKey('reader-action-bookmark'),
+                  icon: CupertinoIcons.bookmark,
+                  label: '书签',
+                  onTap: () => onAction(ReaderParagraphAction.bookmark),
+                ),
+              _Item(
+                key: const ValueKey('reader-action-underline'),
+                icon: underlined
+                    ? CupertinoIcons.delete
+                    : CupertinoIcons.pencil,
+                label: underlined ? (paragraphScoped ? '取消划线' : '删除划线') : '划线',
+                onTap: () => onAction(
+                  underlined
+                      ? ReaderParagraphAction.removeUnderline
+                      : ReaderParagraphAction.underline,
+                ),
+              ),
+            ],
           ),
-        _Item(
-          key: const ValueKey('reader-action-copy'),
-          icon: CupertinoIcons.doc_on_doc,
-          label: '复制',
-          onTap: () => onAction(ReaderParagraphAction.copy),
         ),
-        _Item(
-          key: const ValueKey('reader-action-underline'),
-          icon: underlined ? CupertinoIcons.delete : CupertinoIcons.pencil,
-          label: underlined ? (paragraphScoped ? '取消划线' : '删除划线') : '划线',
-          onTap: () => onAction(
-            underlined
-                ? ReaderParagraphAction.removeUnderline
-                : ReaderParagraphAction.underline,
-          ),
-        ),
-      ],
+      ),
     ),
   );
 }
