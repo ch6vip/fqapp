@@ -67,6 +67,8 @@ object AiRequestServiceRegistry {
         }
     }
 
+    fun hasLeases(): Boolean = synchronized(lock) { leases.isNotEmpty() }
+
     fun updateNotification(text: String) {
         handler.post {
             val current = synchronized(lock) { service }
