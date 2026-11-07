@@ -486,9 +486,14 @@ void main() {
       final notifier = container.read(provider.notifier);
       notifier.noteCurrentVid('fresh-2');
       await notifier.load();
-      // The save is fire-and-forget file IO; give the event loop real time.
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      expect(cache.load(6)!.lastVid, 'fresh-2');
+      // The save is fire-and-forget file IO; wait for the box write instead
+      // of assuming the event loop finishes within a fixed delay.
+      HomeFeedSnapshot? saved;
+      for (var i = 0; i < 80 && saved == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        saved = cache.load(6);
+      }
+      expect(saved?.lastVid, 'fresh-2');
       await cache.close();
     },
   );

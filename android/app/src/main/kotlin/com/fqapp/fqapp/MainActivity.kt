@@ -14,6 +14,9 @@ class MainActivity : FlutterActivity() {
     private var volumeKeyEnabled = false
     private var volumeChannel: MethodChannel? = null
 
+    /** Read by the AI foreground-service bridge; a FGS may only start while this is true. */
+    internal var isResumed = false
+
     override fun getFlutterShellArgs(): FlutterShellArgs = super.getFlutterShellArgs().also {
         // Runs before the engine/FlutterLoader starts; configureFlutterEngine is
         // too late to select the process-wide rendering backend.
@@ -41,6 +44,7 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(EinkRefreshPlugin())
         // 小米澎湃 OS 公平运行内存：收 TRIM/KILL 广播，转发 Dart 处理后回系统。
         flutterEngine.plugins.add(FairMemoryPlugin())
+        flutterEngine.plugins.add(AiRequestPlugin())
 
         // 音量键翻页通道：Dart -> 原生 setEnabled 控制是否拦截；原生 -> Dart
         // volumeKey 回调翻页方向（+1 下一页 / -1 上一页）。
@@ -58,6 +62,16 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isResumed = true
+    }
+
+    override fun onPause() {
+        isResumed = false
+        super.onPause()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {

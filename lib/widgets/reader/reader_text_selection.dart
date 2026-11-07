@@ -275,6 +275,9 @@ class ReaderSelectionScope {
   final Color dialogueColor;
   final bool dialogueUnderline;
 
+  final void Function(ReaderRangeUnderline underline)? onMarkTap;
+  bool consumeMarkTap = false;
+
   ReaderSelectionScope({
     required this.geometry,
     required this.washColor,
@@ -285,6 +288,7 @@ class ReaderSelectionScope {
     this.dialogueRangesByBlock = const {},
     this.dialogueColor = Colors.transparent,
     this.dialogueUnderline = false,
+    this.onMarkTap,
   });
 }
 
@@ -334,6 +338,9 @@ class ReaderBlockMarkLayer extends StatefulWidget {
 
 class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
   TextPainter? _painter;
+  ReaderRangeUnderline? _pendingMark;
+  Offset? _markDownPosition;
+  bool _markMoved = false;
 
   @override
   void initState() {
@@ -382,6 +389,51 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
     });
   }
 
+  List<Rect> _markRects(ReaderRangeUnderline underline) {
+    if (underline.deletion) {
+      final local = (underline.start - widget.block.start).clamp(
+        0,
+        widget.block.text.length,
+      );
+      final line = lineForOffset(widget.block, local);
+      final leading = widget.block.isTitle ? 0 : 1;
+      final caret = _lazyPainter.getOffsetForCaret(
+        TextPosition(offset: local + leading),
+        Rect.zero,
+      );
+      return [
+        Rect.fromLTRB(
+          caret.dx - 20,
+          line.top - 2,
+          caret.dx + 20,
+          line.bottom + 4,
+        ),
+      ];
+    }
+    final range = blockSelectionRange(
+      widget.block,
+      underline.start,
+      underline.end,
+    );
+    if (range == null) return const [];
+    final leading = widget.block.isTitle ? 0 : 1;
+    final rects = <Rect>[];
+    for (final line in widget.block.lines) {
+      final from = math.max(range.$1, line.start);
+      final to = math.min(range.$2, line.end);
+      if (to <= from) continue;
+      final boxes = _lazyPainter.getBoxesForSelection(
+        TextSelection(baseOffset: from + leading, extentOffset: to + leading),
+        boxHeightStyle: BoxHeightStyle.tight,
+      );
+      for (final box in boxes) {
+        if (box.right <= box.left) continue;
+        rects.add(Rect.fromLTRB(box.left, line.top, box.right, line.bottom));
+      }
+    }
+    return rects;
+  }
+
   @override
   Widget build(BuildContext context) {
     final selection = widget.selection;
@@ -392,7 +444,7 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
     final narrationRange = narration == null
         ? null
         : blockSelectionRange(widget.block, narration.$1, narration.$2);
-    return Stack(
+    final stack = Stack(
       children: [
         // First child paints first: the marks sit behind the text.
         Positioned.fill(
@@ -417,6 +469,56 @@ class _ReaderBlockMarkLayerState extends State<ReaderBlockMarkLayer> {
         ),
         widget.child,
       ],
+    );
+    final onMarkTap = widget.scope.onMarkTap;
+    if (onMarkTap == null) return stack;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        _pendingMark = null;
+        _markDownPosition = event.localPosition;
+        _markMoved = false;
+        for (final underline in widget.rangeUnderlines) {
+          if (underline.payload == null) continue;
+          for (final rect in _markRects(underline)) {
+            if (!rect.inflate(28).contains(event.localPosition)) continue;
+            _pendingMark = underline;
+            // Mark this before the page-level tap recognizer runs, otherwise
+            // the same tap opens the detail sheet and turns the page.
+            widget.scope.consumeMarkTap = true;
+            return;
+          }
+        }
+      },
+      onPointerMove: (event) {
+        if (_pendingMark == null || _markMoved) return;
+        final down = _markDownPosition;
+        if (down != null && (event.localPosition - down).distance > 8) {
+          _markMoved = true;
+          _pendingMark = null;
+          widget.scope.consumeMarkTap = false;
+        }
+      },
+      onPointerUp: (event) {
+        final pending = _pendingMark;
+        final down = _markDownPosition;
+        _pendingMark = null;
+        _markDownPosition = null;
+        if (pending == null) return;
+        if (_markMoved ||
+            (down != null && (event.localPosition - down).distance > 8)) {
+          widget.scope.consumeMarkTap = false;
+          return;
+        }
+        onMarkTap(pending);
+      },
+      onPointerCancel: (_) {
+        _pendingMark = null;
+        _markDownPosition = null;
+        _markMoved = false;
+        widget.scope.consumeMarkTap = false;
+      },
+      child: stack,
     );
   }
 }
@@ -632,13 +734,44 @@ class ReaderBlockMarkPainter extends CustomPainter {
     final line = Paint()
       ..color = underlineColor
       ..strokeWidth = 1.6;
+    final dashed = Paint()
+      ..color = underlineColor
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round;
     for (final underline in rangeUnderlines) {
+      if (underline.deletion) {
+        _paintDeletionCaret(canvas, underline);
+        continue;
+      }
       final range = blockSelectionRange(block, underline.start, underline.end);
       if (range == null) continue;
       for (final rect in _lineRects(range.$1, range.$2)) {
-        _strokeRow(canvas, rect, line);
+        if (underline.dashed) {
+          _strokeDashedRow(canvas, rect, dashed);
+        } else {
+          _strokeRow(canvas, rect, line);
+        }
       }
     }
+  }
+
+  void _paintDeletionCaret(Canvas canvas, ReaderRangeUnderline underline) {
+    final local = (underline.start - block.start).clamp(0, block.text.length);
+    final line = lineForOffset(block, local);
+    final leading = block.isTitle ? 0 : 1;
+    final caret = painter.getOffsetForCaret(
+      TextPosition(offset: local + leading),
+      Rect.zero,
+    );
+    final paint = Paint()
+      ..color = underlineColor
+      ..strokeWidth = underline.dashed ? 1.4 : 1.8
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(caret.dx, line.top + 2),
+      Offset(caret.dx, line.bottom - 2),
+      paint,
+    );
   }
 
   /// 描一条贴着字形底边的横线（选区下划线与朗读句下划线共用）。
@@ -646,6 +779,19 @@ class ReaderBlockMarkPainter extends CustomPainter {
     // Sit the stroke just under the glyphs, inside the line box.
     final y = rect.bottom - .5;
     canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), line);
+  }
+
+  /// Low-contrast dotted mark used for AI edits; user underlines stay solid.
+  void _strokeDashedRow(Canvas canvas, Rect rect, Paint line) {
+    final y = rect.bottom - .5;
+    const dash = 2.2;
+    const gap = 3.0;
+    var x = rect.left;
+    while (x < rect.right) {
+      final end = math.min(x + dash, rect.right);
+      canvas.drawLine(Offset(x, y), Offset(end, y), line);
+      x += dash + gap;
+    }
   }
 
   @override

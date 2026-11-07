@@ -89,4 +89,9 @@ class _ThrowingStorage implements SecureKeyStorage {
   Future<void> write(String key, String value) async {
     throw StateError('secure storage unavailable');
   }
+
+  @override
+  Future<void> delete(String key) async {
+    throw StateError('secure storage unavailable');
+  }
 }
