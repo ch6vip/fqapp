@@ -79,6 +79,10 @@ extension _ReaderPageContent on _ReaderPageState {
                 _closeSelectionBar(clearSelection: true);
                 return;
               }
+              if (_marksScope?.consumeMarkTap == true) {
+                _marksScope!.consumeMarkTap = false;
+                return;
+              }
               if (_autoTurnTimer != null) {
                 _stopAutoTurn();
               } else if (_controlsVisible) {

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../../services/ai_reading/ai_controller.dart';
+import '../../services/ai_reading/ai_models.dart';
 import '../../services/reader_preferences.dart';
 import 'reader_directory_fast_scroll.dart';
 import 'reader_theme.dart';
@@ -15,6 +17,9 @@ class ReaderDirectorySheet extends StatefulWidget {
   final List<Chapter> chapters;
   final int currentIndex;
   final Set<String> cachedIds;
+  final String bookId;
+  final List<AiChapterCheckStatus> aiStatuses;
+  final AiReadingController aiController;
 
   /// 阅读背景 preset：面板骨架、文字和控件配色都跟着它走。
   final ReaderThemePreset preset;
@@ -24,6 +29,9 @@ class ReaderDirectorySheet extends StatefulWidget {
     required this.chapters,
     required this.currentIndex,
     required this.cachedIds,
+    required this.bookId,
+    required this.aiStatuses,
+    required this.aiController,
     this.preset = ReaderThemePreset.light,
   });
 
@@ -36,6 +44,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _searchFocus = FocusNode();
   late List<int> _indexes;
+  late final Map<String, AiChapterCheckStatus> _aiStatuses;
   double _itemExtent = 60;
   int _scrollRevision = 0;
   bool _reversed = false;
@@ -47,8 +56,26 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   @override
   void initState() {
     super.initState();
+    _aiStatuses = {
+      for (final status in widget.aiStatuses) status.chapterId: status,
+    };
     _indexes = _visibleIndexes;
+    widget.aiController.addListener(_onAiChanged);
     _schedulePosition(current: true);
+  }
+
+  void _onAiChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.aiController.removeListener(_onAiChanged);
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    _searchFocus.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -75,15 +102,6 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       _indexes = _visibleIndexes;
       _schedulePosition(current: true);
     }
-  }
-
-  @override
-  void dispose() {
-    _searchDebounce?.cancel();
-    _searchController.dispose();
-    _searchFocus.dispose();
-    _scrollController.dispose();
-    super.dispose();
   }
 
   void _onSearchChanged(String value) {
@@ -325,6 +343,166 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
         ),
       );
 
+  AiChapterCheckStatus? _statusFor(Chapter chapter) {
+    final live = widget.aiController.statusFor(widget.bookId, chapter.itemId);
+    if (live.running) {
+      return AiChapterCheckStatus(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+        chapterVersion: chapter.version,
+        state: AiChapterCheckState.running,
+        updatedAt: DateTime.now(),
+      );
+    }
+    if (live.error != null) {
+      return AiChapterCheckStatus(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+        chapterVersion: chapter.version,
+        state: AiChapterCheckState.failed,
+        updatedAt: DateTime.now(),
+      );
+    }
+    if (live.success || live.formal != null) {
+      return AiChapterCheckStatus(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+        chapterVersion: chapter.version,
+        state: AiChapterCheckState.checked,
+        updatedAt: DateTime.now(),
+      );
+    }
+    final stored = _aiStatuses[chapter.itemId];
+    if (stored == null || stored.state == AiChapterCheckState.unchecked) {
+      return null;
+    }
+    // The directory has a cheap version check; opening the chapter still
+    // verifies the real canonical hash.
+    if (stored.chapterVersion.isNotEmpty &&
+        chapter.version.isNotEmpty &&
+        stored.chapterVersion != chapter.version) {
+      return null;
+    }
+    return stored;
+  }
+
+  Widget? _statusWidget(
+    BuildContext context,
+    ReaderThemePreset preset,
+    AiChapterCheckStatus status,
+  ) {
+    final eink = preset.isEink;
+    final color = switch (status.state) {
+      AiChapterCheckState.checked =>
+        eink ? Colors.black : const Color(0xFF617348),
+      AiChapterCheckState.failed =>
+        eink ? Colors.black : const Color(0xFFAD4634),
+      AiChapterCheckState.running => preset.accentColor,
+      AiChapterCheckState.unchecked => preset.mutedTextColor,
+    };
+    final icon = switch (status.state) {
+      AiChapterCheckState.checked => Icons.check_circle_outline,
+      AiChapterCheckState.failed => Icons.error_outline,
+      AiChapterCheckState.running => null,
+      AiChapterCheckState.unchecked => null,
+    };
+    final label = switch (status.state) {
+      AiChapterCheckState.checked => '已校验',
+      AiChapterCheckState.failed => '失败',
+      AiChapterCheckState.running => '校对中',
+      AiChapterCheckState.unchecked => '未校验',
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 14,
+          height: 14,
+          child: status.state == AiChapterCheckState.running
+              ? Padding(
+                  padding: const EdgeInsets.all(1),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    color: color,
+                  ),
+                )
+              : Icon(icon, size: 14, color: color),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.15,
+            color: color,
+            fontWeight: status.state == AiChapterCheckState.running
+                ? FontWeight.w500
+                : FontWeight.w400,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cacheWidget(ReaderThemePreset preset, {bool prominent = false}) =>
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: prominent ? 15 : 14,
+            height: 11,
+            child: Icon(
+              Icons.download_outlined,
+              size: prominent ? 13 : 12,
+              color: preset.mutedTextColor,
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            '已缓存',
+            style: TextStyle(
+              fontSize: prominent ? 11 : 10,
+              height: 1.1,
+              color: preset.mutedTextColor,
+            ),
+          ),
+        ],
+      );
+
+  Widget _trailingFor(
+    BuildContext context,
+    ReaderThemePreset preset,
+    Chapter chapter,
+  ) {
+    final status = _statusFor(chapter);
+    final cached = widget.cachedIds.contains(chapter.itemId);
+    final hasStatus = status != null;
+    if (!hasStatus && !cached) return const SizedBox(width: 64);
+    final statusLine = hasStatus
+        ? _statusWidget(context, preset, status)
+        : null;
+    final cacheLine = cached
+        ? Tooltip(
+            message: '已缓存',
+            child: _cacheWidget(preset, prominent: !hasStatus),
+          )
+        : null;
+    return SizedBox(
+      width: 64,
+      height: 30,
+      child: statusLine != null && cacheLine != null
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [statusLine, cacheLine],
+            )
+          : Align(
+              alignment: Alignment.centerLeft,
+              child: statusLine ?? cacheLine,
+            ),
+    );
+  }
+
   Widget _row(BuildContext context, int index, ReaderThemePreset preset) {
     final chapter = widget.chapters[index];
     final current = index == widget.currentIndex;
@@ -382,16 +560,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
                 fontWeight: current ? FontWeight.w600 : FontWeight.w400,
               ),
             ),
-            trailing: widget.cachedIds.contains(chapter.itemId)
-                ? Tooltip(
-                    message: '已缓存',
-                    child: Icon(
-                      LucideIcons.circle_check,
-                      size: 16,
-                      color: preset.mutedTextColor,
-                    ),
-                  )
-                : const SizedBox(width: 16),
+            trailing: _trailingFor(context, preset, chapter),
           ),
         ),
       ),

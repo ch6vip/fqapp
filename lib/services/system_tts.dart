@@ -117,6 +117,7 @@ class SystemTtsBook {
     this.cache,
     TextReplacementSnapshot? replacementSnapshot,
     TextReplacementStore? replacementStore,
+    this.displayResolver,
   }) : replacementStore = replacementStore ?? TextReplacementStore.instance,
        replacementSnapshot =
            replacementSnapshot ??
@@ -141,12 +142,23 @@ class SystemTtsBook {
   final TextReplacementSnapshot replacementSnapshot;
   final TextReplacementStore replacementStore;
 
+  /// Optional final-display resolver shared with the reader. When present it
+  /// must return a result whose `source` is [content] (the immutable original)
+  /// and whose `content` is the AI/custom display text.
+  final Future<TextReplacementResult> Function(
+    ChapterContent content,
+    int index,
+  )?
+  displayResolver;
+
   Future<TextReplacementResult> loadDisplay(
     int index, {
     BackendRequest? request,
     TextReplacementCancellation? cancellation,
   }) async {
     final content = await load(index, request: request);
+    final resolver = displayResolver;
+    if (resolver != null) return resolver(content, index);
     return TextReplacementEngine.instance.transform(
       source: content,
       chapterTitle: chapters[index].title,

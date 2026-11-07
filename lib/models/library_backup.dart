@@ -23,12 +23,16 @@ class LibraryBackup {
   final Map<String, Map<String, int>> watched;
   final int excludedLocalRecords;
 
+  /// Base64(gzip(JSON)) AI segment. Null for a v1 backup.
+  final String? aiData;
+
   LibraryBackup._({
     required this.createdAt,
     required this.shelf,
     required this.history,
     required this.watched,
     required this.excludedLocalRecords,
+    this.aiData,
   });
 
   int get episodeCount =>
@@ -38,6 +42,7 @@ class LibraryBackup {
     required List<ShelfRecord> shelf,
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
+    String? aiData,
   }) {
     var excluded = 0;
     bool include(String id) {
@@ -49,7 +54,7 @@ class LibraryBackup {
     // The same validation is used before export and before any restore writes.
     return LibraryBackup._fromJson({
       'format': _format,
-      'version': 1,
+      'version': aiData == null ? 1 : 2,
       'createdAt': DateTime.now().millisecondsSinceEpoch,
       'shelf': [
         for (final record in shelf)
@@ -71,6 +76,7 @@ class LibraryBackup {
           if (include(entry.key)) {'id': entry.key, 'episodes': entry.value},
       ],
       'excludedLocalRecords': excluded,
+      'ai': ?aiData,
     });
   }
 
@@ -90,8 +96,19 @@ class LibraryBackup {
   }
 
   factory LibraryBackup._fromJson(Map<String, dynamic> raw) {
-    if (raw['format'] != _format || raw['version'] != 1) {
+    final version = raw['version'];
+    if (raw['format'] != _format || (version != 1 && version != 2)) {
       throw const FormatException('不是受支持的 FQApp 备份，请使用兼容版本导出的文件');
+    }
+    String? aiData;
+    if (version == 2) {
+      final ai = raw['ai'];
+      // The exporter writes v2 only when an AI section exists; a missing or
+      // non-string section is a damaged backup, not an empty AI dataset.
+      if (ai is! String || ai.isEmpty) {
+        throw const FormatException('备份中的 AI 分段缺失或无效');
+      }
+      aiData = ai;
     }
     final createdAt = _integer(raw['createdAt'], '备份时间', 8640000000000000);
     final shelf = <ShelfRecord>[];
@@ -201,6 +218,7 @@ class LibraryBackup {
         '排除条数',
         2147483647,
       ),
+      aiData: aiData,
     );
   }
 
@@ -209,7 +227,7 @@ class LibraryBackup {
       utf8.encode(
         jsonEncode({
           'format': _format,
-          'version': 1,
+          'version': aiData == null ? 1 : 2,
           'createdAt': createdAt.millisecondsSinceEpoch,
           'shelf': shelf.map(_shelfJson).toList(),
           'history': history,
@@ -218,6 +236,7 @@ class LibraryBackup {
               {'id': entry.key, 'episodes': entry.value},
           ],
           'excludedLocalRecords': excludedLocalRecords,
+          if (aiData != null) 'ai': aiData,
         }),
       ),
     );

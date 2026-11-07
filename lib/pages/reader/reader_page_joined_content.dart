@@ -13,6 +13,16 @@ extension _ReaderJoinedContent on _ReaderPageState {
     return position!.scroll - previous!.scrollForTextOffset(_textOffset);
   }
 
+  void _scheduleJoinedAiRefresh() {
+    if (!_joined) return;
+    _joinedAiRefreshTimer?.cancel();
+    _joinedAiRefreshTimer = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      final state = _joinedKey.currentState;
+      if (state != null) unawaited(state.refreshChapters());
+    });
+  }
+
   void _jumpScroll(double offset) {
     if (_joined && _joinedKey.currentState != null) {
       _joinedKey.currentState!.jumpToChapterOffset(_index, offset);
@@ -36,13 +46,18 @@ extension _ReaderJoinedContent on _ReaderPageState {
       throw ApiException('正文为空');
     }
     await _replacementStore.load();
-    final replacement =
-        await (widget.replacementEngine ?? TextReplacementEngine.instance)
-            .transform(
-              source: content,
-              chapterTitle: chapter.title,
-              snapshot: _replacementStore.snapshot,
-            );
+    final view = await AiReadingController.instance.viewFor(
+      bookId: widget.bookId,
+      chapterId: chapter.itemId,
+      chapterTitle: chapter.title,
+      content: content,
+      customSnapshot: _replacementStore.snapshot,
+      temporaryOriginal: _aiTemporaryOriginal,
+      previewSourceStart: index == _index ? _aiPreviewSourceStart : null,
+      previewSourceEnd: index == _index ? _aiPreviewSourceEnd : null,
+      replacementEngine: widget.replacementEngine,
+    );
+    final replacement = view.composition.replacement;
     final ideas = await ideasFuture;
     final marks = await marksFuture;
     if (!mounted) throw StateError('Reader disposed');
@@ -82,6 +97,7 @@ extension _ReaderJoinedContent on _ReaderPageState {
       ideas: ideas,
       underlines: marks.ids,
       rangeUnderlines: marks.ranges,
+      displayRevision: view.composition.displayRevision,
     );
   }
 
@@ -160,6 +176,7 @@ extension _ReaderJoinedContent on _ReaderPageState {
         ideas: _ideas,
         underlines: _underlines,
         rangeUnderlines: _rangeUnderlines,
+        displayRevision: _aiRevision,
       ),
       chapterCount: widget.chapters.length,
       showParagraphBubbles: _preferences.showParagraphBubbles,

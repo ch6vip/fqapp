@@ -352,6 +352,16 @@ extension _ReaderPagePreferences on _ReaderPageState {
     try {
       cachedIds = await _diskCache.cachedChapterIds(widget.bookId);
     } catch (_) {}
+    var aiStatuses = const <AiChapterCheckStatus>[];
+    try {
+      final controller = AiReadingController.instance;
+      if (controller.isReady) {
+        aiStatuses = await controller.chapterStatuses(widget.bookId);
+      }
+    } catch (_) {
+      // AI storage may still be opening (or unavailable in a test); the
+      // directory is still usable and live statuses keep updating.
+    }
     if (!mounted) return;
     final preset = _effectivePreset;
     final selected = await showModalBottomSheet<int>(
@@ -368,6 +378,9 @@ extension _ReaderPagePreferences on _ReaderPageState {
         chapters: widget.chapters,
         currentIndex: _index,
         cachedIds: cachedIds,
+        bookId: widget.bookId,
+        aiStatuses: aiStatuses,
+        aiController: AiReadingController.instance,
         preset: preset,
       ),
     );

@@ -138,7 +138,7 @@ void main() {
 
     expect(find.byType(SettingsSectionHeader), findsNWidgets(2));
     expect(find.byType(SettingsGroupCard), findsNWidgets(3));
-    expect(find.byType(SettingsRow), findsNWidgets(3));
+    expect(find.byType(SettingsRow), findsNWidgets(4));
     expect(find.text('书架随你走'), findsOneWidget);
   });
 }

@@ -355,6 +355,8 @@ extension _ReaderPageBuild on _ReaderPageState {
           onDirectory: _showDirectory,
           onNight: _toggleNightTheme,
           onAppearance: _showAppearanceSettings,
+          onAi: _aiView?.aiEnabled == true ? _showAiPanel : null,
+          aiLabel: _aiView?.hasCache == true ? 'AI 已校对' : 'AI 校对',
         ),
       ],
     );
