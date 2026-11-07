@@ -166,10 +166,10 @@ class _ReaderAppearanceSheetState
       MediaQuery.disableAnimationsOf(context) ||
       PerformanceScope.reduceMotionOf(context) ||
       !PerformanceScope.of(context).motion;
-  bool get _nested =>
-      _category != null &&
-      (widget.initialSection == ReaderSettingsSection.all ||
-          widget.initialSection == ReaderSettingsSection.appearance);
+
+  /// 分类内容总能退回分类网格：坞上只有「外观」「操作」两个入口，面板会
+  /// 直达某个分类，网格里的其余分类（听书、书签等）也得走得到。
+  bool get _nested => _category != null;
   bool get _alive => mounted && !_closing;
 
   @override
@@ -346,13 +346,15 @@ class _ReaderAppearanceSheetState
       CupertinoIcons.paintbrush,
       _displayPreset.label,
     ),
+    // 翻页属于外观层面，坞上只有「外观」「操作」两个入口，所以它必须留在
+    // 外观网格里，否则翻页动画与自动翻页没有入口。
+    ReaderSettingsCategory(
+      'turn',
+      '翻页',
+      CupertinoIcons.arrow_left_right,
+      value.pageMode == ReaderPageMode.scroll ? '滚动 · 跨章设置' : '翻页动画 · 自动翻页',
+    ),
     if (widget.initialSection != ReaderSettingsSection.appearance) ...[
-      ReaderSettingsCategory(
-        'turn',
-        '翻页',
-        CupertinoIcons.arrow_left_right,
-        value.pageMode == ReaderPageMode.scroll ? '滚动 · 跨章设置' : '翻页动画 · 自动翻页',
-      ),
       const ReaderSettingsCategory(
         'listening',
         '听书',
