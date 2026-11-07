@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,23 @@ import 'package:http/http.dart' as http;
 
 import 'package:fqapp/services/ai_reading/ai_client.dart';
 import 'package:fqapp/services/ai_reading/ai_models.dart';
+
+class _HangingClient extends http.BaseClient {
+  _HangingClient(this.aborted);
+
+  final Completer<void> aborted;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    final abortable = request as http.AbortableRequest;
+    abortable.abortTrigger?.then((_) {
+      if (!aborted.isCompleted) aborted.complete();
+    });
+    // Never returns a response. The client must abort the transport when its
+    // own header timeout fires, rather than merely abandoning the future.
+    return Completer<http.StreamedResponse>().future;
+  }
+}
 
 class _SseClient extends http.BaseClient {
   _SseClient(this.chunks);
@@ -24,6 +42,42 @@ class _SseClient extends http.BaseClient {
 }
 
 void main() {
+  test('header timeout aborts the underlying HTTP request', () async {
+    final aborted = Completer<void>();
+    final client = AiChatCompletionsClient(client: _HangingClient(aborted));
+    final profile = AiProviderProfile(
+      id: 'custom',
+      label: 'Custom',
+      baseUrl: 'https://example.com/v1',
+      credentialRef: 'ref',
+      outputMode: AiOutputMode.jsonObject,
+      reasoningEffort: AiReasoningEffort.high,
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
+    await expectLater(
+      client.complete(
+        profile: profile,
+        apiKey: 'sk-test',
+        model: 'deepseek-flash',
+        messages: const [
+          {'role': 'system', 'content': 'system'},
+          {'role': 'user', 'content': '正文'},
+        ],
+        outputMode: AiOutputMode.jsonObject,
+        timeout: const Duration(milliseconds: 40),
+      ),
+      throwsA(
+        isA<AiNetworkException>().having(
+          (error) => error.code,
+          'code',
+          'TIMEOUT',
+        ),
+      ),
+    );
+    await aborted.future.timeout(const Duration(seconds: 2));
+  });
+
   test('stream reports progress and accepts output beyond 8K', () async {
     final transport = _SseClient([
       'data: {"choices":[{"delta":{"reasoning_content":"思考"},"finish_reason":null}]}\n\n',

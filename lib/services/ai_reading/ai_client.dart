@@ -143,18 +143,20 @@ class AiChatCompletionsClient {
       'reasoning=${_reasoningBody(profile, profile.reasoningEffort)} ',
     );
     final started = DateTime.now();
+    // A timeout must abort the transport, not merely stop awaiting it.
+    // Keep a local trigger so both the caller's cancel signal and our own
+    // header/body/idle timeouts reach http.AbortableRequest.
+    final localAbort = Completer<void>();
+    final effectiveAbort = abortTrigger == null
+        ? localAbort.future
+        : Future.any([abortTrigger, localAbort.future]);
     http.StreamedResponse streamed;
     try {
-      final http.Request request;
-      if (abortTrigger == null) {
-        request = http.Request('POST', uri);
-      } else {
-        request = http.AbortableRequest(
-          'POST',
-          uri,
-          abortTrigger: abortTrigger,
-        );
-      }
+      final http.AbortableRequest request = http.AbortableRequest(
+        'POST',
+        uri,
+        abortTrigger: effectiveAbort,
+      );
       request
         ..followRedirects = false
         ..headers.addAll({
@@ -165,6 +167,7 @@ class AiChatCompletionsClient {
         ..body = jsonEncode(body);
       streamed = await _client.send(request).timeout(timeout);
     } on TimeoutException {
+      if (!localAbort.isCompleted) localAbort.complete();
       throw const AiNetworkException(
         'TIMEOUT',
         '请求超时。请求可能已经到达服务商，未自动重发',
@@ -196,12 +199,14 @@ class AiChatCompletionsClient {
         model: model,
         attempt: attempt,
         onProgress: onProgress,
+        localAbort: localAbort,
       );
     }
     http.Response response;
     try {
       response = await http.Response.fromStream(streamed).timeout(timeout);
     } on TimeoutException {
+      if (!localAbort.isCompleted) localAbort.complete();
       throw const AiNetworkException(
         'TIMEOUT',
         '请求超时。请求可能已经到达服务商，未自动重发',
@@ -316,6 +321,7 @@ class AiChatCompletionsClient {
     required String model,
     required int attempt,
     required void Function(AiStreamProgress progress)? onProgress,
+    required Completer<void> localAbort,
   }) async {
     if (streamed.statusCode >= 300 && streamed.statusCode < 400) {
       throw const AiNetworkException(
@@ -328,7 +334,11 @@ class AiChatCompletionsClient {
       final text = await utf8.decoder
           .bind(streamed.stream)
           .join()
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 30))
+          .catchError((Object error, StackTrace stack) {
+            if (!localAbort.isCompleted) localAbort.complete();
+            Error.throwWithStackTrace(error, stack);
+          });
       throw AiNetworkException(
         _statusCode(streamed.statusCode),
         _errorMessage(text),
@@ -414,6 +424,7 @@ class AiChatCompletionsClient {
         }
       }
     } on TimeoutException {
+      if (!localAbort.isCompleted) localAbort.complete();
       throw const AiNetworkException(
         'STREAM_TIMEOUT',
         '输出中断：60 秒没有收到新内容。请求可能已经到达服务商，未自动重发',
