@@ -394,6 +394,14 @@ class AiReadingController extends ChangeNotifier {
     final progress = progressFor(bookId, chapterId);
     progress.value = null;
     notifyListeners();
+    var notificationText = '';
+    void updateNotification(String text) {
+      if (notificationText == text) return;
+      notificationText = text;
+      unawaited(AiRequestForeground.updateNotification(text));
+    }
+
+    updateNotification('正在连接模型…');
     final cancellation = Completer<void>();
     _cancels[key] = cancellation;
     try {
@@ -411,12 +419,30 @@ class AiReadingController extends ChangeNotifier {
           final current = _status[key];
           if (current == null) return;
           _status[key] = current.copyWith(running: true, state: state);
+          final status = switch (state) {
+            AiRunState.running => '正在连接模型…',
+            AiRunState.validating => '正在校验修改…',
+            AiRunState.repairing => '正在重试校对…',
+            AiRunState.cancelled => '正在停止…',
+            _ => null,
+          };
+          if (status != null) updateNotification(status);
           notifyListeners();
         },
-        onProgress: (value) => progress.value = value,
+        onProgress: (value) {
+          progress.value = value;
+          updateNotification(
+            value.contentChars == 0 && value.reasoningChars > 0
+                ? '正在思考…'
+                : value.contentChars > 0
+                ? '正在生成修改…'
+                : '正在连接模型…',
+          );
+        },
         onNotice: (message) {
           progress.value = (progress.value ?? const AiStreamProgress())
               .copyWith(notice: message);
+          updateNotification('思考用尽输出，正在重试');
         },
       );
       _status[key] = AiChapterRunStatus(
@@ -550,6 +576,7 @@ class AiReadingController extends ChangeNotifier {
   /// the provider may still have received it, so the request ledger keeps the
   /// usage as unknown rather than pretending it never happened.
   void cancelChapterRequest(String bookId, String chapterId) {
+    unawaited(AiRequestForeground.updateNotification('正在停止…'));
     final cancel = _cancels.remove(_chapterKey(bookId, chapterId));
     if (cancel != null && !cancel.isCompleted) cancel.complete();
   }

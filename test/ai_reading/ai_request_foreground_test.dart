@@ -104,6 +104,21 @@ void main() {
     },
   );
 
+  test('foreground status updates reach the native channel', () async {
+    final updates = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'updateNotification') {
+            updates.add((call.arguments as Map)['text'] as String);
+          }
+          return null;
+        });
+
+    await AiRequestForeground.updateNotification('正在思考…');
+    await AiRequestForeground.updateNotification('正在生成修改…');
+    expect(updates, ['正在思考…', '正在生成修改…']);
+  });
+
   test(
     'notification permission is requested through the native bridge',
     () async {

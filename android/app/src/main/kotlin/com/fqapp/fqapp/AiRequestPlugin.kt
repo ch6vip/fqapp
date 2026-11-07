@@ -105,6 +105,13 @@ class AiRequestPlugin :
                     result.success(null)
                 }
             }
+            "updateNotification" -> {
+                val text = call.argument<String>("text")
+                if (text != null) {
+                    AiRequestServiceRegistry.updateNotification(text)
+                }
+                result.success(null)
+            }
             "requestNotifications" -> requestNotificationPermission(result)
             else -> result.notImplemented()
         }

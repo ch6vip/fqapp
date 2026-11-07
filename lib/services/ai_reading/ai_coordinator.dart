@@ -439,7 +439,7 @@ class AiCoordinator {
             requestProfile = provider.copyWith(
               reasoningEffort: AiReasoningEffort.off,
             );
-            onNotice?.call('本次校对失败：${networkError.message}；已切换为关闭思考重试');
+            onNotice?.call('本次思考用尽输出，已切换为关闭思考重试');
             debugPrint(
               '[AI] thinking exhausted output; retrying with thinking disabled',
             );
@@ -497,6 +497,7 @@ class AiCoordinator {
             requestCount: requestCount,
           );
         }
+        onState?.call(AiRunState.validating);
         lastValidation = _validator.validateContent(text, snapshot);
         if (lastValidation.valid) {
           if (kind == AiRunKind.trial || kind == AiRunKind.promptOptimize) {
