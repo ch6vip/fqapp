@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +14,7 @@ class AiRequestForeground {
   const AiRequestForeground._();
 
   static const _channel = MethodChannel('fqapp/ai_request');
+  static bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
   static bool _handlerInstalled = false;
   static final _aborts = <Completer<void>>{};
 
@@ -29,6 +29,9 @@ class AiRequestForeground {
     });
   }
 
+  @visibleForTesting
+  static void debugServiceStopped() => _abortAll();
+
   static void _abortAll() {
     final aborts = _aborts.toList(growable: false);
     _aborts.clear();
@@ -42,7 +45,7 @@ class AiRequestForeground {
   /// Non-Android platforms are a no-op; iOS/desktop keep their existing
   /// foreground-only behaviour.
   static Future<AiRequestLease> acquire() async {
-    if (!Platform.isAndroid) return const AiRequestLease._noop();
+    if (!_isAndroid) return const AiRequestLease._noop();
     _installHandler();
     final abort = Completer<void>();
     _aborts.add(abort);
@@ -84,7 +87,7 @@ class AiRequestForeground {
     final abort = lease._abort;
     if (abort != null) _aborts.remove(abort);
     final leaseId = lease._leaseId;
-    if (!Platform.isAndroid || leaseId == null) return;
+    if (!_isAndroid || leaseId == null) return;
     try {
       await _channel.invokeMethod<void>('release', {'leaseId': leaseId});
     } catch (error) {
