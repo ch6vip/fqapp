@@ -548,9 +548,10 @@ class ReaderChapterLayout {
   /// shift a selection by the title length or land on the wrong paragraph.
   ({int paragraph, int offset})? snapshotLocationForDisplayOffset(
     int offset,
-    AiChapterSnapshot snapshot,
-  ) {
-    final sourceOffset = sourceOffsetForDisplay(offset);
+    AiChapterSnapshot snapshot, {
+    TextBoundaryBias bias = TextBoundaryBias.start,
+  }) {
+    final sourceOffset = sourceOffsetForDisplay(offset, bias: bias);
     final index = _floorIndex(
       _sourceBlocks.length,
       (i) => _sourceBlocks[i].start <= sourceOffset,

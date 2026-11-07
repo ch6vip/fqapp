@@ -333,10 +333,12 @@ extension _ReaderPageSelection on _ReaderPageState {
     final startLocation = layout.snapshotLocationForDisplayOffset(
       selection.start,
       snapshot,
+      bias: TextBoundaryBias.start,
     );
     final endLocation = layout.snapshotLocationForDisplayOffset(
       selection.end,
       snapshot,
+      bias: TextBoundaryBias.end,
     );
     if (startLocation == null ||
         endLocation == null ||
