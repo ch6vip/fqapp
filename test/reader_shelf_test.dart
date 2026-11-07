@@ -61,25 +61,30 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _openReaderMenu(tester);
+    // 书架入口在顶栏「更多阅读操作」菜单里。
+    await _openReaderMoreMenu(tester);
 
     final button = find.byKey(const ValueKey('reader-shelf-button'));
     expect(button, findsOneWidget);
-    expect(tester.widget<GlassIconButton>(button).label, '加入书架');
+    expect(tester.widget<GlassMenuItem>(button).label, '加入书架');
 
     await tester.tap(button);
     await _settleShelfWrite(tester, '已加入书架');
 
     expect(ShelfStore.instance.contains('book', 'reader-shelf'), isTrue);
     expect(find.text('已加入书架'), findsOneWidget);
-    expect(tester.widget<GlassIconButton>(button).label, '已在书架');
+
+    await _openReaderMoreMenu(tester);
+    expect(tester.widget<GlassMenuItem>(button).label, '已在书架');
 
     await tester.tap(button);
     await _settleShelfWrite(tester, '已移出书架');
 
     expect(ShelfStore.instance.contains('book', 'reader-shelf'), isFalse);
     expect(find.text('已移出书架'), findsOneWidget);
-    expect(tester.widget<GlassIconButton>(button).label, '加入书架');
+
+    await _openReaderMoreMenu(tester);
+    expect(tester.widget<GlassMenuItem>(button).label, '加入书架');
   });
 
   testWidgets('漫画阅读器里可以直接加入书架', (tester) async {
@@ -121,10 +126,16 @@ void main() {
 }
 
 /// 点正文中间唤出阅读菜单（工具栏只在菜单展开时存在）。
-Future<void> _openReaderMenu(WidgetTester tester) async {
-  await tester.tapAt(
-    tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
-  );
+/// 顶栏「更多阅读操作」菜单：chrome 已经显示时不要再点正文（那是开关）。
+Future<void> _openReaderMoreMenu(WidgetTester tester) async {
+  final more = find.byKey(const ValueKey('reader-header-more'));
+  if (more.hitTestable().evaluate().isEmpty) {
+    await tester.tapAt(
+      tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
+    );
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(more);
   await tester.pumpAndSettle();
 }
 
