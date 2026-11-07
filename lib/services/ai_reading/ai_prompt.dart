@@ -28,17 +28,16 @@ const String kAiDefaultBehaviorPrompt = '''
 宁可漏改，也不要误改。
 能够修改一个词，就不要重写整个句子。
 只有明确存在问题时才提出修改。
-不要对同一个位置提出互相冲突的修改。
 ''';
 
 /// Program-owned edit contract. Appended to every proofreading request for
 /// both output modes; it is never part of the editable behaviour prompt.
 const String kAiEditContract = '''
-【程序控制的修改协议】
 original 必须与提供的原文完全一致。
 尽量选取能够唯一定位的最短完整片段。
+不要对同一个位置提出互相冲突的修改。
 每条 edit 还必须输出：
-- category：用很短的简体中文概括修改类别（例如“错别字”“漏字”“标点”“搭配”），由你根据上下文判断，不要求固定词表。
+- category：用很短的简体中文概括修改类别，由你根据上下文判断，不要求固定词表。
 - reason：用一句简体中文说明为什么这里需要改；只写最终理由，不写推理过程。
 如果没有需要修改的地方，返回空的 edits 数组。
 ''';
