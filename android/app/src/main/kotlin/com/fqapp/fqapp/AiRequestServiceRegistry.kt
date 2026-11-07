@@ -96,7 +96,8 @@ object AiRequestServiceRegistry {
         listener?.invoke("timeout")
     }
 
-    fun markStoppingNormally() {
+    fun onUserStopped() {
+        listener?.invoke("stopped")
         synchronized(lock) { stoppingNormally = true }
     }
 

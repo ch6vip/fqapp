@@ -201,8 +201,9 @@ class AiCoordinator {
     var requestProfile = provider;
     var overBudgetConfirmed = confirmedOverBudget;
 
+    late final AiRequestLease foreground;
     try {
-      await AiRequestForeground.acquire();
+      foreground = await AiRequestForeground.acquire();
     } on AiNetworkException catch (error) {
       await _store.putRun(
         run.copyWith(
@@ -638,7 +639,7 @@ class AiCoordinator {
         onState?.call(AiRunState.repairing);
       }
     } finally {
-      await AiRequestForeground.release();
+      await foreground.release();
     }
   }
 
