@@ -536,6 +536,7 @@ class AiChatCompletionsClient {
       );
     } on AiNetworkException catch (error) {
       onUsage?.call(error.usage ?? const AiUsage(), error.code);
+      if (error.code == 'REQUEST_ABORTED') rethrow;
       return AiModelCapability(
         key: key,
         providerId: profile.id,
