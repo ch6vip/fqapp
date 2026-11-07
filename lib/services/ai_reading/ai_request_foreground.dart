@@ -43,11 +43,13 @@ class AiRequestForeground {
   /// foreground-only behaviour.
   static Future<AiRequestLease> acquire() async {
     if (!Platform.isAndroid) return const AiRequestLease._noop();
+    final String leaseId;
     try {
       final result = await _channel.invokeMethod<String>('acquire');
-      if (result != 'ok') {
+      if (result == null || result.isEmpty) {
         throw AiNetworkException('FOREGROUND_UNAVAILABLE', '无法保持后台连接，已取消本次请求');
       }
+      leaseId = result;
     } on AiNetworkException {
       rethrow;
     } on PlatformException catch (error) {
@@ -63,15 +65,16 @@ class AiRequestForeground {
     _installHandler();
     final abort = Completer<void>();
     _aborts.add(abort);
-    return AiRequestLease._(abort);
+    return AiRequestLease._(leaseId, abort);
   }
 
   static Future<void> _release(AiRequestLease lease) async {
     final abort = lease._abort;
     if (abort != null) _aborts.remove(abort);
-    if (!Platform.isAndroid) return;
+    final leaseId = lease._leaseId;
+    if (!Platform.isAndroid || leaseId == null) return;
     try {
-      await _channel.invokeMethod<void>('release');
+      await _channel.invokeMethod<void>('release', {'leaseId': leaseId});
     } catch (error) {
       debugPrint('[AI] foreground release failed: $error');
     }
@@ -82,9 +85,12 @@ class AiRequestForeground {
 /// underlying HTTP request stop instead of continuing to generate after the
 /// user stopped the task or Android timed the service out.
 class AiRequestLease {
-  const AiRequestLease._noop() : _abort = null;
-  const AiRequestLease._(Completer<void> abort) : _abort = abort;
+  const AiRequestLease._noop() : _leaseId = null, _abort = null;
+  const AiRequestLease._(String leaseId, Completer<void> abort)
+    : _leaseId = leaseId,
+      _abort = abort;
 
+  final String? _leaseId;
   final Completer<void>? _abort;
 
   Future<void>? get abortTrigger => _abort?.future;

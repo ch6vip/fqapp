@@ -361,6 +361,7 @@ class AiCoordinator {
             stream: true,
             attempt: attemptNo,
             onProgress: onProgress,
+            abortTrigger: foreground.abortTrigger,
           );
         } on AiNetworkException catch (error) {
           networkError = error;

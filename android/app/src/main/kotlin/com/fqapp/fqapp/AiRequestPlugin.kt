@@ -62,8 +62,13 @@ class AiRequestPlugin :
         when (call.method) {
             "acquire" -> acquire(result)
             "release" -> {
-                AiRequestServiceRegistry.release()
-                result.success(null)
+                val leaseId = call.argument<String>("leaseId")
+                if (leaseId == null) {
+                    result.error("NO_LEASE", "缺少租约 ID", null)
+                } else {
+                    AiRequestServiceRegistry.release(leaseId)
+                    result.success(null)
+                }
             }
             else -> result.notImplemented()
         }
@@ -76,10 +81,10 @@ class AiRequestPlugin :
             return
         }
         val resumed = (activity as? MainActivity)?.isResumed == true
-        AiRequestServiceRegistry.acquire(context, resumed) { ok, message ->
+        AiRequestServiceRegistry.acquire(context, resumed) { ok, message, leaseId ->
             mainHandler.post {
-                if (ok) {
-                    result.success("ok")
+                if (ok && leaseId != null) {
+                    result.success(leaseId)
                 } else {
                     result.error("FOREGROUND_UNAVAILABLE", message ?: "无法启动前台服务", null)
                 }
