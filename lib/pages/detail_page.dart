@@ -178,14 +178,9 @@ class _DetailPageState extends State<DetailPage> {
       ? '话'
       : '章';
 
-  /// Archives header title per content kind; upstream's novel-only `图书详情`.
-  String get _pageTitle => switch (widget.item.kind) {
-    'video' => '短剧详情',
-    'manju' => '漫剧详情',
-    'audio' => '听书详情',
-    'manga' => '漫画详情',
-    _ => '图书详情',
-  };
+  /// Archives header title per content kind; follows the kind labels (小说详情,
+  /// 短剧详情, etc.).
+  String get _pageTitle => '${kindLabels[widget.item.kind] ?? '小说'}详情';
 
   /// Source label on the identity block: the fqapp catalogue is 番茄's, and
   /// short dramas/manju/comics are not "小说".
