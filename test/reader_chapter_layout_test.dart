@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/services/text_replacement_engine.dart';
 import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 
@@ -31,6 +32,74 @@ void main() {
       layout.blocks[2].start + 1,
       snapshot,
     );
+    expect(second, isNotNull);
+    expect(second!.paragraph, 1);
+    expect(second.offset, snapshot.paragraphStarts[1] + 1);
+  });
+
+  test('display selection maps past an image without a title offset leak', () {
+    final content = ChapterContent(
+      blocks: const [
+        ChapterParagraph('第一段。'),
+        ChapterImage(url: 'https://example.com/a.png'),
+        ChapterParagraph('第二段。'),
+      ],
+    );
+    final title = '第一章 山间来信';
+    final layout = _layout(title: title, content: content);
+    final snapshot = AiChapterSnapshotBuilder.fromContent(content, title);
+    final paragraphs = layout.blocks
+        .where((block) => !block.isTitle && !block.isImage)
+        .toList();
+
+    final second = layout.snapshotLocationForDisplayOffset(
+      paragraphs[1].start + 1,
+      snapshot,
+    );
+    expect(second, isNotNull);
+    expect(second!.paragraph, 1);
+    expect(second.offset, snapshot.paragraphStarts[1] + 1);
+  });
+
+  test('display selection maps through a length-changing replacement', () {
+    final source = ChapterContent(
+      blocks: const [ChapterParagraph('第一段。'), ChapterParagraph('第二段。')],
+    );
+    final replaced = ChapterContent(
+      blocks: const [ChapterParagraph('第一段改长了。'), ChapterParagraph('第二段。')],
+    );
+    final replacement = TextReplacementResult(
+      source: source,
+      content: replaced,
+      snapshotRevision: 1,
+      paragraphMaps: {
+        0: TextOffsetMap.fromSegments(4, 7, [
+          (start: 0, end: 4, outputStart: 0, outputEnd: 7),
+        ]),
+      },
+    );
+    final title = '第一章 山间来信';
+    final layout = _layout(
+      title: title,
+      content: source,
+      replacement: replacement,
+    );
+    final snapshot = AiChapterSnapshotBuilder.fromContent(source, title);
+    final paragraphs = layout.blocks
+        .where((block) => !block.isTitle && !block.isImage)
+        .toList();
+
+    final first = layout.snapshotLocationForDisplayOffset(
+      paragraphs[0].start + 2,
+      snapshot,
+    );
+    final second = layout.snapshotLocationForDisplayOffset(
+      paragraphs[1].start + 1,
+      snapshot,
+    );
+    expect(first, isNotNull);
+    expect(first!.paragraph, 0);
+    expect(first.offset, 0);
     expect(second, isNotNull);
     expect(second!.paragraph, 1);
     expect(second.offset, snapshot.paragraphStarts[1] + 1);
@@ -483,6 +552,7 @@ ReaderChapterLayout _layout({
   double scale = 1,
   ReaderPreferences preferences = const ReaderPreferences(),
   ChapterContent? content,
+  TextReplacementResult? replacement,
 }) => ReaderChapterLayout(
   title: title,
   content:
@@ -501,6 +571,7 @@ ReaderChapterLayout _layout({
           '完。',
         ].map(ChapterParagraph.new).toList(),
       ),
+  replacement: replacement,
   spec: ReaderLayoutSpec(
     viewport: size,
     textScaler: TextScaler.linear(scale),
