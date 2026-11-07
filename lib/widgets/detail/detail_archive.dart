@@ -685,8 +685,8 @@ class DetailArchiveChapterRow extends StatelessWidget {
     required this.onTap,
   });
 
-  /// Zero-based index in the whole catalogue (the displayed ordinal is +1).
-  final int index;
+  /// Zero-based global ordinal; null when only a standalone video is known.
+  final int? index;
   final String title;
   final bool current;
   final bool cached;
@@ -713,7 +713,7 @@ class DetailArchiveChapterRow extends StatelessWidget {
             SizedBox(
               width: 36,
               child: AppText(
-                (index + 1).toString().padLeft(2, '0'),
+                index == null ? '--' : (index! + 1).toString().padLeft(2, '0'),
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),

@@ -133,9 +133,19 @@ class CachedDrama {
     'id': id,
     'title': title,
     'cover': cover,
+    'catalogueComplete': hasCompleteEpisodeCatalogue(episodes),
     'episodes': [
       for (final (index, episode) in episodes.indexed)
-        {'itemId': episode.itemId, 'title': episode.title, 'index': index},
+        {
+          'itemId': episode.itemId,
+          'title': episode.title,
+          'index': index,
+          if (episode.trailer) 'trailer': true,
+          if (episode.highlight) 'highlight': true,
+          if (episode.disabled) 'disabled': true,
+          if (episode.newlyUpdate) 'newlyUpdate': true,
+          if (episode.vertical != null) 'vertical': episode.vertical,
+        },
     ],
   };
 
@@ -143,14 +153,36 @@ class CachedDrama {
     if (raw is! Map || raw['id'] is! String || raw['episodes'] is! List) {
       return null;
     }
+    final values = raw['episodes'] as List;
+    // Old single-entry records may be the faulty search/history fallback, not
+    // a one-episode series. Only an explicitly marked catalogue proves that.
+    final complete =
+        raw['catalogueComplete'] == true ||
+        (raw['catalogueComplete'] == null && values.length > 1);
     final episodes = <Chapter>[];
-    for (final value in raw['episodes'] as List) {
-      if (value is! Map || value['itemId'] is! String) continue;
+    final ids = <String>{};
+    for (final (index, value) in values.indexed) {
+      // Never skip a damaged row and renumber all following episodes.
+      if (value is! Map ||
+          value['itemId'] is! String ||
+          (value['itemId'] as String).isEmpty ||
+          !ids.add(value['itemId'] as String) ||
+          value['index'] != index) {
+        return null;
+      }
       episodes.add(
         Chapter(
           itemId: value['itemId'] as String,
           title: value['title']?.toString() ?? '',
-          volumeName: '',
+          volumeName: '剧集',
+          trailer: value['trailer'] == true,
+          highlight: value['highlight'] == true,
+          disabled: value['disabled'] == true,
+          newlyUpdate: value['newlyUpdate'] == true,
+          vertical: value['vertical'] is bool
+              ? value['vertical'] as bool
+              : null,
+          hasKnownIndex: complete,
         ),
       );
     }
@@ -354,6 +386,12 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
   @override
   Future<void> ensureCatalogue(CachedDrama drama) => _serialize((box) async {
     if (drama.id.isEmpty || drama.episodes.isEmpty) return;
+    final existing = CachedDrama.fromMap(box.get('series:${drama.id}'));
+    if (!hasCompleteEpisodeCatalogue(drama.episodes) &&
+        existing != null &&
+        hasCompleteEpisodeCatalogue(existing.episodes)) {
+      return;
+    }
     final record = drama.toMap()
       ..['cachedAt'] = DateTime.now().millisecondsSinceEpoch;
     await box.put('series:${drama.id}', record);
@@ -391,6 +429,19 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
     return box.get('series:$seriesId') != null;
   });
 
+  /// Reads the saved full catalogue, never the downloaded-subset projection.
+  Future<CachedDrama?> catalogue(String seriesId) async {
+    if (!isReady || seriesId.isEmpty) return null;
+    return _serialize((box) async {
+      final drama = CachedDrama.fromMap(box.get('series:$seriesId'));
+      return drama != null &&
+              drama.id == seriesId &&
+              hasCompleteEpisodeCatalogue(drama.episodes)
+          ? drama
+          : null;
+    });
+  }
+
   @override
   Future<List<CachedDramaSummary>> dramas() => _serialize((box) async {
     final bySeries = <String, List<CachedEpisode>>{};
@@ -418,6 +469,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
                   itemId: episode.itemId,
                   title: episode.title,
                   volumeName: '',
+                  hasKnownIndex: false,
                 ),
             ],
           );
@@ -426,7 +478,7 @@ class HiveDramaDownloadStore implements DramaDownloadStore {
       // 第 13 集排到第 1 集前面。目录里查不到的记录才退回 index。
       final order = <String, int>{
         for (final (position, episode) in drama.episodes.indexed)
-          episode.itemId: position,
+          if (episode.hasKnownIndex) episode.itemId: position,
       };
       entry.value.sort(
         (a, b) =>
