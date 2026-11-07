@@ -174,6 +174,7 @@ class InlineVideoPlayback {
   int? _activeIndex;
   int _generation = 0;
   bool _hasDisplayed = false;
+  bool _progressDirty = false;
   bool _wantsPlay = true;
   bool _playIssued = false;
   bool _disposed = false;
@@ -309,6 +310,7 @@ class InlineVideoPlayback {
     _tab = tab;
     _active = series;
     _hasDisplayed = false;
+    _progressDirty = false;
     _wantsPlay = true;
     _playIssued = false;
     _reusedFromPool = false;
@@ -396,17 +398,35 @@ class InlineVideoPlayback {
         // Local storage is optional for starting a video.
       }
       if (!_current(generation)) return;
-      final index =
-          (startEpisodeIndex ?? resumeEpisodeIndex(saved, episodes) ?? 0).clamp(
-            0,
-            episodes.length - 1,
-          );
+      final savedIndex = resumeEpisodeIndex(saved, episodes);
+      final index = (startEpisodeIndex ?? savedIndex ?? 0).clamp(
+        0,
+        episodes.length - 1,
+      );
+      final rawPosition = saved?['position'];
+      final rawDuration = saved?['duration'];
+      final savedDuration = savedIndex == index && rawDuration is num
+          ? rawDuration.toDouble()
+          : 0.0;
+      final requestedMs =
+          startPosition?.inMilliseconds.toDouble() ??
+          (savedIndex == index && rawPosition is num ? rawPosition * 1000 : 0);
+      final startMs =
+          requestedMs.isFinite &&
+              requestedMs > 0 &&
+              requestedMs < 0x7fffffffffffffff &&
+              (startPosition != null ||
+                  !savedDuration.isFinite ||
+                  savedDuration <= 0 ||
+                  requestedMs < savedDuration * 1000)
+          ? requestedMs.round()
+          : null;
       _episodes = episodes;
       _activeIndex = index;
-      // 听书回传的位置先挂上进度条再等首帧；弹幕调度器读 [position] 做
-      // 首批起始毫秒，方向才会对。
-      if (startPosition != null && startPosition > Duration.zero) {
-        position.value = startPosition;
+      // Seed both native preparation and danmaku from the same episode's
+      // resume point; restoring only the episode would overwrite it with zero.
+      if (startMs != null) {
+        position.value = Duration(milliseconds: startMs);
       }
       activeVid.value = episodes[index].itemId;
       var source = await _sources.request(episodes[index]).future;
@@ -437,14 +457,14 @@ class InlineVideoPlayback {
       if (!_current(generation)) return;
       final player = candidate = playerFactory?.call() ?? NativePlayer();
       _player = player;
-      await player.create(source.url, source.keyHex);
+      await player.create(source.url, source.keyHex, startMs: startMs);
       if (!_current(generation, player)) {
         if (identical(_player, player)) _player = null;
         await player.dispose();
         return;
       }
       if (player.lastError case final Object failure) throw failure;
-      _subscribe(player, generation);
+      _subscribe(player, generation, startMs: startMs);
       textureId.value = player.textureId;
       _adoptVideoSize(player);
       rotation.value = player.videoRotationCorrection ~/ 90;
@@ -452,17 +472,16 @@ class InlineVideoPlayback {
       // to be pushed back on it before the first frame shows.
       await _applyPlaybackPrefs(player);
       if (!_current(generation, player)) return;
-      if (startPosition != null && startPosition > Duration.zero) {
-        // 越界（听完一整集）就从头起播；时长未知时信任调用方。
-        final total = player.duration;
-        if (total <= Duration.zero || startPosition < total) {
-          await player.seek(startPosition);
-          if (!_current(generation, player)) return;
-        }
+      if (startMs != null &&
+          player.duration > Duration.zero &&
+          startMs >= player.duration.inMilliseconds) {
+        await player.seek(Duration.zero);
+        if (!_current(generation, player)) return;
       }
       if (player.firstFrameRendered) _onFirstFrame(player, generation);
       if (_wantsPlay) {
         _playIssued = true;
+        _progressDirty = true;
         await player.play();
         if (!_current(generation, player)) return;
         playing.value = _playbackRequested(player);
@@ -524,6 +543,7 @@ class InlineVideoPlayback {
     // size, or rotation. The layer keeps its cover until the new stream is ready.
     textureId.value = null;
     firstFrame.value = false;
+    _hasDisplayed = false;
     videoSize.value = Size.zero;
     rotation.value = 0;
     var release = _releases;
@@ -554,6 +574,7 @@ class InlineVideoPlayback {
       seeked.value = resume;
       if (!_current(generation, fresh)) return;
       if (resumeWantsPlay || _wantsPlay) {
+        _progressDirty = true;
         await fresh.play();
         if (!_current(generation, fresh)) return;
       }
@@ -603,6 +624,7 @@ class InlineVideoPlayback {
     if (!_current(generation, player)) return;
     if (!_wantsPlay) return;
     _playIssued = true;
+    _progressDirty = true;
     try {
       await player.play();
     } catch (failure) {
@@ -648,6 +670,7 @@ class InlineVideoPlayback {
     if (player == null || !player.isCreated || error.value != null) return;
     final generation = _generation;
     _playIssued = true;
+    _progressDirty = true;
     try {
       await player.play();
     } catch (failure) {
@@ -717,6 +740,7 @@ class InlineVideoPlayback {
   Future<void> seek(Duration target) async {
     final player = _player;
     if (player == null || !player.isCreated) return;
+    final generation = _generation;
     final total = player.duration;
     final clamped = target < Duration.zero
         ? Duration.zero
@@ -724,6 +748,9 @@ class InlineVideoPlayback {
     position.value = clamped;
     seeked.value = clamped;
     await player.seek(clamped);
+    if (!_current(generation, player)) return;
+    _progressDirty = true;
+    if (!_wantsPlay) await _persistProgress();
   }
 
   /// 听书页的取流入口：离线优先，在线走会话的取流
@@ -920,13 +947,14 @@ class InlineVideoPlayback {
     pool.park(key, player);
   }
 
-  void _subscribe(NativePlayer player, int generation) {
+  void _subscribe(NativePlayer player, int generation, {int? startMs}) {
     _subs.addAll([
       player.firstFrameStream.listen((_) {
         if (_current(generation, player)) _onFirstFrame(player, generation);
       }),
-      player.playWhenReadyStream.listen((_) {
+      player.playWhenReadyStream.listen((requested) {
         if (_current(generation, player)) {
+          if (requested) _progressDirty = true;
           playing.value = _playbackRequested(player);
         }
       }),
@@ -957,10 +985,19 @@ class InlineVideoPlayback {
       }),
       // The card's progress bar reads these two (`cjt.xml`).
       player.positionStream.listen((value) {
-        if (_current(generation, player)) position.value = value;
+        if (!_current(generation, player)) return;
+        // Desktop controls seek the native player directly while the visible
+        // session retains play intent, even when the decoder is paused.
+        if (_wantsPlay && value != position.value) _progressDirty = true;
+        position.value = value;
       }),
       player.durationStream.listen((value) {
-        if (_current(generation, player)) duration.value = value;
+        if (!_current(generation, player)) return;
+        if (startMs != null && startMs! >= value.inMilliseconds) {
+          startMs = null;
+          unawaited(player.seek(Duration.zero));
+        }
+        duration.value = value;
       }),
     ]);
   }
@@ -1042,6 +1079,7 @@ class InlineVideoPlayback {
     _activeIndex = null;
     activeVid.value = null;
     _hasDisplayed = false;
+    _progressDirty = false;
     if (!_disposed) textureId.value = null;
     final cancellations = [
       for (final subscription in _subs) subscription.cancel(),
@@ -1130,10 +1168,15 @@ class InlineVideoPlayback {
         index == null ||
         series == null ||
         index >= _episodes.length ||
-        !_hasDisplayed) {
+        !_hasDisplayed ||
+        !_progressDirty) {
       return Future<void>.value();
     }
     final contentId = series.seriesId ?? series.id;
+    // A hidden, already-paused decoder must not re-save its stale position
+    // when a picker backgrounds the app after another player saved progress.
+    // Playback or an explicit seek makes this session writable again.
+    _progressDirty = false;
     return _history.save(_historyEntry(series, contentId, index, player));
   }
 }
