@@ -108,6 +108,7 @@ class AiChatCompletionsClient {
     int attempt = 1,
     void Function(AiStreamProgress progress)? onProgress,
     bool jsonResponse = true,
+    Future<void>? abortTrigger,
   }) async {
     validateBaseUrl(profile.baseUrl);
     if (apiKey.trim().isEmpty) {
@@ -144,7 +145,17 @@ class AiChatCompletionsClient {
     final started = DateTime.now();
     http.StreamedResponse streamed;
     try {
-      final request = http.Request('POST', uri)
+      final http.Request request;
+      if (abortTrigger == null) {
+        request = http.Request('POST', uri);
+      } else {
+        request = http.AbortableRequest(
+          'POST',
+          uri,
+          abortTrigger: abortTrigger,
+        );
+      }
+      request
         ..followRedirects = false
         ..headers.addAll({
           'Authorization': 'Bearer ${apiKey.trim()}',
@@ -157,6 +168,12 @@ class AiChatCompletionsClient {
       throw const AiNetworkException(
         'TIMEOUT',
         '请求超时。请求可能已经到达服务商，未自动重发',
+        retryable: false,
+      );
+    } on http.RequestAbortedException {
+      throw const AiNetworkException(
+        'REQUEST_ABORTED',
+        '请求已停止。请求可能已经到达服务商，未自动重发',
         retryable: false,
       );
     } on http.ClientException catch (error) {
@@ -396,6 +413,12 @@ class AiChatCompletionsClient {
         '输出中断：60 秒没有收到新内容。请求可能已经到达服务商，未自动重发',
         retryable: false,
       );
+    } on http.RequestAbortedException {
+      throw const AiNetworkException(
+        'REQUEST_ABORTED',
+        '请求已停止。请求可能已经到达服务商，未自动重发',
+        retryable: false,
+      );
     } on http.ClientException catch (error) {
       throw AiNetworkException(
         'NETWORK_ERROR',
@@ -466,6 +489,7 @@ class AiChatCompletionsClient {
     required AiOutputMode outputMode,
     required Duration timeout,
     void Function(AiUsage usage, String? errorCode)? onUsage,
+    Future<void>? abortTrigger,
   }) async {
     final key = AiSettingsCapabilityKey.of(
       providerId: profile.id,
@@ -489,6 +513,7 @@ class AiChatCompletionsClient {
         ],
         outputMode: outputMode,
         timeout: timeout,
+        abortTrigger: abortTrigger,
       );
       onUsage?.call(response.usage, null);
       return AiModelCapability(

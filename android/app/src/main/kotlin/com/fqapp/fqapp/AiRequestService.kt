@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -27,6 +28,7 @@ import androidx.core.app.ServiceCompat
  */
 class AiRequestService : Service() {
     private var foregroundStarted = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -40,7 +42,7 @@ class AiRequestService : Service() {
             ACTION_ACQUIRE -> startOrJoin(startId)
             ACTION_STOP -> {
                 Log.w(TAG, "stopped by notification")
-                AiRequestServiceRegistry.markStoppingNormally()
+                AiRequestServiceRegistry.onUserStopped()
                 stopSelf()
             }
             else -> stopSelf()
@@ -64,6 +66,7 @@ class AiRequestService : Service() {
                 }
                 foregroundStarted = true
             }
+            acquireWakeLock()
             AiRequestServiceRegistry.onStarted(this)
         } catch (error: Throwable) {
             Log.e(TAG, "startForeground failed", error)
@@ -76,6 +79,7 @@ class AiRequestService : Service() {
         // Android 15 caps dataSync foreground services. Never leave a stuck
         // notification behind; the next app start reconciles the request ledger.
         Log.w(TAG, "dataSync foreground service timed out")
+        releaseWakeLock()
         AiRequestServiceRegistry.onTimedOut()
         stopSelf()
     }
@@ -85,7 +89,26 @@ class AiRequestService : Service() {
         AiRequestServiceRegistry.onDestroyed(this)
         if (!expected) Log.w(TAG, "service destroyed unexpectedly")
         foregroundStarted = false
+        releaseWakeLock()
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = power.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "fqapp:ai-request",
+        ).apply {
+            setReferenceCounted(false)
+            acquire(10 * 60 * 1000L)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        val lock = wakeLock ?: return
+        wakeLock = null
+        if (lock.isHeld) lock.release()
     }
 
     private fun createNotificationChannel() {

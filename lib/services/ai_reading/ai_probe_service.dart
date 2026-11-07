@@ -81,8 +81,9 @@ class AiProbeService {
     // Persist the Run before the request so a crash between request/ledger and
     // terminal update is recoverable instead of leaving an orphan request.
     await _store.putRun(runRecord);
+    late final AiRequestLease foreground;
     try {
-      await AiRequestForeground.acquire();
+      foreground = await AiRequestForeground.acquire();
     } on AiNetworkException catch (error) {
       await _budget.release(reservation);
       await _store.putRun(
@@ -112,9 +113,10 @@ class AiProbeService {
             usage = reported;
             errorCode = reportedError;
           },
+          abortTrigger: foreground.abortTrigger,
         );
       } finally {
-        await AiRequestForeground.release();
+        await foreground.release();
       }
     } catch (error) {
       failure = error;

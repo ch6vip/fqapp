@@ -182,8 +182,9 @@ class AiPromptService {
       );
       throw blocked;
     }
+    late final AiRequestLease foreground;
     try {
-      await AiRequestForeground.acquire();
+      foreground = await AiRequestForeground.acquire();
     } on AiNetworkException catch (error) {
       await AiBudgetService.instance.release(reservation);
       await _store.putRun(
@@ -221,9 +222,10 @@ class AiPromptService {
           outputMode: AiOutputMode.jsonObject,
           timeout: Duration(seconds: effective.requestTimeoutSeconds),
           jsonResponse: false,
+          abortTrigger: foreground.abortTrigger,
         );
       } finally {
-        await AiRequestForeground.release();
+        await foreground.release();
       }
     } catch (error) {
       final finished = DateTime.now();
