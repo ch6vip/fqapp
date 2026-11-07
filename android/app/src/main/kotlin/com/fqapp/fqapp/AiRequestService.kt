@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.net.wifi.WifiManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -30,6 +31,9 @@ import androidx.core.app.ServiceCompat
 class AiRequestService : Service() {
     private var foregroundStarted = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var wakeRenewal: Runnable? = null
+    private var wakeSessionStartedAt = 0L
     private val wifiLocks = mutableListOf<WifiManager.WifiLock>()
     private var statusText: String? = null
 
@@ -80,6 +84,7 @@ class AiRequestService : Service() {
                 foregroundStarted = true
             }
             acquireWakeLock()
+            scheduleWakeRenewal()
             acquireWifiLock()
             Log.i(
                 TAG,
@@ -129,14 +134,44 @@ class AiRequestService : Service() {
             "fqapp:ai-request",
         ).apply {
             setReferenceCounted(false)
-            // A formal request may make up to three 10-minute attempts
-            // (initial + bounded corrections), so keep the CPU lease for the
-            // full worst-case window; onDestroy/onTimeout always release it.
-            acquire(30 * 60 * 1000L)
+            acquire(WAKE_LOCK_TIMEOUT_MS)
         }
     }
 
+    /** A long task can outlive one timeout; renew only while leases exist. */
+    private fun scheduleWakeRenewal() {
+        if (wakeRenewal != null) return
+        if (wakeSessionStartedAt == 0L) {
+            wakeSessionStartedAt = SystemClock.elapsedRealtime()
+        }
+        val renewal = object : Runnable {
+            override fun run() {
+                wakeRenewal = null
+                if (!AiRequestServiceRegistry.hasLeases()) {
+                    releaseWakeLock()
+                    return
+                }
+                val elapsed = SystemClock.elapsedRealtime() - wakeSessionStartedAt
+                if (elapsed >= WAKE_SESSION_MAX_MS) {
+                    Log.w(TAG, "wake session safety limit reached; not renewing")
+                    return
+                }
+                // Release and reacquire so the timeout starts from now rather
+                // than expiring at the original 30-minute mark.
+                wakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+                wakeLock = null
+                acquireWakeLock()
+                scheduleWakeRenewal()
+            }
+        }
+        wakeRenewal = renewal
+        handler.postDelayed(renewal, WAKE_RENEW_INTERVAL_MS)
+    }
+
     private fun releaseWakeLock() {
+        wakeRenewal?.let { handler.removeCallbacks(it) }
+        wakeRenewal = null
+        wakeSessionStartedAt = 0L
         val lock = wakeLock ?: return
         wakeLock = null
         if (lock.isHeld) lock.release()
@@ -230,5 +265,8 @@ class AiRequestService : Service() {
         private const val NOTIFICATION_ID = 0x41A1
         private const val ACTION_ACQUIRE = "com.fqapp.fqapp.ai.ACQUIRE"
         private const val ACTION_STOP = "com.fqapp.fqapp.ai.STOP"
+        private const val WAKE_LOCK_TIMEOUT_MS = 30 * 60 * 1000L
+        private const val WAKE_RENEW_INTERVAL_MS = 10 * 60 * 1000L
+        private const val WAKE_SESSION_MAX_MS = 6 * 60 * 60 * 1000L
     }
 }
