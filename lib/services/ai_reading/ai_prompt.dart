@@ -29,6 +29,12 @@ const String kAiDefaultBehaviorPrompt = '''
 能够修改一个词，就不要重写整个句子。
 只有明确存在问题时才提出修改。
 不要对同一个位置提出互相冲突的修改。
+''';
+
+/// Program-owned edit contract. Appended to every proofreading request for
+/// both output modes; it is never part of the editable behaviour prompt.
+const String kAiEditContract = '''
+【程序控制的修改协议】
 original 必须与提供的原文完全一致。
 尽量选取能够唯一定位的最短完整片段。
 每条 edit 还必须输出：
@@ -141,6 +147,9 @@ AiResolvedPrompt aiResolvePrompt({
 String aiBuildSystemPrompt({
   required String behaviorPrompt,
   required AiOutputMode outputMode,
-}) => outputMode == AiOutputMode.jsonObject
-    ? '$behaviorPrompt\n$kAiJsonObjectProtocol'
-    : behaviorPrompt;
+}) {
+  final base = '$behaviorPrompt\n$kAiEditContract';
+  return outputMode == AiOutputMode.jsonObject
+      ? '$base\n$kAiJsonObjectProtocol'
+      : base;
+}
