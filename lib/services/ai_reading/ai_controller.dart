@@ -11,6 +11,7 @@ import 'ai_coordinator.dart';
 import 'ai_display_composition.dart';
 import 'ai_feedback.dart';
 import 'ai_models.dart';
+import 'ai_request_foreground.dart';
 import 'ai_settings.dart';
 import 'ai_store.dart';
 
@@ -70,6 +71,7 @@ class AiReadingController extends ChangeNotifier {
   int _prefetchEpoch = 0;
   final _status = <String, AiChapterRunStatus>{};
   final _inflight = <String, Future<AiTaskResult?>>{};
+  final _cancels = <String, Completer<void>>{};
   final _forcedRefreshQueued = <String>{};
   final _progress = <String, ValueNotifier<AiStreamProgress?>>{};
   final _statusRecorded = <String>{};
@@ -308,6 +310,10 @@ class AiReadingController extends ChangeNotifier {
     if (!_initialized) return null;
     await init();
     if (!isReady) return null;
+    // Ask once for the notification permission used by the foreground
+    // service. Denial only hides the system stop action; it must not block the
+    // request itself.
+    unawaited(AiRequestForeground.ensureNotificationPermission());
     final AiChapterSnapshot snapshot;
     try {
       snapshot = AiChapterSnapshotBuilder.fromContent(content, chapterTitle);
@@ -388,6 +394,8 @@ class AiReadingController extends ChangeNotifier {
     final progress = progressFor(bookId, chapterId);
     progress.value = null;
     notifyListeners();
+    final cancellation = Completer<void>();
+    _cancels[key] = cancellation;
     try {
       final result = await _coordinator.runFormal(
         bookId: bookId,
@@ -398,6 +406,7 @@ class AiReadingController extends ChangeNotifier {
         forceRefresh: forceRefresh,
         automatic: automatic,
         confirmedOverBudget: confirmedOverBudget,
+        cancelTrigger: cancellation.future,
         onState: (state) {
           final current = _status[key];
           if (current == null) return;
@@ -417,7 +426,11 @@ class AiReadingController extends ChangeNotifier {
         formal: result.formal,
         needsBudgetConfirmation: result.needsBudgetConfirmation,
         budgetMessage: result.budgetMessage,
-        state: result.ok ? AiRunState.success : AiRunState.failed,
+        state: result.ok
+            ? AiRunState.success
+            : result.errorCodes.contains('REQUEST_ABORTED')
+            ? AiRunState.cancelled
+            : AiRunState.failed,
       );
       await _store.putChapterStatus(
         AiChapterCheckStatus(
@@ -459,6 +472,10 @@ class AiReadingController extends ChangeNotifier {
       revision++;
       notifyListeners();
       return null;
+    } finally {
+      if (identical(_cancels[key], cancellation)) {
+        _cancels.remove(key);
+      }
     }
   }
 
@@ -527,6 +544,14 @@ class AiReadingController extends ChangeNotifier {
   Future<List<AiChapterCheckStatus>> chapterStatuses(String bookId) async {
     if (!_initialized) return const [];
     return _store.chapterStatuses(bookId);
+  }
+
+  /// Stops the request for one chapter. The in-flight HTTP call is aborted;
+  /// the provider may still have received it, so the request ledger keeps the
+  /// usage as unknown rather than pretending it never happened.
+  void cancelChapterRequest(String bookId, String chapterId) {
+    final cancel = _cancels.remove(_chapterKey(bookId, chapterId));
+    if (cancel != null && !cancel.isCompleted) cancel.complete();
   }
 
   /// Cancels queued prefetch work. An HTTP request that is already in flight

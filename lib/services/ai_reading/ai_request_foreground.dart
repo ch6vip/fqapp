@@ -40,6 +40,24 @@ class AiRequestForeground {
     }
   }
 
+  /// Asks Android 13+ for the notification permission once. The foreground
+  /// service still works when this is denied; only the visible stop action
+  /// disappears, so callers must not block a request on the result.
+  static Future<bool> ensureNotificationPermission() async {
+    if (!_isAndroid) return true;
+    try {
+      return await _channel.invokeMethod<bool>('requestNotifications') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (error) {
+      debugPrint('[AI] notification permission request failed: ${error.code}');
+      return false;
+    } catch (error) {
+      debugPrint('[AI] notification permission request failed: $error');
+      return false;
+    }
+  }
+
   /// Returns only after Android has actually entered the foreground state.
   ///
   /// Non-Android platforms are a no-op; iOS/desktop keep their existing
