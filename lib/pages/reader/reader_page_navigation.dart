@@ -135,14 +135,9 @@ extension _ReaderPageNavigation on _ReaderPageState {
       ),
     );
     if (!mounted || match == null || _chapter.itemId != chapterId) return;
-    // Closing the IME or rotating changes measured geometry, not text identity.
-    // Compare the text transformation and map its source anchors into whichever
-    // layout is current after the keyboard's final layout frame.
-    final sourceStart = layout.sourceOffsetForDisplay(match.start);
-    final sourceEnd = layout.sourceOffsetForDisplay(
-      match.end,
-      bias: TextBoundaryBias.end,
-    );
+    // Geometry changes do not change display-text offsets. Mapping a match
+    // through source offsets would expand a hit inside a replacement to the
+    // entire replacement, so retain its exact range while the text is stable.
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted || _chapter.itemId != chapterId) return;
     final current = _chapterLayout;
@@ -150,13 +145,7 @@ extension _ReaderPageNavigation on _ReaderPageState {
       _showMessage('正文已更新，请重新查找');
       return;
     }
-    await _landAtOffset(
-      current.displayOffsetForSource(sourceStart),
-      end: current.displayOffsetForSource(
-        sourceEnd,
-        bias: TextBoundaryBias.end,
-      ),
-    );
+    await _landAtOffset(match.start, end: match.end);
   }
 
   Future<ReaderBookmark?> _addBookmark({ReaderTextSelection? selection}) async {
