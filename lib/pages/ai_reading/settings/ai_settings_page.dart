@@ -16,6 +16,7 @@ import '../../../widgets/home/home_design.dart';
 import '../../../widgets/settings/settings_widgets.dart';
 import '../../library_backup_page.dart';
 import 'ai_cache_manage_page.dart';
+import 'ai_prompt_editor_page.dart';
 import 'ai_provider_page.dart';
 import 'ai_rate_page.dart';
 import 'ai_settings_widgets.dart';
@@ -290,14 +291,17 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   Future<void> _editPrompt() async {
     final global = _settings.global;
     final current = global.behaviorPrompt ?? kAiDefaultBehaviorPrompt;
-    final text = await showAiTextInputDialog(
-      context,
-      title: '编辑全局提示词',
-      hint: '留空表示使用内置提示词',
-      initial: current,
-      maxLines: 12,
+    final text = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => AiPromptEditorPage(
+          title: '编辑全局提示词',
+          hint: '留空表示使用内置提示词',
+          initial: current,
+          allowEmpty: true,
+        ),
+      ),
     );
-    if (text == null) return;
+    if (text == null || !mounted) return;
     final trimmed = text.trim();
     final next = trimmed.isEmpty || trimmed == kAiDefaultBehaviorPrompt.trim()
         ? null

@@ -13,6 +13,7 @@ import '../../../widgets/settings/settings_widgets.dart';
 import '../feedback/ai_feedback_manage_page.dart';
 import 'ai_local_rebind_page.dart';
 import 'ai_prompt_candidate_page.dart';
+import 'ai_prompt_editor_page.dart';
 import 'ai_settings_page.dart';
 import 'ai_settings_widgets.dart';
 import 'ai_usage_page.dart';
@@ -289,19 +290,16 @@ class _AiBookSettingsPageState extends State<AiBookSettingsPage> {
     if (!mounted) return;
     switch (choice) {
       case 'edit':
-        final text = await showAiTextInputDialog(
-          context,
-          title: '编辑本书提示词',
-          hint: '写入本书覆写，不影响其他书',
-          initial: resolved.text,
-          maxLines: 12,
+        final text = await Navigator.of(context).push<String>(
+          MaterialPageRoute(
+            builder: (_) => AiPromptEditorPage(
+              title: '编辑本书提示词',
+              hint: '写入本书覆写，不影响其他书',
+              initial: resolved.text,
+            ),
+          ),
         );
-        if (text == null) return;
-        if (!mounted) return;
-        if (text.trim().isEmpty) {
-          aiShowSnack(context, '提示词不能为空');
-          return;
-        }
+        if (text == null || !mounted) return;
         await _run(
           () =>
               _settings.setBookOverride(widget.bookId, 'behaviorPrompt', text),

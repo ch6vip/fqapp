@@ -223,6 +223,10 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
   }
 
   Future<void> _editReasoning() async {
+    // The API key field may still own focus while its keyboard is hidden.
+    // Drop it before opening the dialog, otherwise closing the dialog restores
+    // that focus and reopens the keyboard.
+    FocusScope.of(context).unfocus();
     final current = _normalizeEffort(_reasoningEffort);
     final choice = await showAiChoiceDialog(
       context,
@@ -244,6 +248,7 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
       ],
     );
     if (choice == null || !mounted) return;
+    FocusScope.of(context).unfocus();
     setState(
       () =>
           _reasoningEffort = _normalizeEffort(AiReasoningEffort.parse(choice)),
@@ -251,11 +256,13 @@ class _ProviderEditPageState extends State<_ProviderEditPage> {
   }
 
   Future<void> _editTemperature() async {
+    FocusScope.of(context).unfocus();
     final result = await showAiTemperatureDialog(
       context,
       initial: _temperature,
     );
     if (result == null || !mounted) return;
+    FocusScope.of(context).unfocus();
     setState(() => _temperature = result.value);
   }
 
