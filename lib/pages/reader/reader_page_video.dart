@@ -114,6 +114,8 @@ extension _ReaderPageVideo on _ReaderPageState {
       _videoOpenRequest = null;
       _setControlsVisible(false);
       if (message != null) _showMessage(message);
+      _readerPanelOpen = false;
+      _syncSystemBars();
       await Navigator.push<void>(
         context,
         MaterialPageRoute(
