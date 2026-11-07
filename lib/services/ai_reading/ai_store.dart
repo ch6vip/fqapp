@@ -180,6 +180,64 @@ class AiStore {
     await _formal?.delete(formalKey(bookId, hash));
   }
 
+  /// Drops every formal correction result for the selected books, together
+  /// with the per-chapter status rows that point at those results. Feedback,
+  /// protections, prompts and usage ledgers live in other boxes and are left
+  /// untouched.
+  Future<void> clearFormalForBooks(Set<String> bookIds) async {
+    if (bookIds.isEmpty) return;
+    final formalKeys = <dynamic>[];
+    for (final key in _formal?.keys.toList() ?? const []) {
+      final entry = AiFormalCacheEntry.fromJson(_formal?.get(key));
+      if (entry != null && bookIds.contains(entry.bookId)) {
+        formalKeys.add(key);
+      }
+    }
+    if (formalKeys.isNotEmpty) await _formal?.deleteAll(formalKeys);
+
+    final statusKeys = <dynamic>[];
+    for (final key in _chapterStatus?.keys.toList() ?? const []) {
+      final status = AiChapterCheckStatus.fromJson(_chapterStatus?.get(key));
+      if (status != null && bookIds.contains(status.bookId)) {
+        statusKeys.add(key);
+      }
+    }
+    if (statusKeys.isNotEmpty) await _chapterStatus?.deleteAll(statusKeys);
+    if (formalKeys.isNotEmpty || statusKeys.isNotEmpty) {
+      await _formal?.compact();
+      await _chapterStatus?.compact();
+    }
+  }
+
+  /// Drops the formal results selected by their content hash for one book.
+  /// Every chapter status using the same hash is removed too, because the
+  /// formal box is keyed by `(bookId, canonicalHash)` and those chapters share
+  /// the same cached result.
+  Future<void> clearFormalForHashes(String bookId, Set<String> hashes) async {
+    if (hashes.isEmpty) return;
+    final keys = [for (final hash in hashes) formalKey(bookId, hash)];
+    final existing = [
+      for (final key in keys)
+        if (_formal?.containsKey(key) ?? false) key,
+    ];
+    if (existing.isNotEmpty) await _formal?.deleteAll(existing);
+
+    final statusKeys = <dynamic>[];
+    for (final key in _chapterStatus?.keys.toList() ?? const []) {
+      final status = AiChapterCheckStatus.fromJson(_chapterStatus?.get(key));
+      if (status == null || status.bookId != bookId) continue;
+      if (status.canonicalHash != null &&
+          hashes.contains(status.canonicalHash)) {
+        statusKeys.add(key);
+      }
+    }
+    if (statusKeys.isNotEmpty) await _chapterStatus?.deleteAll(statusKeys);
+    if (existing.isNotEmpty || statusKeys.isNotEmpty) {
+      await _formal?.compact();
+      await _chapterStatus?.compact();
+    }
+  }
+
   /// Drops every formal correction result. Feedback, protections, prompts and
   /// usage ledgers are separate assets and are intentionally untouched.
   Future<void> clearFormal() async {
