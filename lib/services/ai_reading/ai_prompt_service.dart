@@ -3,6 +3,7 @@ import 'ai_client.dart';
 import 'ai_credentials.dart';
 import 'ai_models.dart';
 import 'ai_prompt.dart';
+import 'ai_request_foreground.dart';
 import 'ai_settings.dart';
 import 'ai_store.dart';
 
@@ -181,31 +182,49 @@ class AiPromptService {
       );
       throw blocked;
     }
+    try {
+      await AiRequestForeground.acquire();
+    } on AiNetworkException catch (error) {
+      await AiBudgetService.instance.release(reservation);
+      await _store.putRun(
+        runRecord.copyWith(
+          state: AiRunState.failed,
+          finishedAt: DateTime.now(),
+          errorCodes: [error.code],
+          detail: error.message,
+        ),
+      );
+      rethrow;
+    }
     AiProviderResponse response;
     try {
-      response = await _client.complete(
-        profile: provider,
-        apiKey: key,
-        model: model,
-        messages: [
-          {
-            'role': 'system',
-            'content':
-                '你是中文小说校对提示词编辑。只输出修订后的完整提示词，不要解释，不要 Markdown。'
-                '保留原有保守校对原则，不得放宽为文学润色。',
-          },
-          {
-            'role': 'user',
-            'content':
-                '当前提示词：\n${_settings.resolvedPrompt(bookId).text}\n\n'
-                '用户反馈样本：\n$samples\n\n'
-                '${instruction ?? '请根据这些反馈收紧提示词，减少误改，并补充容易漏掉的同类错误。'}',
-          },
-        ],
-        outputMode: AiOutputMode.jsonObject,
-        timeout: Duration(seconds: effective.requestTimeoutSeconds),
-        jsonResponse: false,
-      );
+      try {
+        response = await _client.complete(
+          profile: provider,
+          apiKey: key,
+          model: model,
+          messages: [
+            {
+              'role': 'system',
+              'content':
+                  '你是中文小说校对提示词编辑。只输出修订后的完整提示词，不要解释，不要 Markdown。'
+                  '保留原有保守校对原则，不得放宽为文学润色。',
+            },
+            {
+              'role': 'user',
+              'content':
+                  '当前提示词：\n${_settings.resolvedPrompt(bookId).text}\n\n'
+                  '用户反馈样本：\n$samples\n\n'
+                  '${instruction ?? '请根据这些反馈收紧提示词，减少误改，并补充容易漏掉的同类错误。'}',
+            },
+          ],
+          outputMode: AiOutputMode.jsonObject,
+          timeout: Duration(seconds: effective.requestTimeoutSeconds),
+          jsonResponse: false,
+        );
+      } finally {
+        await AiRequestForeground.release();
+      }
     } catch (error) {
       final finished = DateTime.now();
       final usage = error is AiNetworkException
