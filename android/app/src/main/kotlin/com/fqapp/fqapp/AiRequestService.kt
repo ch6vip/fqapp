@@ -29,6 +29,7 @@ import androidx.core.app.ServiceCompat
 class AiRequestService : Service() {
     private var foregroundStarted = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var statusText: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -73,6 +74,14 @@ class AiRequestService : Service() {
             AiRequestServiceRegistry.onStartFailed(error)
             stopSelf(startId)
         }
+    }
+
+    /** Updates the visible status without changing the foreground lease. */
+    fun updateNotification(text: String) {
+        statusText = text
+        if (!foregroundStarted) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification())
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -145,7 +154,9 @@ class AiRequestService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(getString(R.string.ai_request_notification_title))
-            .setContentText(getString(R.string.ai_request_notification_text))
+            .setContentText(
+                statusText ?: getString(R.string.ai_request_notification_text)
+            )
             .setContentIntent(contentIntent)
             .addAction(0, getString(R.string.ai_request_stop), stopIntent)
             .setOnlyAlertOnce(true)

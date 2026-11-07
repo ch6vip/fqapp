@@ -67,6 +67,13 @@ object AiRequestServiceRegistry {
         }
     }
 
+    fun updateNotification(text: String) {
+        handler.post {
+            val current = synchronized(lock) { service }
+            current?.updateNotification(text)
+        }
+    }
+
     fun release(leaseId: String) {
         handler.post {
             synchronized(lock) {

@@ -58,6 +58,17 @@ class AiRequestForeground {
     }
   }
 
+  /// Updates the visible foreground notification. Ignored on other platforms
+  /// and when the native service is not running yet.
+  static Future<void> updateNotification(String text) async {
+    if (!_isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('updateNotification', {'text': text});
+    } catch (error) {
+      debugPrint('[AI] notification update failed: $error');
+    }
+  }
+
   /// Returns only after Android has actually entered the foreground state.
   ///
   /// Non-Android platforms are a no-op; iOS/desktop keep their existing
