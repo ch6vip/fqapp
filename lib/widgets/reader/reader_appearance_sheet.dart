@@ -1,8 +1,21 @@
+// Appearance panel styled with Wenku8_Flutter (revision ebcd7f1) controls:
+//   lib/reader_tools.dart -> glass parameter rows, choice chips, switch rows
+//   and action buttons; lib/reader_chrome.dart -> sheet entrance geometry.
+//
+// All fqapp typography options, keys, persistence and the "more settings"
+// sub-sheet are unchanged. The brightness Slider intentionally stays a
+// Material slider: the reader drives device brightness through that exact
+// onChanged/onChangeEnd contract, covered by reader_interface_test.
+//
+// Mechanical substitutions: shared `lib/widgets/wenku` exports and
+// `GlassControls.chip` in place of `AppControls` / `GlassTextButton`.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
+import '../wenku/wenku_ui.dart';
 import 'reader_theme.dart';
 import 'settings/reader_turn_settings.dart';
 import 'settings/reader_font_picker_sheet.dart';
@@ -162,7 +175,7 @@ class _ReaderAppearanceSheetState
       : value.brightness;
 
   void _apply(ReaderPreferences Function(ReaderPreferences) change) =>
-      updatePreferences(change(value));
+      commitPreferences(change(value));
 
   /// 拖动亮度：与内联面板一致，手动调整即退出「跟随系统」。
   void _setBrightness(double level) {
@@ -238,12 +251,13 @@ class _ReaderAppearanceSheetState
       title: '阅读设置',
       closeTooltip: '关闭排版设置',
       scrollKey: const ValueKey('reader-appearance-scroll'),
+      onClose: flushPreferences,
       children: [
         if (widget.deviceAvailable) _brightnessRow(),
         _fontSizeRow(),
         _backgroundRow(preset),
         if (_backgroundLocked) _backgroundLockNotice(preset),
-        ReaderTurnSettings(value: value, onChanged: updatePreferences),
+        ReaderTurnSettings(value: value, onChanged: commitPreferences),
         _spacingRow(),
         const ReaderSettingsDivider(),
         _actionsRow(),
@@ -264,13 +278,10 @@ class _ReaderAppearanceSheetState
           onChangeEnd: (_) => widget.onBrightnessEnd(),
           semanticFormatterCallback: (level) => '亮度 ${(level * 100).round()}%',
         );
-        final follow = TextButton(
+        final follow = GlassTextButton(
           key: const ValueKey('reader-follow-system'),
-          style: TextButton.styleFrom(
-            foregroundColor: value.followSystemBrightness
-                ? _displayPreset.accentColor
-                : _displayPreset.mutedTextColor,
-          ),
+          compact: true,
+          selected: value.followSystemBrightness,
           onPressed: _toggleFollowSystem,
           child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
         );
@@ -404,8 +415,9 @@ class _ReaderAppearanceSheetState
             color: preset.mutedTextColor,
           )
         : null;
-    return TextButton(
+    return GlassTextButton(
       key: key,
+      compact: true,
       onPressed: onTap,
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -489,20 +501,18 @@ class _FontSizeStepper extends StatelessWidget {
     }) {
       final next = value + delta;
       return Expanded(
-        child: Tooltip(
-          message: tooltip,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(90),
-            onTap: next < _min || next > _max
-                ? null
-                : () => onChanged(next.clamp(_min, _max).toDouble()),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 36),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: preset.fieldColor,
-                borderRadius: BorderRadius.circular(90),
-              ),
+        // Tooltip wraps the pill itself (not the whole slot): the test and
+        // accessibility locator must land on the real 34 px glass target.
+        child: Center(
+          child: Tooltip(
+            message: tooltip,
+            child: GlassControls.chip(
+              context,
+              selected: false,
+              onPressed: next < _min || next > _max
+                  ? null
+                  : () => onChanged(next.clamp(_min, _max).toDouble()),
+              tint: preset.panelColor,
               child: Text(
                 glyph,
                 style: TextStyle(

@@ -14,7 +14,7 @@ import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/widgets/desktop_app_frame.dart';
-import 'package:fqapp/widgets/detail/detail_read_bar.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'support/fakes.dart';
 
 const _capture = bool.fromEnvironment('FQAPP_CAPTURE_LAYOUT');
@@ -84,10 +84,13 @@ void main() {
         );
         expect(tester.takeException(), isNull);
         if (sample.layout == 'mobile') {
-          expect(find.byType(DetailReadBar), findsOneWidget);
+          // The ported phone page uses the shared glass action dock.
+          expect(find.byKey(const Key('detail_read_button')), findsOneWidget);
         } else {
           expect(find.byType(AppBar), findsNothing);
-          expect(find.byType(DetailReadBar), findsNothing);
+          // The desktop workspace keeps its own side card/buttons; the phone
+          // dock must not leak into it.
+          expect(find.byKey(const Key('detail_read_button')), findsNothing);
           expect(
             find.byKey(Key('desktop-detail-${sample.layout}')),
             findsOneWidget,
@@ -137,6 +140,20 @@ void main() {
     final observer = _Observer();
     await _pump(tester, const Size(1366, 768), observer: observer);
     expect(find.byKey(const Key('detail_description_text')), findsOneWidget);
+    // The shared archive heading has no gutter of its own; the desktop 简介
+    // block pads it so the title and body share a left edge.
+    final heading = find.descendant(
+      of: find.byType(ArchiveSection),
+      matching: find.text('简介'),
+    );
+    expect(heading, findsOneWidget);
+    expect(
+      tester.getTopLeft(heading).dx,
+      closeTo(
+        tester.getTopLeft(find.byKey(const Key('detail_description_text'))).dx,
+        0.5,
+      ),
+    );
     // 评分只在左栏 hero 出现一次，旧的统计卡与书评评分卡都已移除。
     expect(find.byKey(const Key('detail_rating_line')), findsOneWidget);
     expect(find.text('9.5'), findsOneWidget);

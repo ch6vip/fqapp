@@ -1,13 +1,10 @@
-import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 import '../models/media_item.dart';
-import '../services/poster_cache.dart';
 import 'home/home_design.dart';
+import 'shelf/shelf_cover_image.dart';
 import 'shelf/shelf_design.dart';
 
 // ---------------------------------------------------------------------------
@@ -47,11 +44,12 @@ class _ShelfCover extends StatelessWidget {
             borderRadius: BorderRadius.circular(radius),
             child: ColoredBox(
               color: palette.soft,
-              child: _ShelfCoverImage(
+              child: ShelfCoverImage(
                 item: item,
                 fallback: fallback,
                 width: width,
                 height: height,
+                decodeWidth: math.max(1, (width * 3).round()),
               ),
             ),
           ),
@@ -144,66 +142,6 @@ class _SelectionBox extends StatelessWidget {
       ),
     );
   }
-}
-
-class _ShelfCoverImage extends StatelessWidget {
-  final MediaItem item;
-  final Widget fallback;
-  final double width;
-  final double height;
-
-  const _ShelfCoverImage({
-    required this.item,
-    required this.fallback,
-    required this.width,
-    required this.height,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final value = item.cover.trim();
-    if (value.isEmpty) return fallback;
-    final decodeWidth = math.max(1, (width * 3).round());
-    if (_isRemoteCover(value)) {
-      return CachedNetworkImage(
-        cacheManager: PosterCache.instance,
-        imageUrl: value,
-        fit: BoxFit.cover,
-        memCacheWidth: decodeWidth,
-        fadeInDuration: const Duration(milliseconds: 150),
-        placeholder: (_, _) => fallback,
-        errorWidget: (_, _, _) => fallback,
-      );
-    }
-    final file = _localCoverFile(value);
-    if (file == null) return fallback;
-    if (file.path.toLowerCase().endsWith('.svg')) {
-      return SvgPicture.file(
-        file,
-        fit: BoxFit.cover,
-        placeholderBuilder: (_) => fallback,
-      );
-    }
-    return Image.file(
-      file,
-      fit: BoxFit.cover,
-      cacheWidth: decodeWidth,
-      gaplessPlayback: true,
-      errorBuilder: (_, _, _) => fallback,
-    );
-  }
-}
-
-bool _isRemoteCover(String value) {
-  final lower = value.toLowerCase();
-  return lower.startsWith('http://') || lower.startsWith('https://');
-}
-
-File? _localCoverFile(String value) {
-  final path = value.toLowerCase().startsWith('file://')
-      ? Uri.tryParse(value)?.toFilePath() ?? ''
-      : value;
-  return path.isEmpty ? null : File(path);
 }
 
 class _DefaultCover extends StatelessWidget {

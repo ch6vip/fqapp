@@ -123,11 +123,11 @@ void main() {
     // 弹层标题和未选中的集数格以前硬编码为纯黑字/6% 黑底，深色下看不见。
     expect(
       tester.widget<Text>(find.text('离线缓存 · 测试剧')).style?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     expect(
       tester.widget<Text>(find.text('第 1 集')).style?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     final cell = tester.widget<Container>(
       find.descendant(
@@ -135,7 +135,7 @@ void main() {
         matching: find.byType(Container),
       ),
     );
-    expect((cell.decoration! as BoxDecoration).color, const Color(0xFF202023));
+    expect((cell.decoration! as BoxDecoration).color, const Color(0xFF2D2D2D));
   });
 
   testWidgets('点选集 → 下载按钮入队，任务态实时显示', (tester) async {
