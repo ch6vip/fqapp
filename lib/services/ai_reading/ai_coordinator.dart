@@ -90,6 +90,11 @@ class AiCoordinator {
     );
     final effective = _settings.resolve(bookId);
     final key = _generationKey(bookId, snapshot.canonicalHash);
+    // Capture the fence at request start, not after the model returns. A clear
+    // that happens while this request is in flight must still reject its write.
+    final cacheEpochAtStart = _store.formalEpoch;
+    final bookEpochAtStart = _store.bookEpoch(bookId);
+    final hashEpochAtStart = _store.hashEpoch(bookId, snapshot.canonicalHash);
     final bypassFormalCache =
         kind == AiRunKind.trial || kind == AiRunKind.promptOptimize;
     AiFormalCacheEntry? cachedFormal;
@@ -544,6 +549,9 @@ class AiCoordinator {
             generation: generation,
             model: model,
             promptHash: prompt.hash,
+            cacheEpoch: cacheEpochAtStart,
+            bookEpoch: bookEpochAtStart,
+            hashEpoch: hashEpochAtStart,
           );
           try {
             final committed = await _store.putFormal(entry);
@@ -726,6 +734,9 @@ class AiCoordinator {
     required int generation,
     required String model,
     required String promptHash,
+    required int cacheEpoch,
+    required int bookEpoch,
+    required int hashEpoch,
   }) {
     final encoded = jsonEncode(edits.map((e) => e.toJson()).toList());
     return AiFormalCacheEntry(
@@ -742,8 +753,9 @@ class AiCoordinator {
       integrityHash: aiIntegrityHash(encoded),
       model: model,
       promptHash: promptHash,
-      cacheEpoch: _store.formalEpoch,
-      bookEpoch: _store.bookEpoch(bookId),
+      cacheEpoch: cacheEpoch,
+      bookEpoch: bookEpoch,
+      hashEpoch: hashEpoch,
     );
   }
 
