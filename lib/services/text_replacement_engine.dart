@@ -50,6 +50,43 @@ class TextOffsetMap {
   final int sourceLength, displayLength;
   final List<_MapStage> _stages;
 
+  factory TextOffsetMap.identity(int length) =>
+      TextOffsetMap(length, length, const []);
+
+  /// Builds one mapping stage from source/display replacement segments.
+  factory TextOffsetMap.fromSegments(
+    int sourceLength,
+    int displayLength,
+    List<({int start, int end, int outputStart, int outputEnd})> segments,
+  ) {
+    final edits = [
+      for (final segment in segments)
+        _Edit(
+          segment.start,
+          segment.end,
+          segment.outputStart,
+          segment.outputEnd,
+        ),
+    ]..sort((a, b) => a.start.compareTo(b.start));
+    return TextOffsetMap(
+      sourceLength,
+      displayLength,
+      edits.isEmpty ? const [] : [_MapStage(edits)],
+    );
+  }
+
+  /// Composes this map with [next], where [next] maps this map's display
+  /// coordinates into its own display coordinates.
+  TextOffsetMap followedBy(TextOffsetMap next) {
+    if (_stages.isEmpty) return next;
+    if (next._stages.isEmpty) return this;
+    return TextOffsetMap(
+      sourceLength,
+      next.displayLength,
+      [..._stages, ...next._stages],
+    );
+  }
+
   int toSource(int displayOffset, {required TextBoundaryBias bias}) {
     var value = displayOffset.clamp(0, displayLength);
     for (final stage in _stages.reversed) {

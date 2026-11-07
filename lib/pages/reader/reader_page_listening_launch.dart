@@ -117,6 +117,18 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         initialContent: content,
         replacementSnapshot: snapshot,
         replacementStore: _replacementStore,
+        displayResolver: (content, index) async {
+          final target = widget.chapters[index];
+          final view = await AiReadingController.instance.viewFor(
+            bookId: widget.bookId,
+            chapterId: target.itemId,
+            chapterTitle: target.title,
+            content: content,
+            customSnapshot: snapshot,
+            temporaryOriginal: _aiTemporaryOriginal,
+          );
+          return view.composition.replacement;
+        },
         startOffset: offset,
         localOnly: widget.localOnly,
         textLoader: widget.chapterLoader,

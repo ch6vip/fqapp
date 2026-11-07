@@ -435,6 +435,8 @@ extension _ReaderPageBuild on _ReaderPageState {
             section: ReaderSettingsSection.operations,
           ),
           onFind: _loading || !_progressReady ? null : _showFind,
+          onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
+          aiLabel: _currentAiView?.hasCache == true ? 'AI 已校对' : 'AI 校对',
         ),
       ),
     ],

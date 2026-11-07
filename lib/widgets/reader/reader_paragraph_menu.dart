@@ -2,7 +2,7 @@
 //   lib/reader_selection.dart -> _selectionAction / the glass selection bar
 //
 // fqapp keeps its paragraph/range geometry and existing listening/underline
-// actions. The source glass surface now also exposes a real local bookmark;
+// actions. The source glass surface exposes local bookmarks and AI feedback;
 // narrow viewports scroll the actions without changing the selection anchor.
 // Mechanical substitutions: shared Wenku8 controls replace upstream app_ui;
 // GlassOverlaySurface is the shared port and uses the reader's Theme.
@@ -18,6 +18,7 @@ enum ReaderParagraphAction {
   underline,
   removeUnderline,
   bookmark,
+  missedChange,
 }
 
 /// Floating action bar for a long-pressed paragraph or a dragged selection.
@@ -51,6 +52,7 @@ class ReaderParagraphMenu extends StatelessWidget {
   final bool paragraphScoped;
   final bool showListening;
   final bool showBookmark;
+  final bool showAi;
   final double? maxWidth;
 
   /// True when the bar sits below the touched line. Kept because the reader
@@ -71,6 +73,7 @@ class ReaderParagraphMenu extends StatelessWidget {
     this.paragraphScoped = true,
     this.showListening = true,
     this.showBookmark = false,
+    this.showAi = false,
     this.maxWidth,
     this.belowAnchor = true,
   });
@@ -81,8 +84,11 @@ class ReaderParagraphMenu extends StatelessWidget {
     required bool paragraphScoped,
     bool showListening = true,
     bool showBookmark = false,
-  }) =>
-      (paragraphScoped ? (showListening ? 3 : 2) : 2) + (showBookmark ? 1 : 0);
+    bool showAi = false,
+  }) {
+    final base = paragraphScoped ? (showListening ? 3 : 2) : 2;
+    return base + (showBookmark ? 1 : 0) + (showAi ? 1 : 0);
+  }
 
   /// Clamped top-left for the bar anchored at [anchor] (window coordinates),
   /// plus which side of the anchor it ended up on.
@@ -104,6 +110,7 @@ class ReaderParagraphMenu extends StatelessWidget {
     required bool underlined,
     bool showListening = true,
     bool showBookmark = false,
+    bool showAi = false,
     double avoidBottom = 0,
   }) {
     const flipClearance = 10.0;
@@ -112,6 +119,7 @@ class ReaderParagraphMenu extends StatelessWidget {
       paragraphScoped: paragraphScoped,
       showListening: showListening,
       showBookmark: showBookmark,
+      showAi: showAi,
     );
     final barWidth = (count * _itemWidth + _multiPadding * 2).clamp(
       0.0,
@@ -174,6 +182,13 @@ class ReaderParagraphMenu extends StatelessWidget {
                   icon: CupertinoIcons.bookmark,
                   label: '书签',
                   onTap: () => onAction(ReaderParagraphAction.bookmark),
+                ),
+              if (showAi)
+                _Item(
+                  key: const ValueKey('reader-action-missed'),
+                  icon: CupertinoIcons.sparkles,
+                  label: '漏改了',
+                  onTap: () => onAction(ReaderParagraphAction.missedChange),
                 ),
               _Item(
                 key: const ValueKey('reader-action-underline'),
