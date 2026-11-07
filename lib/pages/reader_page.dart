@@ -5,6 +5,7 @@ import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';

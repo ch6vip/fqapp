@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.net.wifi.WifiManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -29,6 +30,7 @@ import androidx.core.app.ServiceCompat
 class AiRequestService : Service() {
     private var foregroundStarted = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private val wifiLocks = mutableListOf<WifiManager.WifiLock>()
     private var statusText: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -68,6 +70,11 @@ class AiRequestService : Service() {
                 foregroundStarted = true
             }
             acquireWakeLock()
+            acquireWifiLock()
+            Log.i(
+                TAG,
+                "foreground ready wake=${wakeLock?.isHeld == true} wifi=${wifiLocks.isNotEmpty()}",
+            )
             AiRequestServiceRegistry.onStarted(this)
         } catch (error: Throwable) {
             Log.e(TAG, "startForeground failed", error)
@@ -89,6 +96,7 @@ class AiRequestService : Service() {
         // notification behind; the next app start reconciles the request ledger.
         Log.w(TAG, "dataSync foreground service timed out")
         releaseWakeLock()
+        releaseWifiLock()
         AiRequestServiceRegistry.onTimedOut()
         stopSelf()
     }
@@ -99,6 +107,7 @@ class AiRequestService : Service() {
         if (!expected) Log.w(TAG, "service destroyed unexpectedly")
         foregroundStarted = false
         releaseWakeLock()
+        releaseWifiLock()
         super.onDestroy()
     }
 
@@ -118,6 +127,44 @@ class AiRequestService : Service() {
         val lock = wakeLock ?: return
         wakeLock = null
         if (lock.isHeld) lock.release()
+    }
+
+    private fun acquireWifiLock() {
+        if (wifiLocks.isNotEmpty()) return
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: return
+        val modes = buildList {
+            add(WifiManager.WIFI_MODE_FULL)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(WifiManager.WIFI_MODE_FULL_LOW_LATENCY)
+            } else {
+                add(WifiManager.WIFI_MODE_FULL_HIGH_PERF)
+            }
+        }
+        for (mode in modes.distinct()) {
+            try {
+                val lock = wifi.createWifiLock(mode, "fqapp:ai-request").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+                wifiLocks.add(lock)
+            } catch (error: Throwable) {
+                Log.w(TAG, "wifi lock mode $mode unavailable", error)
+            }
+        }
+        Log.i(TAG, "wifi locks=${wifiLocks.size}")
+    }
+
+    private fun releaseWifiLock() {
+        val locks = wifiLocks.toList()
+        wifiLocks.clear()
+        for (lock in locks) {
+            try {
+                if (lock.isHeld) lock.release()
+            } catch (error: Throwable) {
+                Log.w(TAG, "wifi lock release failed", error)
+            }
+        }
     }
 
     private fun createNotificationChannel() {

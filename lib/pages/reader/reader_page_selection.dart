@@ -528,6 +528,21 @@ extension _ReaderPageSelection on _ReaderPageState {
     }
     if (!mounted || generation != _loadGeneration) return;
     if (chapterId != _chapter.itemId) return;
+    final cacheKey = '${widget.bookId}\u0000$chapterId';
+    final previous = _underlineCache[cacheKey];
+    _underlineCache[cacheKey] = (
+      version: _chapter.version,
+      ids: ids,
+      ranges: ranges,
+    );
+    while (_underlineCache.length > 12) {
+      _underlineCache.remove(_underlineCache.keys.first);
+    }
+    final unchanged =
+        previous?.version == _chapter.version &&
+        setEquals(previous!.ids, ids) &&
+        previous.ranges.length == ranges.length;
+    if (unchanged) return;
     _setState(() {
       _underlines = ids;
       _rangeUnderlines = ranges;
