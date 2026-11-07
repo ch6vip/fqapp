@@ -329,6 +329,28 @@ void main() {
     expect(changed.reservedRunIds['req_1'], 'run_1');
   });
 
+  test('formal cache entry round-trips clear epochs', () {
+    final entry = AiFormalCacheEntry(
+      bookId: 'book',
+      canonicalHash: 'hash',
+      canonicalVersion: 1,
+      activeRunId: 'run',
+      edits: const [],
+      status: 'success_empty',
+      generation: 3,
+      updatedAt: DateTime(2026, 11, 7),
+      sourceUtf16Length: 10,
+      paragraphBoundaryFingerprint: 'fp',
+      integrityHash: 'ih',
+      cacheEpoch: 4,
+      bookEpoch: 2,
+    );
+    final decoded = AiFormalCacheEntry.fromJson(entry.toJson())!;
+    expect(decoded.cacheEpoch, 4);
+    expect(decoded.bookEpoch, 2);
+    expect(decoded.generation, 3);
+  });
+
   test('usage writes fail closed when AI storage is unavailable', () async {
     await expectLater(
       AiStore.instance.putProjection(

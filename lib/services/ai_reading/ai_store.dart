@@ -26,6 +26,10 @@ class AiStore {
   static const usageBoxName = 'ai_usage_aggregate_v1';
   static const pendingBoxName = 'ai_pending_bindings_v1';
   static const chapterStatusBoxName = 'ai_chapter_status_v1';
+  static const metaBoxName = 'ai_meta_v1';
+
+  static const _formalEpochKey = 'formalEpoch';
+  static const _bookEpochPrefix = 'bookEpoch:';
 
   Box<dynamic>? _formal;
   Box<dynamic>? _runs;
@@ -38,6 +42,7 @@ class AiStore {
   Box<dynamic>? _usage;
   Box<dynamic>? _pending;
   Box<dynamic>? _chapterStatus;
+  Box<dynamic>? _meta;
 
   Future<void>? _initFuture;
   bool _available = false;
@@ -107,6 +112,11 @@ class AiStore {
           chapterStatusBoxName,
           requireEncryption: true,
         ),
+        EncryptedHive.openBox<dynamic>(
+          Hive,
+          metaBoxName,
+          requireEncryption: true,
+        ),
       ]);
       _formal = opened[0];
       _runs = opened[1];
@@ -119,6 +129,7 @@ class AiStore {
       _usage = opened[8];
       _pending = opened[9];
       _chapterStatus = opened[10];
+      _meta = opened[11];
       _available = true;
       _status = null;
     } catch (error) {
@@ -130,6 +141,22 @@ class AiStore {
   // ── Formal cache ────────────────────────────────────────────────────────
 
   String formalKey(String bookId, String hash) => jsonEncode([bookId, hash]);
+
+  /// Bumped before deleting formal entries. An in-flight write that started
+  /// before the clear carries the old epoch and is rejected at commit time,
+  /// so a paid result cannot resurrect a cache the user just removed.
+  int get formalEpoch => (_meta?.get(_formalEpochKey) as int?) ?? 0;
+
+  int bookEpoch(String bookId) =>
+      (_meta?.get('$_bookEpochPrefix$bookId') as int?) ?? 0;
+
+  Future<void> _bumpFormalEpoch() async {
+    await _meta?.put(_formalEpochKey, formalEpoch + 1);
+  }
+
+  Future<void> _bumpBookEpoch(String bookId) async {
+    await _meta?.put('$_bookEpochPrefix$bookId', bookEpoch(bookId) + 1);
+  }
 
   Future<AiFormalCacheEntry?> formal(String bookId, String hash) async {
     if (!_available) return null;
@@ -157,6 +184,11 @@ class AiStore {
     _queues[queueKey] = previous.then((_) async {
       try {
         final current = AiFormalCacheEntry.fromJson(_formal?.get(key));
+        if (entry.cacheEpoch < formalEpoch ||
+            entry.bookEpoch < bookEpoch(entry.bookId)) {
+          if (!completer.isCompleted) completer.complete(false);
+          return;
+        }
         if (current != null && entry.generation < current.generation) {
           if (!completer.isCompleted) completer.complete(false);
           return;
@@ -177,6 +209,7 @@ class AiStore {
   }
 
   Future<void> deleteFormal(String bookId, String hash) async {
+    await _bumpBookEpoch(bookId);
     await _formal?.delete(formalKey(bookId, hash));
   }
 
@@ -186,6 +219,9 @@ class AiStore {
   /// untouched.
   Future<void> clearFormalForBooks(Set<String> bookIds) async {
     if (bookIds.isEmpty) return;
+    for (final bookId in bookIds) {
+      await _bumpBookEpoch(bookId);
+    }
     final formalKeys = <dynamic>[];
     for (final key in _formal?.keys.toList() ?? const []) {
       final entry = AiFormalCacheEntry.fromJson(_formal?.get(key));
@@ -215,6 +251,7 @@ class AiStore {
   /// the same cached result.
   Future<void> clearFormalForHashes(String bookId, Set<String> hashes) async {
     if (hashes.isEmpty) return;
+    await _bumpBookEpoch(bookId);
     final keys = [for (final hash in hashes) formalKey(bookId, hash)];
     final existing = [
       for (final key in keys)
@@ -241,6 +278,7 @@ class AiStore {
   /// Drops every formal correction result. Feedback, protections, prompts and
   /// usage ledgers are separate assets and are intentionally untouched.
   Future<void> clearFormal() async {
+    await _bumpFormalEpoch();
     await _formal?.clear();
     await _chapterStatus?.clear();
   }
