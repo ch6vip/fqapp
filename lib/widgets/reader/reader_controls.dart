@@ -1,6 +1,6 @@
 // Ported from Wenku8_Flutter@ebcd7f1, lib/pages.dart:_readerBottomControls /
-// _readerAction and lib/reader_chrome.dart. Six real reader actions now use the
-// upstream dock; the progress capsule scrubs within the current chapter.
+// _readerAction and lib/reader_chrome.dart. Six reader actions and an optional
+// AI action use the upstream dock; progress scrubs within the current chapter.
 // fqapp's listening/video controls remain separate, above this dock.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +31,8 @@ class ReaderControls extends StatelessWidget {
     required this.onOperations,
     required this.onFind,
     required this.onNight,
+    this.onAi,
+    this.aiLabel = 'AI 校对',
   });
 
   final ReaderPreferences preferences;
@@ -50,6 +52,8 @@ class ReaderControls extends StatelessWidget {
   final VoidCallback onOperations;
   final VoidCallback? onFind;
   final VoidCallback onNight;
+  final VoidCallback? onAi;
+  final String aiLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +122,7 @@ class ReaderControls extends StatelessWidget {
                       clip: false,
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
-                          maxWidth: DockLayout.widthFor(6),
+                          maxWidth: DockLayout.widthFor(onAi == null ? 6 : 7),
                         ),
                         child: LiquidGlass(
                           key: const ValueKey('reader-liquid-dock'),
@@ -160,6 +164,13 @@ class ReaderControls extends StatelessWidget {
                                 label: '查找',
                                 onPressed: onFind,
                               ),
+                              if (onAi != null)
+                                _DockAction(
+                                  key: const ValueKey('reader-ai'),
+                                  icon: CupertinoIcons.sparkles,
+                                  label: aiLabel,
+                                  onPressed: onAi,
+                                ),
                               _DockAction(
                                 key: const ValueKey('reader-night-entry'),
                                 icon: preset.isDark
