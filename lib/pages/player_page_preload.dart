@@ -51,6 +51,7 @@ extension _PlayerPagePreload on _PlayerPageState {
   }
 
   Future<void> _autoCacheNext() async {
+    if (!hasCompleteEpisodeCatalogue(widget.eps)) return;
     final index = _index;
     final prefs = DramaCachePreferences.instance;
     final ahead = prefs.ahead.value;
@@ -107,6 +108,7 @@ extension _PlayerPagePreload on _PlayerPageState {
       final summaries = await store.dramas();
       for (final summary in summaries) {
         if (summary.drama.id != widget.bookId) continue;
+        if (!hasCompleteEpisodeCatalogue(summary.drama.episodes)) continue;
         // 集记录里的 index 是「入队时的相对序号」，不能当全集位置用；
         // 目录 `drama.episodes` 的顺序才是权威的。
         final order = {
@@ -248,6 +250,9 @@ extension _PlayerPagePreload on _PlayerPageState {
     if (offline != null) {
       trace?.source = 'offline';
       return (offline, null);
+    }
+    if (widget.contentLoader == null && !(await currentConnectivity()).online) {
+      throw const OfflineEpisodeUnavailable();
     }
     final request = _sources.request(episode, refresh: refresh);
     trace?.source = request.origin.name;

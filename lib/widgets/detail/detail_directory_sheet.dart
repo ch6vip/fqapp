@@ -73,7 +73,7 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
       for (var index = 0; index < widget.chapters.length; index++)
         if (query.isEmpty ||
             (ordinal != null
-                ? index + 1 == ordinal
+                ? widget.chapters[index].hasKnownIndex && index + 1 == ordinal
                 : widget.chapters[index].title.toLowerCase().contains(query) ||
                       widget.chapters[index].volumeName.toLowerCase().contains(
                         query,
@@ -152,7 +152,9 @@ class _DetailDirectorySheetState extends State<DetailDirectorySheet> {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '共 ${widget.chapters.length} ${widget.chapterUnit}',
+                      hasCompleteEpisodeCatalogue(widget.chapters)
+                          ? '共 ${widget.chapters.length} ${widget.chapterUnit}'
+                          : '完整目录暂不可用',
                       style: TextStyle(color: palette.muted, fontSize: 12),
                     ),
                     const SizedBox(height: 20),
