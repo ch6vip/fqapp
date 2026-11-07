@@ -36,6 +36,21 @@ mixin _ReaderPageFields on State<ReaderPage> {
   ReaderThemePreset _dayTheme = ReaderThemePreset.light;
   final ValueNotifier<bool> _controlsVisibility = ValueNotifier(false);
   bool get _controlsVisible => _controlsVisibility.value;
+  late final AnimationController _chrome;
+  bool _reduceReaderMotion = false;
+  bool _settingsPreviewActive = false;
+  int? _settingsPreviewSourceOffset;
+  int _settingsPreviewRevision = 0;
+  int _readerNavigationGeneration = 0;
+  Future<void>? _bookmarkNavigationTask;
+  bool _progressPreviewActive = false;
+  bool _readerPanelOpen = false;
+  double? _pendingChapterPreview;
+  bool _chapterPreviewScheduled = false;
+  int? _previewLoadGeneration;
+  double? _chapterPreviewFraction;
+  ReaderTextSelection? _locationHighlight;
+  Timer? _locationHighlightTimer;
   ReaderVideoMatch? _videoMatch;
   BackendRequest? _videoMatchRequest;
   BackendRequest? _videoOpenRequest;
@@ -94,7 +109,6 @@ mixin _ReaderPageFields on State<ReaderPage> {
   /// 正在补取的字幕请求，键 = 章节 id。双击连点时不重复发请求。
   final _cueTrackRequests = <String, Future<SubtitleTrack>>{};
 
-  double? _chapterSeekValue;
   int _loadGeneration = 0;
   // Legado-style reading time: deltas are settled at scroll stops, chapter
   // switches and dispose, so no background timer is needed.
@@ -149,6 +163,7 @@ mixin _ReaderPageFields on State<ReaderPage> {
   int _fontGeneration = 0;
   String? _fontFamily;
   final _viewportKey = GlobalKey();
+  final _bottomControlsKey = GlobalKey();
   final _pagedKey = GlobalKey<ReaderPagedViewState>();
   ReaderChapterLayout? _chapterLayout;
   ReaderPageMode? _layoutMode;
@@ -210,6 +225,9 @@ mixin _ReaderPageFields on State<ReaderPage> {
   Map<String, dynamic>? _savedPosition;
   bool _needsRestore = true;
   bool _requestedStartAtEnd = false;
+
+  ReaderBookmarkStore get _bookmarkStore =>
+      widget.bookmarkStore ?? ReaderBookmarkStore.instance;
 
   ReaderStore get _readerStore => widget.readerStore ?? LibraryStore.instance;
 

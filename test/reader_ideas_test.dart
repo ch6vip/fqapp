@@ -676,10 +676,13 @@ void main() {
     testWidgets('the control menu has no ideas entry any more', (tester) async {
       await pumpReader(tester, ideasLoader: (_) async => ChapterIdeas.empty);
       await openControls(tester);
-      // Bubbles replaced the menu row; the four primary actions remain.
+      // Bubbles replaced the menu row; the primary actions remain.
       expect(find.text('段评'), findsNothing);
       expect(find.text('目录'), findsOneWidget);
-      expect(find.byTooltip('缓存'), findsOneWidget);
+      // 缓存挪进了顶栏「更多阅读操作」菜单。
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reader-cache')), findsOneWidget);
     });
 
     testWidgets('a failed idea load leaves the reader usable', (tester) async {
@@ -690,9 +693,11 @@ void main() {
       await openControls(tester);
       expect(find.text('段评'), findsNothing);
       expect(tester.takeException(), isNull);
-      // The four primary actions stay available.
+      // The primary actions stay available.
       expect(find.text('目录'), findsOneWidget);
-      expect(find.byTooltip('缓存'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reader-cache')), findsOneWidget);
     });
 
     testWidgets('refetches ideas for the next chapter', (tester) async {

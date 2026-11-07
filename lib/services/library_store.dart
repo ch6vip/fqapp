@@ -5,6 +5,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'encrypted_hive.dart';
+import 'reader_bookmark_store.dart';
 import 'reader_underline_store.dart';
 
 part 'history_trim.dart';
@@ -151,6 +152,7 @@ class LibraryStore implements ReaderStore {
     _watchedBox = await EncryptedHive.openBox(Hive, _watchedBoxName);
     // Hive has a directory now, so optional boxes may be opened too.
     ReaderUnderlineStore.hiveReady = true;
+    ReaderBookmarkStore.hiveReady = true;
     await _migrateFromSp();
     // Copy typed legacy media before a novel can reuse its original key.
     // The originals remain available if a write fails or migration is retried.

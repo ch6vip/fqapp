@@ -120,6 +120,7 @@ extension _ReaderJoinedContent on _ReaderPageState {
       _settleReadTime();
       _pauseListenFollow();
       _closeSelectionBar(clearSelection: true);
+      _clearLocationHighlight();
       final chapter = position.chapter;
       _setState(() {
         _index = position.index;
@@ -139,7 +140,9 @@ extension _ReaderJoinedContent on _ReaderPageState {
     }
     _lastPosition = position.scroll;
     _lastMaxScroll = position.chapter.layout.maxScroll;
-    _textOffset = position.chapter.layout.textOffsetAtScroll(position.scroll);
+    if (_settingsPreviewSourceOffset == null) {
+      _textOffset = position.chapter.layout.textOffsetAtScroll(position.scroll);
+    }
     if (changed) unawaited(_persistProgress());
   }
 
@@ -196,7 +199,7 @@ extension _ReaderJoinedContent on _ReaderPageState {
                   ),
                 )
               : null,
-          selection: active ? _selection : null,
+          selection: active ? _paintedSelection : null,
           rangeUnderlines: active ? _displayRangeUnderlines : const [],
           narrationRange: active ? _narrationRange : null,
           onParagraphLongPress: (block, global) {
