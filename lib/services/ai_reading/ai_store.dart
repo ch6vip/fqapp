@@ -30,6 +30,7 @@ class AiStore {
 
   static const _formalEpochKey = 'formalEpoch';
   static const _bookEpochPrefix = 'bookEpoch:';
+  static const _hashEpochPrefix = 'hashEpoch:';
 
   Box<dynamic>? _formal;
   Box<dynamic>? _runs;
@@ -150,12 +151,22 @@ class AiStore {
   int bookEpoch(String bookId) =>
       (_meta?.get('$_bookEpochPrefix$bookId') as int?) ?? 0;
 
+  String _hashEpochKey(String bookId, String hash) =>
+      '$_hashEpochPrefix${jsonEncode([bookId, hash])}';
+
+  int hashEpoch(String bookId, String hash) =>
+      (_meta?.get(_hashEpochKey(bookId, hash)) as int?) ?? 0;
+
   Future<void> _bumpFormalEpoch() async {
     await _meta?.put(_formalEpochKey, formalEpoch + 1);
   }
 
   Future<void> _bumpBookEpoch(String bookId) async {
     await _meta?.put('$_bookEpochPrefix$bookId', bookEpoch(bookId) + 1);
+  }
+
+  Future<void> _bumpHashEpoch(String bookId, String hash) async {
+    await _meta?.put(_hashEpochKey(bookId, hash), hashEpoch(bookId, hash) + 1);
   }
 
   Future<AiFormalCacheEntry?> formal(String bookId, String hash) async {
@@ -185,7 +196,8 @@ class AiStore {
       try {
         final current = AiFormalCacheEntry.fromJson(_formal?.get(key));
         if (entry.cacheEpoch < formalEpoch ||
-            entry.bookEpoch < bookEpoch(entry.bookId)) {
+            entry.bookEpoch < bookEpoch(entry.bookId) ||
+            entry.hashEpoch < hashEpoch(entry.bookId, entry.canonicalHash)) {
           if (!completer.isCompleted) completer.complete(false);
           return;
         }
@@ -209,7 +221,7 @@ class AiStore {
   }
 
   Future<void> deleteFormal(String bookId, String hash) async {
-    await _bumpBookEpoch(bookId);
+    await _bumpHashEpoch(bookId, hash);
     await _formal?.delete(formalKey(bookId, hash));
   }
 
@@ -251,7 +263,9 @@ class AiStore {
   /// the same cached result.
   Future<void> clearFormalForHashes(String bookId, Set<String> hashes) async {
     if (hashes.isEmpty) return;
-    await _bumpBookEpoch(bookId);
+    for (final hash in hashes) {
+      await _bumpHashEpoch(bookId, hash);
+    }
     final keys = [for (final hash in hashes) formalKey(bookId, hash)];
     final existing = [
       for (final key in keys)

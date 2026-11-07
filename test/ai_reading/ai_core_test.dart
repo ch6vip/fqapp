@@ -344,10 +344,12 @@ void main() {
       integrityHash: 'ih',
       cacheEpoch: 4,
       bookEpoch: 2,
+      hashEpoch: 7,
     );
     final decoded = AiFormalCacheEntry.fromJson(entry.toJson())!;
     expect(decoded.cacheEpoch, 4);
     expect(decoded.bookEpoch, 2);
+    expect(decoded.hashEpoch, 7);
     expect(decoded.generation, 3);
   });
 
