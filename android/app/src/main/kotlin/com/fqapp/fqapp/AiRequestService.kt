@@ -48,7 +48,17 @@ class AiRequestService : Service() {
                 AiRequestServiceRegistry.onUserStopped()
                 stopSelf()
             }
-            else -> stopSelf()
+            else -> {
+                // Android may restart a foreground service with a null intent
+                // while the app is moving between foreground and background.
+                // Treat that as a resume, not as a stop request.
+                Log.i(TAG, "service restart intent action=${intent?.action}")
+                if (AiRequestServiceRegistry.hasLeases()) {
+                    startOrJoin(startId)
+                } else {
+                    stopSelf()
+                }
+            }
         }
         return START_NOT_STICKY
     }
