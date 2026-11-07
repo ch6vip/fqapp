@@ -1,6 +1,23 @@
+// 日志查看页（fqapp 专有功能，上游没有对应页面）。
+//
+// The page shell follows the ported Wenku8 settings vocabulary from revision
+// ebcd7f1 (`lib/pages.dart` SettingsPage / `lib/feature_pages.dart`
+// ArchiveFeaturePage): ArchiveFeaturePage header + GlassIconButton actions and
+// ContentNotice empty states. The fqapp log toolbar, filter sheet, export
+// pipeline and the frozen-list/follow behaviour are kept as-is.
+//
+// Mechanical substitutions:
+// - `SettingsScaffold` + Material AppBar action -> `ArchiveFeaturePage` +
+//   `GlassIconButton` (tooltip/label「日志操作」unchanged). The body reserves
+//   the floating header height because it used to sit under an AppBar.
+// - `HomeStateView` -> `ContentNotice` (same title/message).
+// - The action sheet keeps `showHomeSheet` + `SettingsRow`: it is an
+//   fqapp-specific menu that other tests address by row type.
+
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -10,12 +27,12 @@ import '../services/app_log.dart';
 import '../services/book_txt_export.dart';
 import '../services/playlet_share.dart';
 import '../widgets/home/home_design.dart';
-import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_sheet.dart';
 import '../widgets/logs/log_entry_card.dart';
 import '../widgets/logs/log_filter_sheet.dart';
 import '../widgets/logs/log_viewer_chrome.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/wenku/wenku_ui.dart';
 
 enum _LogAction { copy, exportVisible, exportAll, exportBoth, share, clear }
 
@@ -529,76 +546,79 @@ class _LogViewerPageState extends State<LogViewerPage>
       for (var i = 0; i < _displayEntries.length; i++)
         ObjectKey(_displayEntries[i]): _displayEntries.length - 1 - i,
     };
-    return SettingsScaffold(
+    return ArchiveFeaturePage(
       title: '日志',
+      code: 'SYSTEM / LOGS',
       actions: [
-        IconButton(
-          tooltip: '日志操作',
+        GlassIconButton(
+          icon: CupertinoIcons.ellipsis,
+          label: '日志操作',
           onPressed: _exporting ? null : _showActions,
-          icon: Icon(
-            LucideIcons.ellipsis,
-            color: _exporting
-                ? palette.muted.withValues(alpha: 0.4)
-                : palette.ink,
-          ),
         ),
       ],
-      body: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            LogToolbar(
-              controller: _searchController,
-              query: _query,
-              source: _source,
-              playerOnly: _playerOnly,
-              filters: _filters,
-              onQueryChanged: (value) => _changeFilters(() => _query = value),
-              onPickFilters: _pickFilters,
-              onSelectSource: _selectSource,
-              onTogglePlayerOnly: _togglePlayerOnly,
-              onClearLevel: _clearLevel,
-              onClearTimeWindow: _clearTimeWindow,
-            ),
-            if (_exporting)
-              LinearProgressIndicator(
-                minHeight: 2,
-                color: palette.accentText,
-                backgroundColor: palette.line,
+      child: Padding(
+        // The archive header floats above the body; the log toolbar is the
+        // page's first row, so reserve its height (fqapp used an AppBar here).
+        padding: EdgeInsets.only(
+          top: MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight,
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              LogToolbar(
+                controller: _searchController,
+                query: _query,
+                source: _source,
+                playerOnly: _playerOnly,
+                filters: _filters,
+                onQueryChanged: (value) => _changeFilters(() => _query = value),
+                onPickFilters: _pickFilters,
+                onSelectSource: _selectSource,
+                onTogglePlayerOnly: _togglePlayerOnly,
+                onClearLevel: _clearLevel,
+                onClearTimeWindow: _clearTimeWindow,
               ),
-            Expanded(
-              child: _displayEntries.isEmpty
-                  ? _buildEmpty()
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: _onScroll,
-                      child: ListView.builder(
-                        key: const ValueKey('log-list'),
-                        controller: _scrollController,
-                        reverse: true,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: _displayEntries.length,
-                        findChildIndexCallback: (key) => indices[key],
-                        itemBuilder: (context, index) {
-                          final entry =
-                              _displayEntries[_displayEntries.length -
-                                  1 -
-                                  index];
-                          return LogEntryCard(
-                            key: ObjectKey(entry),
-                            entry: entry,
-                            onCopy: () => _copy([entry]),
-                          );
-                        },
+              if (_exporting)
+                LinearProgressIndicator(
+                  minHeight: 2,
+                  color: palette.accentText,
+                  backgroundColor: palette.line,
+                ),
+              Expanded(
+                child: _displayEntries.isEmpty
+                    ? _buildEmpty()
+                    : NotificationListener<ScrollNotification>(
+                        onNotification: _onScroll,
+                        child: ListView.builder(
+                          key: const ValueKey('log-list'),
+                          controller: _scrollController,
+                          reverse: true,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: _displayEntries.length,
+                          findChildIndexCallback: (key) => indices[key],
+                          itemBuilder: (context, index) {
+                            final entry =
+                                _displayEntries[_displayEntries.length -
+                                    1 -
+                                    index];
+                            return LogEntryCard(
+                              key: ObjectKey(entry),
+                              entry: entry,
+                              onCopy: () => _copy([entry]),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-            ),
-            LogFollowBar(
-              count: _displayEntries.length,
-              following: _following,
-              pendingCount: _pendingEntries.length,
-              onToggle: _following ? _pauseFollowing : _followLatest,
-            ),
-          ],
+              ),
+              LogFollowBar(
+                count: _displayEntries.length,
+                following: _following,
+                pendingCount: _pendingEntries.length,
+                onToggle: _following ? _pauseFollowing : _followLatest,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -610,15 +630,14 @@ class _LogViewerPageState extends State<LogViewerPage>
         _playerOnly ||
         _filters.level != null ||
         _filters.timeWindow != null;
-    return HomeStateView(
-      icon: filtered ? LucideIcons.search_x : LucideIcons.receipt_text,
+    return ContentNotice(
+      icon: filtered ? CupertinoIcons.search : CupertinoIcons.doc_plaintext,
       title: filtered
           ? '没有匹配的日志'
           : _source == LogSource.app
           ? '暂无日志'
           : '暂无核心日志',
       message: filtered ? '试试其他关键词，或调整筛选条件' : '运行应用后，日志会显示在这里',
-      scrollable: true,
     );
   }
 }

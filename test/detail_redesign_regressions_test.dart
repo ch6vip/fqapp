@@ -7,49 +7,57 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/services/app_theme.dart';
-import 'package:fqapp/widgets/detail/detail_chapter_row.dart';
-import 'package:fqapp/widgets/detail/detail_read_bar.dart';
+import 'package:fqapp/widgets/detail/detail_archive.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
 
 void main() {
-  testWidgets('the directory preview is centred on the saved chapter', (
-    tester,
-  ) async {
+  testWidgets('the inline catalogue marks the saved chapter', (tester) async {
     await _pumpBook(
       tester,
       store: MemoryReaderStore(
         entry: {'kind': 'book', 'chapterId': 'chapter-23', 'episode': 0},
       ),
     );
-    final rows = tester
-        .widgetList<DetailChapterRow>(
-          find.byType(DetailChapterRow, skipOffstage: false),
+    // The ported page lists the whole catalogue; the saved chapter (index 22)
+    // carries the upstream `上次阅读` marker and no other row does.
+    final saved = await _scrollToDirectoryEntry(tester, 22);
+    expect(tester.widget<DetailArchiveChapterRow>(saved).current, isTrue);
+    expect(
+      find.descendant(
+        of: saved,
+        matching: find.text('上次阅读', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    final neighbours = tester
+        .widgetList<DetailArchiveChapterRow>(
+          find.byType(DetailArchiveChapterRow, skipOffstage: false),
         )
-        .toList();
-    expect(rows.map((row) => row.chapter.title), [
-      '第22章 故事的另一种可能',
-      '第23章 故事的另一种可能',
-      '第24章 故事的另一种可能',
-    ]);
-    expect(rows.map((row) => row.current), [false, true, false]);
+        .where((row) => row.index != 22);
+    expect(neighbours.every((row) => !row.current), isTrue);
   });
 
-  testWidgets('without progress the preview falls back to the first three', (
+  testWidgets('without progress the catalogue starts at chapter one', (
     tester,
   ) async {
     await _pumpBook(tester);
+    // The inline catalogue is a lazy sliver below the intro; scroll until its
+    // first row exists, then inspect the built neighbourhood.
+    await _scrollToDirectoryEntry(tester, 0);
     final rows = tester
-        .widgetList<DetailChapterRow>(
-          find.byType(DetailChapterRow, skipOffstage: false),
+        .widgetList<DetailArchiveChapterRow>(
+          find.byType(DetailArchiveChapterRow, skipOffstage: false),
         )
         .toList();
-    expect(rows.map((row) => row.chapter.title), [
+    expect(rows.take(3).map((row) => row.title), [
       '第1章 故事的另一种可能',
       '第2章 故事的另一种可能',
       '第3章 故事的另一种可能',
     ]);
     expect(rows.every((row) => !row.current), isTrue);
+    expect(find.text('上次阅读', skipOffstage: false), findsNothing);
   });
 
   testWidgets('the rating appears exactly once on the page', (tester) async {
@@ -91,10 +99,12 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    final bar = find.byType(DetailReadBar);
-    expect(bar, findsOneWidget);
-    expect(tester.widget<DetailReadBar>(bar).enabled, isFalse);
-    expect(find.byKey(const Key('detail_read_button')), findsOneWidget);
+    // The ported bottom dock stays mounted; its primary pill is disabled
+    // while the catalogue is still loading.
+    final primary = find.byKey(const Key('detail_read_button'));
+    expect(primary, findsOneWidget);
+    expect(tester.widget<GlassPillButton>(primary).onPressed, isNull);
+    expect(find.byKey(const Key('detail_shelf_button')), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -117,38 +127,19 @@ void main() {
     });
   }
 
-  testWidgets('directory rows carry right-aligned 已读 / 读到这里 labels', (
-    tester,
-  ) async {
+  testWidgets('only the saved catalogue row says 上次阅读', (tester) async {
     await _pumpBook(
       tester,
       store: MemoryReaderStore(
         entry: {'kind': 'book', 'chapterId': 'chapter-23', 'episode': 0},
       ),
     );
-    expect(find.text('已读'), findsOneWidget);
-    expect(find.text('读到这里'), findsOneWidget);
-    // 读过的 22 章标「已读」，23 章标「读到这里」，24 章没有任何标签。
-    final currentRow = find.byKey(
-      const ValueKey('detail_preview_chapter_chapter-23'),
-    );
-    expect(
-      find.descendant(of: currentRow, matching: find.text('读到这里')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('detail_preview_chapter_chapter-24')),
-        matching: find.text('已读'),
-      ),
-      findsNothing,
-    );
-    // 标签贴右：右边缘与目录预览列的右边缘对齐。
-    final previewRight = tester
-        .getTopRight(find.byKey(const Key('detail_preview_chapters')))
-        .dx;
-    expect(tester.getTopRight(find.text('已读')).dx, closeTo(previewRight, 1));
-    expect(tester.getTopRight(find.text('读到这里')).dx, closeTo(previewRight, 1));
+    await _scrollToDirectoryEntry(tester, 22);
+    // Upstream marks the saved chapter with `上次阅读`; the old per-row
+    // 已读/读到这里 labels are gone.
+    expect(find.text('上次阅读', skipOffstage: false), findsOneWidget);
+    expect(find.text('已读', skipOffstage: false), findsNothing);
+    expect(find.text('读到这里', skipOffstage: false), findsNothing);
   });
 
   testWidgets('目录 carries the progress line, percentage and bar', (
@@ -287,11 +278,22 @@ void main() {
         },
       },
     );
+    // Archive codes are Latin/number labels and deliberately use the shared
+    // monospace `ArchiveCode`; body copy must still avoid the family.
     final paragraphs = tester.renderObjectList<RenderParagraph>(
       find.byType(RichText, skipOffstage: false),
     );
     expect(paragraphs, isNotEmpty);
+    final codeParagraphs = find
+        .descendant(
+          of: find.byType(ArchiveCode, skipOffstage: false),
+          matching: find.byType(RichText, skipOffstage: false),
+        )
+        .evaluate()
+        .map((element) => element.renderObject)
+        .toSet();
     for (final paragraph in paragraphs) {
+      if (codeParagraphs.contains(paragraph)) continue;
       final styles = <TextStyle?>[paragraph.text.style];
       paragraph.text.visitChildren((span) {
         if (span is TextSpan) styles.add(span.style);
@@ -305,8 +307,12 @@ void main() {
         );
       }
     }
+    // The ID row lives in the intro sliver above the catalogue, so it is
+    // built without scrolling even for a long directory.
+    final idRow = find.byKey(const Key('detail_id_row'), skipOffstage: false);
+    expect(idRow, findsOneWidget);
     final id = tester.widget<SelectableText>(
-      find.byKey(const Key('detail_id_text')),
+      find.byKey(const Key('detail_id_text'), skipOffstage: false),
     );
     expect(id.style?.fontFamily, isNot('monospace'));
     expect(
@@ -352,16 +358,37 @@ void main() {
       ),
     );
     expect(star.style!.color, Colors.black);
-    final pill = tester.widget<Container>(
+    // Upstream glass on e-ink is an opaque white plate with black ink, not the
+    // old solid black pill.
+    final plate = tester.widget<Material>(
       find
           .descendant(
             of: find.byKey(const Key('detail_read_button')),
-            matching: find.byType(Container),
+            matching: find.byType(Material),
           )
           .first,
     );
-    expect((pill.decoration! as BoxDecoration).color, Colors.black);
+    expect(plate.color, Colors.white);
+    expect((plate.shape! as RoundedRectangleBorder).side.color, Colors.black);
   });
+}
+
+Future<Finder> _scrollToDirectoryEntry(WidgetTester tester, int index) async {
+  final target = find.byKey(
+    ValueKey('detail-directory-entry-$index'),
+    skipOffstage: false,
+  );
+  // The whole catalogue is a lazy sliver below the intro; drag until the
+  // target row has been built.
+  for (var i = 0; i < 80 && target.evaluate().isEmpty; i++) {
+    await tester.drag(
+      find.byKey(const Key('detail_scroll')),
+      const Offset(0, -300),
+    );
+    await tester.pump();
+  }
+  expect(target, findsWidgets);
+  return target;
 }
 
 Future<void> _pumpBook(

@@ -20,7 +20,7 @@ abstract class ReaderSettingsState<T extends StatefulWidget> extends State<T> {
   bool _pending = false;
 
   /// 面板内改动：立即刷新自身，稍后合并通知阅读页。
-  void updatePreferences(ReaderPreferences next) {
+  void commitPreferences(ReaderPreferences next) {
     setState(() => value = next.normalized());
     _pending = true;
     _debounce?.cancel();

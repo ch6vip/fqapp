@@ -1,14 +1,31 @@
+// 本地接口服务台（fqapp 专有功能，上游没有对应页面）。
+//
+// Chrome follows the ported Wenku8 settings vocabulary from revision ebcd7f1:
+// ArchiveFeaturePage header, ContentPanel option panels, glass switch and
+// archive action rows. The backend probe, LAN sharing and copy behaviour are
+// unchanged.
+//
+// Mechanical substitutions:
+// - `SettingsScaffold` / `SettingsGroupCard` / `SettingsSwitch` / HomePalette
+//   rows -> `SettingsArchivePage`, `ContentPanel`, `SettingsPanel`,
+//   `SettingsLinkRow`, `GlassControls.toggle`.
+// - `SettingsArchivePage` drops the back button when the nearest Navigator has
+//   nothing to pop, so the Windows right pane cannot be emptied by it.
+// - The status dot reads the archive `colorScheme` instead of HomePalette.
+
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/backend_service.dart';
 import '../services/lan_share_preferences.dart';
-import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_archive_page.dart';
+import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/wenku/wenku_ui.dart';
 import 'log_viewer_page.dart';
 
 /// Local API service console.
@@ -100,9 +117,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
 
   String get _base {
     final base = BackendService.instance.baseUrl;
-    return base.endsWith('/')
-        ? base.substring(0, base.length - 1)
-        : base;
+    return base.endsWith('/') ? base.substring(0, base.length - 1) : base;
   }
 
   /// Port the core is bound to, taken from [baseUrl] so the LAN rows and the
@@ -125,8 +140,11 @@ class _ApiServicePageState extends State<ApiServicePage> {
     var ok = false;
     try {
       final base = BackendService.instance.baseUrl;
-      final response = await BackendService.instance.transport
-          .send('GET', Uri.parse('$base/health'), timeout: const Duration(seconds: 3));
+      final response = await BackendService.instance.transport.send(
+        'GET',
+        Uri.parse('$base/health'),
+        timeout: const Duration(seconds: 3),
+      );
       if (response.statusCode == 200) {
         ok = true;
         try {
@@ -171,7 +189,8 @@ class _ApiServicePageState extends State<ApiServicePage> {
         try {
           final decoded = jsonDecode(utf8.decode(response.body));
           if (decoded is Map && decoded['devices'] is num) {
-            result = '通了 · HTTP 200 · ${(decoded['devices'] as num).toInt()} 个设备';
+            result =
+                '通了 · HTTP 200 · ${(decoded['devices'] as num).toInt()} 个设备';
           }
         } catch (_) {}
       }
@@ -229,8 +248,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final healthy = _status == '运行中';
     // 相对路径：根地址已经在上面的卡片里，这里再拼一遍只会让列表更难读。
     const endpoints = <(String, String, String)>[
@@ -240,98 +258,99 @@ class _ApiServicePageState extends State<ApiServicePage> {
       ('正文', '/api/v1/chapters/{item_id}', '章节正文与插图'),
     ];
 
-    return SettingsScaffold(
+    return SettingsArchivePage(
       title: '本地接口',
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        children: [
-          // 状态：一行说完「跑没跑 + 几个设备 + 要不要再测一次」。
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: Row(
-              children: [
-                Container(
-                  key: const ValueKey('api-status-dot'),
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    // 运行中的状态点跟随主题强调色：墨水屏退化为纯黑。
-                    color: healthy ? palette.accentText : palette.muted,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  _devices == null ? _status : '$_status · $_devices 个设备',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: palette.ink,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _checking ? null : _probe,
-                  icon: _checking
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(LucideIcons.activity, size: 16),
-                  label: const Text('自测'),
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    foregroundColor: palette.muted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (_probeResult != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 20, bottom: 8),
-              child: Text(
-                _probeResult!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: _probeOk ? palette.accentText : palette.ink,
+      code: 'SYSTEM / LOCAL API',
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(
+            padding: featurePadding(context),
+            children: [
+              // 状态：一行说完「跑没跑 + 几个设备 + 要不要再测一次」。
+              ContentPanel(
+                child: Row(
+                  children: [
+                    Container(
+                      key: const ValueKey('api-status-dot'),
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        // 运行中的状态点跟随主题前景色：墨水屏退化为纯黑。
+                        color: healthy
+                            ? scheme.onSurface
+                            : scheme.onSurfaceVariant,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: AppText(
+                        _devices == null ? _status : '$_status · $_devices 个设备',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    GlassTextButton(
+                      onPressed: _checking ? null : _probe,
+                      compact: true,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_checking)
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          else
+                            const ArchiveIcon(
+                              CupertinoIcons.waveform_path_ecg,
+                              size: 16,
+                            ),
+                          const SizedBox(width: 6),
+                          const AppText('自测'),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-
-          // 地址 + 局域网开关：两者都是「怎么访问」，合成一块。
-          _card(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _addressRow(
-                  palette: palette,
-                  theme: theme,
-                  label: _lanShare ? '本机' : '地址',
-                  value: _base,
+              if (_probeResult != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, top: 8),
+                  child: AppText(
+                    _probeResult!,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: _probeOk ? scheme.onSurface : scheme.error,
+                    ),
+                  ),
                 ),
-                Divider(height: 20, color: palette.line),
-                InkWell(
-                  onTap: _switching ? null : () => _toggleLanShare(!_lanShare),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
+
+              // 地址 + 局域网开关：两者都是「怎么访问」，合成一块。
+              const SizedBox(height: 14),
+              ContentPanel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _addressRow(label: _lanShare ? '本机' : '地址', value: _base),
+                    const Divider(height: 22),
+                    Row(
                       children: [
-                        Icon(
+                        ArchiveIcon(
                           _lanShare
-                              ? LucideIcons.wifi
-                              : LucideIcons.wifi_off,
-                          size: 16,
-                          color: palette.muted,
+                              ? CupertinoIcons.wifi
+                              : CupertinoIcons.wifi_slash,
+                          size: 18,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '局域网共享',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: palette.ink,
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: AppText(
+                            '局域网共享',
+                            style: TextStyle(fontWeight: FontWeight.w600),
                           ),
                         ),
-                        const Spacer(),
                         if (_switching)
                           const SizedBox(
                             width: 14,
@@ -339,164 +358,137 @@ class _ApiServicePageState extends State<ApiServicePage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         else
-                          SettingsSwitch(
+                          GlassControls.toggle(
+                            context,
                             value: _lanShare,
+                            // 确认框还开着时不能先显示「开」：只有真正
+                            // 开启成功才跟随 `_lanShare` 翻转。
+                            optimistic: false,
                             semanticLabel: '局域网共享',
                             onChanged: _switching ? null : _toggleLanShare,
                           ),
                       ],
                     ),
-                  ),
-                ),
-                if (_lanShare) ...[
-                  if (_lanAddresses.isEmpty)
-                    Text(
-                      '未检测到局域网地址，请确认已连接 WiFi。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: palette.muted,
+                    if (_lanShare) ...[
+                      const SizedBox(height: 10),
+                      if (_lanAddresses.isEmpty)
+                        const SettingsHint(
+                          '未检测到局域网地址，请确认已连接 WiFi。',
+                          fontSize: 12,
+                        )
+                      else
+                        for (final ip in _lanAddresses)
+                          _addressRow(
+                            label: '局域网',
+                            value: 'http://$ip:$_listenPort',
+                          ),
+                      const SizedBox(height: 4),
+                      const SettingsHint(
+                        '无密码，同一网络下任何设备都能读取。公共 WiFi 建议关闭。',
+                        fontSize: 12,
                       ),
-                    )
-                  else
-                    for (final ip in _lanAddresses)
-                      _addressRow(
-                        palette: palette,
-                        theme: theme,
-                        label: '局域网',
-                        value: 'http://$ip:$_listenPort',
-                      ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '无密码，同一网络下任何设备都能读取。公共 WiFi 建议关闭。',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: palette.ink,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // 接口是参考信息，默认收起；要用的人自己点开。
-          const SizedBox(height: 8),
-          TextButton.icon(
-            onPressed: () =>
-                setState(() => _showEndpoints = !_showEndpoints),
-            icon: Icon(
-              _showEndpoints
-                  ? LucideIcons.chevron_down
-                  : LucideIcons.chevron_right,
-              size: 16,
-              color: palette.muted,
-            ),
-            label: Text(
-              _showEndpoints ? '隐藏接口' : '查看可用接口',
-              style: TextStyle(color: palette.muted),
-            ),
-            style: TextButton.styleFrom(
-              alignment: Alignment.centerLeft,
-              visualDensity: VisualDensity.compact,
-            ),
-          ),
-          if (_showEndpoints)
-            _card(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (var i = 0; i < endpoints.length; i++) ...[
-                    if (i > 0) Divider(height: 18, color: palette.line),
-                    _endpointRow(
-                      palette: palette,
-                      theme: theme,
-                      name: endpoints[i].$1,
-                      path: endpoints[i].$2,
-                      hint: endpoints[i].$3,
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Text(
-                    '路径拼在上面的地址后面；{ } 内是变量，需替换成实际 ID。',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: palette.muted,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          const SizedBox(height: 8),
-          _card(
-            child: InkWell(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const LogViewerPage()),
-              ),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(LucideIcons.terminal, size: 18, color: palette.muted),
-                    const SizedBox(width: 10),
-                    Text(
-                      '运行日志',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: palette.ink,
-                      ),
-                    ),
-                    const Spacer(),
-                    Icon(
-                      LucideIcons.chevron_right,
-                      size: 16,
-                      color: palette.muted,
-                    ),
+                    ],
                   ],
                 ),
               ),
-            ),
+
+              // 接口是参考信息，默认收起；要用的人自己点开。
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: GlassTextButton(
+                  compact: true,
+                  onPressed: () =>
+                      setState(() => _showEndpoints = !_showEndpoints),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ArchiveIcon(
+                        _showEndpoints
+                            ? CupertinoIcons.chevron_down
+                            : CupertinoIcons.chevron_right,
+                        size: 15,
+                      ),
+                      const SizedBox(width: 6),
+                      AppText(_showEndpoints ? '隐藏接口' : '查看可用接口'),
+                    ],
+                  ),
+                ),
+              ),
+              if (_showEndpoints)
+                ContentPanel(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (var i = 0; i < endpoints.length; i++) ...[
+                        if (i > 0) const Divider(height: 18),
+                        _endpointRow(
+                          name: endpoints[i].$1,
+                          path: endpoints[i].$2,
+                          hint: endpoints[i].$3,
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      const SettingsHint(
+                        '路径拼在上面的地址后面；{ } 内是变量，需替换成实际 ID。',
+                        fontSize: 12,
+                      ),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: 14),
+              ContentPanel(
+                padding: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
+                  child: SettingsLinkRow(
+                    icon: CupertinoIcons.doc_plaintext,
+                    title: '运行日志',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LogViewerPage()),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _card({required Widget child}) => SettingsGroupCard(
-    showDividers: false,
-    children: [Padding(padding: const EdgeInsets.all(16), child: child)],
-  );
-
   /// One copyable address line: label, address, copy affordance.
-  Widget _addressRow({
-    required HomePalette palette,
-    required ThemeData theme,
-    required String label,
-    required String value,
-  }) {
-    return InkWell(
+  Widget _addressRow({required String label, required String value}) {
+    final scheme = Theme.of(context).colorScheme;
+    return JellyTapSurface(
       onTap: value.isEmpty ? null : () => _copy('地址', value),
-      borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
             SizedBox(
               width: 44,
-              child: Text(
+              child: AppText(
                 label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: palette.muted,
-                ),
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),
             Expanded(
-              child: Text(
+              child: AppText(
                 value.isEmpty ? '等待服务启动' : value,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: palette.ink,
-                  fontFamily: 'monospace',
-                ),
+                style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),
-            Icon(LucideIcons.copy, size: 15, color: palette.muted),
+            ArchiveIcon(
+              CupertinoIcons.doc_on_doc,
+              size: 15,
+              color: scheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -505,28 +497,23 @@ class _ApiServicePageState extends State<ApiServicePage> {
 
   /// One endpoint: name, relative path, one-line purpose.
   Widget _endpointRow({
-    required HomePalette palette,
-    required ThemeData theme,
     required String name,
     required String path,
     required String hint,
   }) {
-    return InkWell(
+    final scheme = Theme.of(context).colorScheme;
+    return JellyTapSurface(
       onTap: () => _copy(name, '$_base$path'),
-      borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Text(
+                AppText(
                   name,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: palette.ink,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(width: 8),
                 Container(
@@ -535,33 +522,25 @@ class _ApiServicePageState extends State<ApiServicePage> {
                     vertical: 1,
                   ),
                   decoration: BoxDecoration(
-                    color: palette.soft,
+                    color: scheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(
+                  child: AppText(
                     'GET',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: palette.muted,
+                    style: TextStyle(
+                      fontSize: 10,
                       fontWeight: FontWeight.w600,
+                      color: scheme.onSurfaceVariant,
                     ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 2),
-            Text(
-              path,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: palette.ink,
-                fontFamily: 'monospace',
-              ),
-            ),
-            Text(
+            AppText(path, style: const TextStyle(fontFamily: 'monospace')),
+            AppText(
               hint,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: palette.muted,
-                fontSize: 11,
-              ),
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
           ],
         ),

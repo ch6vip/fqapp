@@ -79,7 +79,10 @@ void main() {
 
       // 改版后只保留头部一个「全部」入口，不再在底部重复一个按钮。
       expect(find.text('查看全部 42 条书评'), findsNothing);
-      expect(find.textContaining('42 条 · 全部'), findsOneWidget);
+      // The ported archive header splits the count (subtitle) from the
+      // 「全部」 glass action.
+      expect(find.text('42 条'), findsOneWidget);
+      expect(find.byKey(const Key('detail_reviews_more')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('detail_reviews_more')));
       expect(opened, isTrue);
