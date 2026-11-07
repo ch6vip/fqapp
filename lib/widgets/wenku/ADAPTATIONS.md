@@ -32,6 +32,8 @@ Non-identical mechanical substitutions:
 - `WenkuPage` owns the page scaffold and overlays the upstream frosted header.
   The upstream `LibraryWorkspace`/reflow master-detail shell is outside this
   shared UI slice.
+  fqapp supplies the default system-bar colors above the Navigator so pushed
+  archive pages update with the theme; reader/video annotations retain priority.
 - E-ink/high-contrast headers omit the transparent feather's height when using
   an opaque plate, so that plate cannot hide the first content row.
 - `glass_controls.dart` carries upstream `AppGlassSlider` and
@@ -138,4 +140,12 @@ upstream archive page: `WenkuPage`/`WenkuScope`, `ArchiveMasthead`,
 `WenkuControls.segments`, `ShelfToolbar`, `ArchiveFileCarousel`,
 `ShelfNovelRow`/`ShelfBookGridTile`, `showJellySheet`, `GlassMenuAnchor` and
 `confirmArchiveAction`.
+
+MuMu follow-up: the three-tab edit bar connects `chooseShelfCategory` to
+`ShelfGroupStore.assignKeys` using source-qualified content keys. Cancelling
+keeps the selection and assignments unchanged. Author-work entries carry the
+profile name, and detail-page shelf writes retain resolved metadata without
+replacing the entry's identity or source. The short-drama cache page groups its
+bulk actions in a shared glass menu instead of crowding the route title; action
+availability and destructive confirmation are unchanged.
 

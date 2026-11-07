@@ -359,11 +359,11 @@ class _AuthorPageState extends State<AuthorPage> {
 
   /// The work is opened through the normal detail page, which resolves the
   /// whole record (the author payload only carries a summary).
-  static MediaItem _asItem(AuthorWork work) => MediaItem(
+  MediaItem _asItem(AuthorWork work) => MediaItem(
     id: work.id,
     title: work.title,
     cover: work.cover,
-    author: '',
+    author: _displayName,
     badge: work.category,
     ep: '',
     kind: 'book',

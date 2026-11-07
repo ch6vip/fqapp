@@ -441,6 +441,44 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     if (entry != null) _longPress(entry);
   }
 
+  Future<void> _moveToCategory() async {
+    if (_assigningCategory) return;
+    final scope = _scope;
+    final keys = {
+      for (final entry in _entriesForScope(scope))
+        if (_selected.contains(entry.selectionKey)) entry.contentKey,
+    };
+    if (keys.isEmpty) return;
+    final store = ShelfGroupStore.instance;
+    if (!store.isReady) {
+      _showSnack('分类暂不可用，请稍后再试');
+      return;
+    }
+    final groups = {for (final key in keys) store.groupOfKey(key)};
+    setState(() => _assigningCategory = true);
+    try {
+      final category = await chooseShelfCategory(
+        context,
+        store: store,
+        selected: groups.length == 1 ? groups.single : ShelfCategory.all,
+        reduceMotion: _reduceMotion,
+      );
+      if (!mounted || category == null || _scope != scope || !_editing) return;
+      await store.assignKeys(keys, category);
+      if (!mounted) return;
+      // A completed write must not dismiss a newer selection or another tab.
+      if (_scope == scope && _editing && setEquals(_selected, keys)) {
+        _exitEdit();
+      }
+      _showSnack('已移至「${store.nameOf(category)}」');
+    } catch (error, stack) {
+      AppLog.w('shelf', '移动分类失败', error: error, stack: stack);
+      _showSnack(error is FormatException ? error.message : '移动分类失败，请重试');
+    } finally {
+      if (mounted) setState(() => _assigningCategory = false);
+    }
+  }
+
   /// 书架 / 收藏 tab 的「移出书架」：只把条目移出本地收藏库，阅读
   /// 历史保留。
   ///

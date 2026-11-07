@@ -7,8 +7,8 @@
 //   episode-level download state has no upstream counterpart and this unit is
 //   scoped to the page shell. The page now supplies the archive shell, section
 //   header and empty state around them.
-// - The three header actions keep their existing keys and pause/resume/clear
-//   behaviour, rendered as upstream `GlassIconButton`s.
+// - Bulk actions keep their existing keys and pause/resume/clear behaviour,
+//   grouped in a glass menu so the page title stays readable on phones.
 // - Loading/error retain fqapp's store semantics; the error uses the shared
 //   `FeatureError` treatment.
 import 'package:flutter/cupertino.dart';
@@ -20,6 +20,8 @@ import '../services/drama_downloader.dart';
 import '../widgets/cache/cached_drama_widgets.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
+
+enum _CacheAction { pause, resume, clear }
 
 /// 短剧离线缓存管理页（官方 DownloadManagementActivity 的「已下载」tab
 /// 形态）：按剧聚合的卡片 + 集级明细 + 删除（单集/整剧/全部）+ 占用统计
@@ -116,6 +118,64 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     }
     for (final summary in _dramas) {
       await _store.removeDrama(summary.drama.id);
+    }
+  }
+
+  Future<void> _openActions(BuildContext anchor) async {
+    final action = await showGlassMenu<_CacheAction>(
+      context: anchor,
+      reduceMotion: MediaQuery.disableAnimationsOf(anchor),
+      builder: (menu) => ListenableBuilder(
+        listenable: _downloader,
+        builder: (context, _) {
+          final tasks = _downloader.value;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GlassMenuItem(
+                key: const ValueKey('dramas-pause-all'),
+                icon: CupertinoIcons.pause_circle,
+                label: '暂停全部下载',
+                enabled: tasks.any(
+                  (task) =>
+                      task.status == DramaDownloadStatus.downloading ||
+                      task.status == DramaDownloadStatus.waiting,
+                ),
+                onPressed: () => Navigator.pop(menu, _CacheAction.pause),
+              ),
+              GlassMenuItem(
+                key: const ValueKey('dramas-resume-all'),
+                icon: CupertinoIcons.play_circle,
+                label: '继续全部下载',
+                order: 1,
+                enabled: tasks.any(
+                  (task) => task.status == DramaDownloadStatus.paused,
+                ),
+                onPressed: () => Navigator.pop(menu, _CacheAction.resume),
+              ),
+              GlassMenuItem(
+                key: const ValueKey('dramas-clear-all'),
+                icon: CupertinoIcons.trash,
+                label: '清空全部缓存',
+                order: 2,
+                enabled: _dramas.isNotEmpty,
+                onPressed: () => Navigator.pop(menu, _CacheAction.clear),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case _CacheAction.pause:
+        _downloader.pauseAll();
+      case _CacheAction.resume:
+        _downloader.resumeAll();
+      case _CacheAction.clear:
+        await _clearAll();
+      case null:
+        break;
     }
   }
 
@@ -226,36 +286,20 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final tasks = _downloader.value;
-    final hasActiveTasks = tasks.any(
-      (task) =>
-          task.status == DramaDownloadStatus.downloading ||
-          task.status == DramaDownloadStatus.waiting,
-    );
-    final hasPausedTasks = tasks.any(
-      (task) => task.status == DramaDownloadStatus.paused,
-    );
     return ArchiveFeaturePage(
       key: const ValueKey('dramas-page'),
       title: '短剧离线缓存',
       code: 'ARCHIVE / LOCAL STORAGE',
       actions: [
-        GlassIconButton(
-          key: const ValueKey('dramas-pause-all'),
-          icon: CupertinoIcons.pause_circle,
-          label: '暂停全部下载',
-          onPressed: hasActiveTasks ? _downloader.pauseAll : null,
-        ),
-        GlassIconButton(
-          key: const ValueKey('dramas-resume-all'),
-          icon: CupertinoIcons.play_circle,
-          label: '继续全部下载',
-          onPressed: hasPausedTasks ? _downloader.resumeAll : null,
-        ),
-        GlassIconButton(
-          key: const ValueKey('dramas-clear-all'),
-          icon: CupertinoIcons.trash,
-          label: '清空全部缓存',
-          onPressed: _dramas.isEmpty ? null : _clearAll,
+        GlassMenuAnchor(
+          child: Builder(
+            builder: (anchor) => GlassIconButton(
+              key: const ValueKey('dramas-more-actions'),
+              icon: CupertinoIcons.ellipsis,
+              label: '更多缓存操作',
+              onPressed: () => _openActions(anchor),
+            ),
+          ),
         ),
       ],
       child: _body(tasks, scheme),

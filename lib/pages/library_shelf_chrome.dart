@@ -166,8 +166,7 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
     ),
   );
 
-  /// 编辑态底功能栏：有数据支撑的只有「移出书架」（书架 / 收藏 tab，可撤销
-  /// 故直接执行）与「删除」（浏览历史 tab，不可撤销故保留确认）。
+  /// 三个 tab 共用分类归属；移出书架可撤销，删除历史仍需确认。
   Widget _editBottomBar(BuildContext context) {
     final removing = _tab != 1;
     final scheme = Theme.of(context).colorScheme;
@@ -182,14 +181,31 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          child: Row(
+          child: Wrap(
+            spacing: 16,
+            runSpacing: 8,
             children: [
+              GlassTextButton(
+                key: const Key('shelf-move-category-action'),
+                compact: true,
+                onPressed: _selected.isEmpty || _assigningCategory
+                    ? null
+                    : _moveToCategory,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ArchiveIcon(CupertinoIcons.folder, size: 20),
+                    SizedBox(width: 8),
+                    AppText('移至分类'),
+                  ],
+                ),
+              ),
               GlassTextButton(
                 key: Key(
                   removing ? 'shelf-remove-action' : 'history-delete-action',
                 ),
                 compact: true,
-                onPressed: _selected.isEmpty
+                onPressed: _selected.isEmpty || _assigningCategory
                     ? null
                     : () {
                         unawaited(
@@ -208,7 +224,6 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
                   ],
                 ),
               ),
-              const Spacer(),
             ],
           ),
         ),
