@@ -455,7 +455,26 @@ class AiCoordinator {
               transportRetries < effective.transportRetryLimit) {
             transportRetries++;
             final wait = networkError.retryAfter ?? const Duration(seconds: 1);
-            await Future<void>.delayed(wait);
+            if (await _waitBeforeRetry(wait, abortTrigger)) {
+              await _store.putRun(
+                run.copyWith(
+                  state: AiRunState.cancelled,
+                  attemptCount: requestCount,
+                  finishedAt: DateTime.now(),
+                  errorCodes: const ['REQUEST_ABORTED'],
+                  detail: '用户停止或前台服务已结束',
+                ),
+              );
+              onState?.call(AiRunState.cancelled);
+              return AiTaskResult(
+                ok: false,
+                runId: runId,
+                snapshot: snapshot,
+                error: '校对已停止',
+                errorCodes: const ['REQUEST_ABORTED'],
+                requestCount: requestCount,
+              );
+            }
             continue;
           }
           debugPrint(
@@ -679,6 +698,24 @@ class AiCoordinator {
     } finally {
       await foreground.release();
     }
+  }
+
+  /// Waits for a provider retry, but lets the user stop immediately and caps
+  /// an unreasonable Retry-After so a 429 cannot pin the FGS for hours.
+  Future<bool> _waitBeforeRetry(
+    Duration wait,
+    Future<void>? abortTrigger,
+  ) async {
+    const maxWait = Duration(seconds: 60);
+    final capped = wait > maxWait ? maxWait : wait;
+    if (abortTrigger == null) {
+      await Future<void>.delayed(capped);
+      return false;
+    }
+    return Future.any<bool>([
+      Future<void>.delayed(capped).then((_) => false),
+      abortTrigger.then((_) => true),
+    ]);
   }
 
   Future<_Gate?> _preflight({
