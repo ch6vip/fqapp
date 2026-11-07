@@ -345,7 +345,7 @@ class _ListenModePageState extends State<ListenModePage>
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      '第 ${_index + 1} 集 · ${_episodeTitle(_index)}',
+                      '${widget.episodes.isNotEmpty && widget.episodes[_index].hasKnownIndex ? '第 ${_index + 1} 集' : '当前视频'} · ${_episodeTitle(_index)}',
                       key: const ValueKey('listen-episode-title'),
                       textAlign: TextAlign.center,
                       maxLines: 1,

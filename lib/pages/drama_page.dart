@@ -24,6 +24,7 @@ import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/player_history.dart';
+import '../services/video_catalogue.dart';
 import '../services/player_style_config.dart';
 import '../services/shelf_store.dart';
 import '../services/short_series_font_scale.dart';
@@ -2132,24 +2133,15 @@ class _DramaPageState extends ConsumerState<DramaPage>
       final loader = widget.directoryLoader;
       // `tab` is a named parameter of the client, so the real call passes it by
       // name; a positional tear-off would degrade into a dynamic call.
-      var volumes = loadedEpisodes != null
-          ? [loadedEpisodes]
-          : loader != null
-          ? await loader(contentId, tab)
-          : await ApiClient.instance.directoryChapters(contentId, tab: tab);
-      if (volumes.isEmpty && item.episodeId != null) {
-        // A search result can be a single episode rather than a whole series.
-        volumes = [
-          [
-            Chapter(
-              itemId: item.episodeId!,
-              title: item.title,
-              volumeName: '剧集',
-            ),
-          ],
-        ];
-      }
-      final eps = volumes.expand((volume) => volume).toList(growable: false);
+      final eps =
+          loadedEpisodes ??
+          await loadVideoCatalogue(
+            seriesId: contentId,
+            tab: tab,
+            episodeId: item.episodeId,
+            title: item.title,
+            loader: loader == null ? null : () => loader(contentId, tab),
+          );
       if (eps.isEmpty) throw const ApiException('剧集列表暂时无法加载');
       final saved = await PlayerHistory(
         widget.historyStore ?? LibraryStore.instance,
