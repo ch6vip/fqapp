@@ -1,70 +1,66 @@
-// Ported from Wenku8_Flutter (revision ebcd7f1):
-//   lib/reader_tools.dart        -> ReaderChapterProgress (compact capsule)
-//   lib/pages.dart               -> _readerBottomControls / _readerAction
-//                                   (the reader glass dock)
-//   lib/reader_chrome.dart       -> readerDockPaintPadding geometry
-//
-// Mechanical substitutions:
-// - `app_ui.dart` AppText/GlassIconButton/LiquidGlass/JellyTapSurface ->
-//   the shared `lib/widgets/wenku` exports.
-// - `app_ui.dart` AppControls.slider -> GlassControls.slider
-//   (`lib/widgets/wenku/glass_controls.dart`).
-// - `NovelMotion` -> `WenkuMotion`; `DockLayout` is the already-ported shared
-//   geometry file.
-// - The upstream ProgressCapsule scrubs *within a chapter* through
-//   ReaderChapterProgress; fqapp's bottom bar seeks *across chapters*, so the
-//   slider keeps the existing chapter-index semantics and callback contract.
-// - Upstream's six dock entries (目录/书签/外观/操作/查找/夜读) narrow to the
-//   three fqapp reader actions that exist today (目录/夜间/设置). No entry is
-//   invented for a feature the reader does not have.
-// - The listening and video capsules stay in reader_page_menu_players.dart and
-//   are not part of this dock.
+// Ported from Wenku8_Flutter@ebcd7f1, lib/pages.dart:_readerBottomControls /
+// _readerAction and lib/reader_chrome.dart. Six real reader actions now use the
+// upstream dock; the progress capsule scrubs within the current chapter.
+// fqapp's listening/video controls remain separate, above this dock.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/reader_preferences.dart';
 import '../wenku/wenku_ui.dart';
+import 'reader_chapter_progress.dart';
+import 'reader_chrome.dart';
 import 'reader_theme.dart';
 
-/// Reading menu. Listening starts from the separate round entry above this bar.
 class ReaderControls extends StatelessWidget {
-  final ReaderPreferences preferences;
-  final int chapterIndex;
-  final int chapterCount;
-  final String chapterTitle;
-  final double seekValue;
-  final VoidCallback? onPrevious;
-  final VoidCallback? onNext;
-  final ValueChanged<double> onSeek;
-  final ValueChanged<double> onSeekEnd;
-  final VoidCallback onDirectory;
-  final VoidCallback onNight;
-  final VoidCallback onAppearance;
-
   const ReaderControls({
     super.key,
     required this.preferences,
     required this.chapterIndex,
-    required this.chapterCount,
     required this.chapterTitle,
-    required this.seekValue,
+    required this.fraction,
+    required this.animation,
+    required this.previewing,
     required this.onPrevious,
     required this.onNext,
-    required this.onSeek,
-    required this.onSeekEnd,
+    required this.onPreview,
+    required this.onCommitted,
+    required this.onPreviewChanged,
     required this.onDirectory,
-    required this.onNight,
+    required this.onBookmarks,
     required this.onAppearance,
+    required this.onOperations,
+    required this.onFind,
+    required this.onNight,
   });
+
+  final ReaderPreferences preferences;
+  final int chapterIndex;
+  final String chapterTitle;
+  final double? fraction;
+  final Animation<double> animation;
+  final bool previewing;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+  final ValueChanged<double> onPreview;
+  final ValueChanged<double> onCommitted;
+  final ValueChanged<bool> onPreviewChanged;
+  final VoidCallback onDirectory;
+  final VoidCallback onBookmarks;
+  final VoidCallback onAppearance;
+  final VoidCallback onOperations;
+  final VoidCallback? onFind;
+  final VoidCallback onNight;
 
   @override
   Widget build(BuildContext context) {
     final preset = preferences.themePreset;
-    final max = (chapterCount - 1).toDouble();
-    final upper = max < 0 ? 0.0 : max;
-    final tint = preset.panelColor;
-    final night = preset.isDark;
-    Widget content(BuildContext context) => Theme(
+    final dockAnimation = animation.drive(
+      CurveTween(curve: const Interval(0, .90)),
+    );
+    final progressAnimation = animation.drive(
+      CurveTween(curve: const Interval(.10, 1)),
+    );
+    return Theme(
       data: preset.theme(Theme.of(context)),
       child: Align(
         alignment: Alignment.bottomCenter,
@@ -77,29 +73,105 @@ class ReaderControls extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _chapterLine(preset),
-                  const SizedBox(height: 6),
-                  // Upstream narrows the capsule and dock to their action
-                  // count: `DockLayout.widthFor(5) - 32` and
-                  // `DockLayout.widthFor(n)` (pages.dart). Centering keeps the
-                  // glass compact on phones and tablets alike.
-                  Center(
+                  ReaderChromeLayer(
+                    animation: progressAnimation,
+                    interactionThreshold: 0,
+                    maintainSize: true,
+                    slide: const Offset(0, 1.28),
+                    curve: WenkuMotion.settle,
+                    scaleFrom: .90,
+                    clip: false,
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
                         maxWidth: DockLayout.widthFor(5) - 32,
                       ),
-                      child: _progressCapsule(context, preset, tint, upper),
+                      child: ReaderChapterProgress(
+                        key: ValueKey((
+                          'reader-chapter-progress',
+                          chapterIndex,
+                        )),
+                        preset: preset,
+                        fraction: fraction,
+                        chapterLabel: chapterTitle,
+                        onPreview: onPreview,
+                        onCommitted: onCommitted,
+                        onPreviewChanged: onPreviewChanged,
+                        onPrevious: onPrevious,
+                        onNext: onNext,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: DockLayout.widthFor(3),
+                  Visibility(
+                    visible: !previewing,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: ReaderChromeLayer(
+                      animation: dockAnimation,
+                      interactionThreshold: 0,
+                      maintainSize: true,
+                      slide: const Offset(0, 1),
+                      curve: WenkuMotion.settle,
+                      scaleFrom: .96,
+                      clip: false,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: DockLayout.widthFor(6),
+                        ),
+                        child: LiquidGlass(
+                          key: const ValueKey('reader-liquid-dock'),
+                          radius: DockLayout.heightOf(context) / 2,
+                          thickness: 16,
+                          tintColor: preset.panelColor,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: DockLayout.horizontalInset,
+                          ),
+                          child: Row(
+                            children: [
+                              _DockAction(
+                                key: const ValueKey('reader-catalogue-entry'),
+                                icon: CupertinoIcons.list_bullet,
+                                label: '目录',
+                                onPressed: onDirectory,
+                              ),
+                              _DockAction(
+                                key: const ValueKey('reader-bookmarks-entry'),
+                                icon: CupertinoIcons.bookmark,
+                                label: '书签',
+                                onPressed: onBookmarks,
+                              ),
+                              _DockAction(
+                                key: const ValueKey('reader-settings'),
+                                icon: CupertinoIcons.textformat,
+                                label: '外观',
+                                onPressed: onAppearance,
+                              ),
+                              _DockAction(
+                                key: const ValueKey('reader-operations-entry'),
+                                icon: CupertinoIcons.slider_horizontal_3,
+                                label: '操作',
+                                onPressed: onOperations,
+                              ),
+                              _DockAction(
+                                key: const ValueKey('reader-find-entry'),
+                                icon: CupertinoIcons.search,
+                                label: '查找',
+                                onPressed: onFind,
+                              ),
+                              _DockAction(
+                                key: const ValueKey('reader-night-entry'),
+                                icon: preset.isDark
+                                    ? CupertinoIcons.sun_max
+                                    : CupertinoIcons.moon,
+                                label: preset.isDark ? '日间' : '夜读',
+                                onPressed: onNight,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                      child: _dock(context, preset, tint, night),
                     ),
                   ),
                 ],
@@ -109,145 +181,9 @@ class ReaderControls extends StatelessWidget {
         ),
       ),
     );
-    // 墨水屏：实时折射会在 EPD 上留下灰阶残影，坞与胶囊退回轻量底板。
-    // Builder 让内容（包括玻璃滑条）真正位于这个 PerformanceScope 之下。
-    return preset.isEink
-        ? PerformanceScope(
-            preferences: const PerformancePreferences(enabled: true),
-            explicitReduceMotion: true,
-            child: Builder(builder: content),
-          )
-        : Builder(builder: content);
   }
-
-  /// Chapter title and ordinal stay visible above the capsule; upstream only
-  /// shows them in the drag hint, but fqapp readers rely on the chapter name.
-  Widget _chapterLine(ReaderThemePreset preset) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 6),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            chapterTitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: preset.textColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          '${chapterIndex + 1} / $chapterCount',
-          style: TextStyle(color: preset.mutedTextColor, fontSize: 12),
-        ),
-      ],
-    ),
-  );
-
-  /// Upstream `ReaderChapterProgress(compact: true)`: one glass capsule with
-  /// chapter-step icon actions on both ends and the shared glass slider inside.
-  Widget _progressCapsule(
-    BuildContext context,
-    ReaderThemePreset preset,
-    Color tint,
-    double upper,
-  ) {
-    final value = seekValue.clamp(0, upper).toDouble();
-    return LiquidGlass(
-      key: const ValueKey('reader-progress-capsule'),
-      radius: 24,
-      tintColor: tint,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        child: Row(
-          children: [
-            GlassIconButton(
-              key: const ValueKey('reader-previous-chapter'),
-              icon: CupertinoIcons.backward_end,
-              label: '上一章',
-              liveGlass: false,
-              transparent: true,
-              haptic: HapticCue.pageTurn,
-              onPressed: onPrevious,
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: GlassControls.slider(
-                context,
-                key: const ValueKey('reader-chapter-seek'),
-                value: value,
-                min: 0,
-                max: upper,
-                divisions: chapterCount > 1 ? chapterCount - 1 : null,
-                compact: true,
-                haptics: false,
-                accentColor: preset.accentColor,
-                trackColor: preset.borderColor,
-                thumbColor: preset.isDark ? preset.textColor : Colors.white,
-                tint: tint,
-                semanticFormatter: (value) => '第 ${value.round() + 1} 章',
-                onChanged: chapterCount > 1 ? onSeek : null,
-                onChangeEnd: chapterCount > 1 ? onSeekEnd : null,
-              ),
-            ),
-            const SizedBox(width: 4),
-            GlassIconButton(
-              key: const ValueKey('reader-next-chapter'),
-              icon: CupertinoIcons.forward_end,
-              label: '下一章',
-              liveGlass: false,
-              transparent: true,
-              haptic: HapticCue.pageTurn,
-              onPressed: onNext,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Upstream `_readerBottomControls` dock: one live glass capsule, icon over
-  /// label, shared `DockLayout` geometry.
-  Widget _dock(
-    BuildContext context,
-    ReaderThemePreset preset,
-    Color tint,
-    bool night,
-  ) => LiquidGlass(
-    key: const ValueKey('reader-liquid-dock'),
-    radius: DockLayout.heightOf(context) / 2,
-    thickness: 16,
-    tintColor: tint,
-    padding: const EdgeInsets.symmetric(horizontal: DockLayout.horizontalInset),
-    child: Row(
-      children: [
-        _DockAction(
-          key: const ValueKey('reader-catalogue-entry'),
-          icon: CupertinoIcons.list_bullet,
-          label: '目录',
-          onPressed: onDirectory,
-        ),
-        _DockAction(
-          key: const ValueKey('reader-night-entry'),
-          icon: night ? CupertinoIcons.sun_max : CupertinoIcons.moon,
-          label: night ? '日间' : '夜间',
-          onPressed: onNight,
-        ),
-        _DockAction(
-          key: const ValueKey('reader-settings'),
-          icon: CupertinoIcons.textformat,
-          label: '设置',
-          onPressed: onAppearance,
-        ),
-      ],
-    ),
-  );
 }
 
-/// One dock item; geometry from upstream `_readerAction` / `DockLayout`.
 class _DockAction extends StatelessWidget {
   const _DockAction({
     super.key,
@@ -306,14 +242,12 @@ class _DockAction extends StatelessWidget {
   );
 }
 
-/// 阅读页顶栏的缓存入口：分成阅读菜单后，缓存不再占底部一行。
 class ReaderCacheButton extends StatelessWidget {
   const ReaderCacheButton({
     super.key,
     required this.preset,
     required this.onTap,
   });
-
   final ReaderThemePreset preset;
   final VoidCallback onTap;
 

@@ -31,6 +31,7 @@ extension _ReaderPageSelection on _ReaderPageState {
     Offset position,
   ) async {
     if (block.isTitle || block.isImage || block.textId == null) return;
+    _clearLocationHighlight();
     _longPressDragging = false;
     // 选中文字,暂停自动翻页 — the official selection helper does the same
     // (selection/h.java#a).
@@ -171,8 +172,9 @@ extension _ReaderPageSelection on _ReaderPageState {
     var topAnchor = _selectionBarTopAnchor;
     var view = media.size;
     var safeArea = media.padding;
-    var avoidBottom =
-        _controlsVisible ? _ReaderPageState._bottomBarHeight : 0.0;
+    var avoidBottom = _controlsVisible
+        ? _ReaderPageState._bottomBarHeight
+        : 0.0;
     final overlayBox =
         _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox != null && overlayBox.attached) {
@@ -189,6 +191,16 @@ extension _ReaderPageSelection on _ReaderPageState {
         0.0,
         double.infinity,
       );
+      final controls = _bottomControlsKey.currentContext?.findRenderObject();
+      if (_controlsVisible &&
+          controls is RenderBox &&
+          controls.attached &&
+          controls.hasSize) {
+        final top = overlayBox
+            .globalToLocal(controls.localToGlobal(Offset.zero))
+            .dy;
+        avoidBottom = (view.height - top).clamp(0.0, view.height);
+      }
     } else {
       // No overlay box (loading/error fallback): the top anchor would be in a
       // different coordinate space than the bar maths — drop the flip
@@ -203,6 +215,7 @@ extension _ReaderPageSelection on _ReaderPageState {
       safeArea: safeArea,
       underlined: underlined,
       showListening: true,
+      showBookmark: true,
       avoidBottom: avoidBottom,
     );
     return Positioned(
@@ -213,6 +226,8 @@ extension _ReaderPageSelection on _ReaderPageState {
         underlined: underlined,
         paragraphScoped: selection.isWholeParagraph,
         showListening: true,
+        showBookmark: true,
+        maxWidth: (view.width - 20).clamp(0.0, double.infinity),
         isDark: preset.isDark,
         belowAnchor: below,
         onAction: (action) {
@@ -275,6 +290,13 @@ extension _ReaderPageSelection on _ReaderPageState {
         final textId = block?.textId;
         if (block == null || textId == null) return;
         await _openListening(fromMs: block.startMs, textId: textId);
+      case ReaderParagraphAction.bookmark:
+        try {
+          final bookmark = await _addBookmark(selection: selection);
+          if (mounted) _showMessage(bookmark == null ? '阅读位置尚未就绪' : '已保存书签');
+        } catch (_) {
+          if (mounted) _showMessage('书签保存失败，请重试');
+        }
       case ReaderParagraphAction.underline:
       case ReaderParagraphAction.removeUnderline:
         await _toggleSelectionUnderline(

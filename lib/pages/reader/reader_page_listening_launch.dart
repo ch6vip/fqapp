@@ -139,6 +139,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
   /// 面板骨架走 ReaderSettingsSheetFrame；路由透明，底色 / 圆角由 frame
   /// 按阅读 preset 画出。
   Future<int?> _showListeningSourceSheet() {
+    _readerPanelOpen = true;
     final preset = _effectivePreset;
     return showModalBottomSheet<int>(
       context: context,
@@ -173,7 +174,7 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
     final paragraphAnchored = textId != null;
     if (_openingListening) return;
     if (_readerAudioUnavailable) {
-      _showMessage('本书暂无可用听书资源，可在设置 → 更多设置 → 听书方式中选择系统朗读');
+      _showMessage('本书暂无可用听书资源，可在更多阅读操作 → 阅读设置 → 听书 → 听书方式中选择系统朗读');
       return;
     }
     _setState(() => _openingListening = true);
@@ -278,6 +279,8 @@ extension _ReaderPageListeningLaunch on _ReaderPageState {
         historyStore: widget.readerStore,
       );
       if (openPage) {
+        _readerPanelOpen = false;
+        _syncSystemBars();
         // 「听书」：跳转听书详情页。会话由 scope 持有，页面只是视图。
         await Navigator.of(
           context,

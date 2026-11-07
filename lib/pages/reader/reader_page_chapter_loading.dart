@@ -47,6 +47,11 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
   }) async {
     if (widget.chapters.isEmpty) return;
     _cancelVideoOpen();
+    _locationHighlightTimer?.cancel();
+    _locationHighlight = null;
+    _progressPreviewActive = false;
+    _pendingChapterPreview = null;
+    _chapterPreviewFraction = null;
     final generation = ++_loadGeneration;
     _replacementCancellation?.cancel();
     ++_replacementGeneration;
