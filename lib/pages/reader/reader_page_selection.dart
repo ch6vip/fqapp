@@ -541,7 +541,7 @@ extension _ReaderPageSelection on _ReaderPageState {
     final unchanged =
         previous?.version == _chapter.version &&
         setEquals(previous!.ids, ids) &&
-        previous.ranges.length == ranges.length;
+        _sameRangeUnderlines(previous.ranges, ranges);
     if (unchanged) return;
     _setState(() {
       _underlines = ids;
@@ -596,4 +596,30 @@ extension _ReaderPageSelection on _ReaderPageState {
     );
   }
   return (start: start, end: end, deletion: false);
+}
+
+/// Compares the actual ranges, not only their count. Deleting one underline
+/// and adding another elsewhere keeps the count unchanged but must still
+/// repaint the chapter.
+bool _sameRangeUnderlines(
+  List<ReaderRangeUnderline> left,
+  List<ReaderRangeUnderline> right,
+) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    final a = left[i];
+    final b = right[i];
+    if (a.bookId != b.bookId ||
+        a.chapterId != b.chapterId ||
+        a.start != b.start ||
+        a.end != b.end ||
+        a.text != b.text ||
+        a.createdAt != b.createdAt ||
+        a.dashed != b.dashed ||
+        a.deletion != b.deletion) {
+      return false;
+    }
+  }
+  return true;
 }
