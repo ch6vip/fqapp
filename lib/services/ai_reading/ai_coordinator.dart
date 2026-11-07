@@ -742,6 +742,8 @@ class AiCoordinator {
       integrityHash: aiIntegrityHash(encoded),
       model: model,
       promptHash: promptHash,
+      cacheEpoch: _store.formalEpoch,
+      bookEpoch: _store.bookEpoch(bookId),
     );
   }
 

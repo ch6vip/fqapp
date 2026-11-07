@@ -1628,6 +1628,8 @@ class AiFormalCacheEntry {
     this.model,
     this.promptHash,
     this.errorCodes = const [],
+    this.cacheEpoch = 0,
+    this.bookEpoch = 0,
   });
 
   final String bookId;
@@ -1644,6 +1646,8 @@ class AiFormalCacheEntry {
   final String? model;
   final String? promptHash;
   final List<String> errorCodes;
+  final int cacheEpoch;
+  final int bookEpoch;
 
   String get key => jsonEncode([bookId, canonicalHash]);
 
@@ -1664,6 +1668,8 @@ class AiFormalCacheEntry {
     if (model != null) 'model': model,
     if (promptHash != null) 'promptHash': promptHash,
     if (errorCodes.isNotEmpty) 'errorCodes': errorCodes,
+    if (cacheEpoch != 0) 'cacheEpoch': cacheEpoch,
+    if (bookEpoch != 0) 'bookEpoch': bookEpoch,
   };
 
   static AiFormalCacheEntry? fromJson(Object? raw) {
@@ -1699,6 +1705,8 @@ class AiFormalCacheEntry {
           ? map['promptHash'] as String
           : null,
       errorCodes: _stringList(map['errorCodes']),
+      cacheEpoch: _intOrNull(map['cacheEpoch']) ?? 0,
+      bookEpoch: _intOrNull(map['bookEpoch']) ?? 0,
     );
   }
 }

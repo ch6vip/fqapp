@@ -129,7 +129,10 @@ class AiRequestService : Service() {
             "fqapp:ai-request",
         ).apply {
             setReferenceCounted(false)
-            acquire(10 * 60 * 1000L)
+            // A formal request may make up to three 10-minute attempts
+            // (initial + bounded corrections), so keep the CPU lease for the
+            // full worst-case window; onDestroy/onTimeout always release it.
+            acquire(30 * 60 * 1000L)
         }
     }
 
