@@ -207,6 +207,12 @@ class AiChatCompletionsClient {
         '请求超时。请求可能已经到达服务商，未自动重发',
         retryable: false,
       );
+    } on http.RequestAbortedException {
+      throw const AiNetworkException(
+        'REQUEST_ABORTED',
+        '请求已停止。请求可能已经到达服务商，未自动重发',
+        retryable: false,
+      );
     } on http.ClientException catch (error) {
       throw AiNetworkException(
         'NETWORK_ERROR',

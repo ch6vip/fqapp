@@ -43,6 +43,7 @@ class AiRequestForeground {
   /// foreground-only behaviour.
   static Future<AiRequestLease> acquire() async {
     if (!Platform.isAndroid) return const AiRequestLease._noop();
+    _installHandler();
     final String leaseId;
     try {
       final result = await _channel.invokeMethod<String>('acquire');
@@ -62,7 +63,6 @@ class AiRequestForeground {
     } catch (error) {
       throw AiNetworkException('FOREGROUND_UNAVAILABLE', '$error');
     }
-    _installHandler();
     final abort = Completer<void>();
     _aborts.add(abort);
     return AiRequestLease._(leaseId, abort);

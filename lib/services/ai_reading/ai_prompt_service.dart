@@ -125,80 +125,66 @@ class AiPromptService {
     if (key == null) {
       throw const AiNetworkException('MISSING_KEY', '还没有填写 API Key');
     }
-    final started = DateTime.now();
-    final requestId =
-        'req_prompt_${started.microsecondsSinceEpoch.toRadixString(36)}';
-    final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
-    final reserved = await AiBudgetService.instance.reserve(
-      bookId: bookId,
-      automatic: false,
-      countTask: true,
-      requestId: requestId,
-      runId: runId,
-    );
-    final reservation = reserved.reservation;
-    if (reservation == null) {
-      throw AiNetworkException(
-        reserved.code ?? 'BUDGET_EXCEEDED',
-        reserved.reason ?? '预算已用完',
-      );
-    }
-    final samples = feedback
-        .take(30)
-        .map((f) {
-          return '类型：${f.kind.label}\n'
-              '原文：${f.anchor.sourceText}\n'
-              '期望：${f.assertion.expectedText ?? f.assertion.type}\n'
-              '说明：${f.comment}';
-        })
-        .join('\n\n');
-    final rateProfile = _settings.rateFor(provider.id, model);
-    final rate = rateProfile?.snapshot();
-    final runRecord = AiRunRecord(
-      runId: runId,
-      kind: AiRunKind.promptOptimize,
-      bookId: bookId,
-      chapterId: '',
-      canonicalHash: '',
-      configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
-      state: AiRunState.running,
-      attemptCount: 0,
-      formalEligible: false,
-      startedAt: started,
-    );
-    await _store.putRun(runRecord);
-    // The run write is asynchronous. Re-check consent after it, immediately
-    // before the request body is sent; the budget queue may have waited too.
-    final blocked = _liveGate(bookId);
-    if (blocked != null) {
-      await AiBudgetService.instance.release(reservation);
-      await _store.putRun(
-        runRecord.copyWith(
-          state: AiRunState.cancelled,
-          finishedAt: DateTime.now(),
-          errorCodes: [blocked.code],
-          detail: blocked.message,
-        ),
-      );
-      throw blocked;
-    }
-    late final AiRequestLease foreground;
+    final foreground = await AiRequestForeground.acquire();
     try {
-      foreground = await AiRequestForeground.acquire();
-    } on AiNetworkException catch (error) {
-      await AiBudgetService.instance.release(reservation);
-      await _store.putRun(
-        runRecord.copyWith(
-          state: AiRunState.failed,
-          finishedAt: DateTime.now(),
-          errorCodes: [error.code],
-          detail: error.message,
-        ),
+      final started = DateTime.now();
+      final requestId =
+          'req_prompt_${started.microsecondsSinceEpoch.toRadixString(36)}';
+      final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
+      final reserved = await AiBudgetService.instance.reserve(
+        bookId: bookId,
+        automatic: false,
+        countTask: true,
+        requestId: requestId,
+        runId: runId,
       );
-      rethrow;
-    }
-    AiProviderResponse response;
-    try {
+      final reservation = reserved.reservation;
+      if (reservation == null) {
+        throw AiNetworkException(
+          reserved.code ?? 'BUDGET_EXCEEDED',
+          reserved.reason ?? '预算已用完',
+        );
+      }
+      final samples = feedback
+          .take(30)
+          .map((f) {
+            return '类型：${f.kind.label}\n'
+                '原文：${f.anchor.sourceText}\n'
+                '期望：${f.assertion.expectedText ?? f.assertion.type}\n'
+                '说明：${f.comment}';
+          })
+          .join('\n\n');
+      final rateProfile = _settings.rateFor(provider.id, model);
+      final rate = rateProfile?.snapshot();
+      final runRecord = AiRunRecord(
+        runId: runId,
+        kind: AiRunKind.promptOptimize,
+        bookId: bookId,
+        chapterId: '',
+        canonicalHash: '',
+        configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
+        state: AiRunState.running,
+        attemptCount: 0,
+        formalEligible: false,
+        startedAt: started,
+      );
+      await _store.putRun(runRecord);
+      // The run write is asynchronous. Re-check consent after it, immediately
+      // before the request body is sent; the budget queue may have waited too.
+      final blocked = _liveGate(bookId);
+      if (blocked != null) {
+        await AiBudgetService.instance.release(reservation);
+        await _store.putRun(
+          runRecord.copyWith(
+            state: AiRunState.cancelled,
+            finishedAt: DateTime.now(),
+            errorCodes: [blocked.code],
+            detail: blocked.message,
+          ),
+        );
+        throw blocked;
+      }
+      AiProviderResponse response;
       try {
         response = await _client.complete(
           profile: provider,
@@ -224,14 +210,54 @@ class AiPromptService {
           jsonResponse: false,
           abortTrigger: foreground.abortTrigger,
         );
-      } finally {
-        await foreground.release();
+      } catch (error) {
+        final finished = DateTime.now();
+        final usage = error is AiNetworkException
+            ? (error.usage ?? const AiUsage())
+            : const AiUsage();
+        final request = AiRequestRecord(
+          requestId: requestId,
+          runId: runId,
+          attemptNo: 1,
+          providerId: provider.id,
+          endpoint: AiChatCompletionsClient.endpoint(
+            provider.baseUrl,
+          ).toString(),
+          model: model,
+          mode: AiOutputMode.jsonObject,
+          usage: usage,
+          startedAt: started,
+          latencyMs: finished.difference(started).inMilliseconds,
+          errorCode: error is AiNetworkException
+              ? error.code
+              : 'PROMPT_OPTIMIZE_FAILED',
+          rateSnapshot: rate,
+          costMicros: aiEstimateCostMicros(usage, rate),
+          currency: rate?.currency ?? effective.global.costCurrency,
+          reason: 'prompt_optimize',
+        );
+        await _store.putRequest(request);
+        await AiBudgetService.instance.settle(
+          reservation: reservation,
+          request: request,
+        );
+        await _store.putRun(
+          AiRunRecord(
+            runId: runId,
+            kind: AiRunKind.promptOptimize,
+            bookId: bookId,
+            chapterId: '',
+            canonicalHash: '',
+            configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
+            state: AiRunState.failed,
+            attemptCount: 1,
+            formalEligible: false,
+            startedAt: started,
+          ),
+        );
+        rethrow;
       }
-    } catch (error) {
       final finished = DateTime.now();
-      final usage = error is AiNetworkException
-          ? (error.usage ?? const AiUsage())
-          : const AiUsage();
       final request = AiRequestRecord(
         requestId: requestId,
         runId: runId,
@@ -240,14 +266,11 @@ class AiPromptService {
         endpoint: AiChatCompletionsClient.endpoint(provider.baseUrl).toString(),
         model: model,
         mode: AiOutputMode.jsonObject,
-        usage: usage,
+        usage: response.usage,
         startedAt: started,
         latencyMs: finished.difference(started).inMilliseconds,
-        errorCode: error is AiNetworkException
-            ? error.code
-            : 'PROMPT_OPTIMIZE_FAILED',
         rateSnapshot: rate,
-        costMicros: aiEstimateCostMicros(usage, rate),
+        costMicros: aiEstimateCostMicros(response.usage, rate),
         currency: rate?.currency ?? effective.global.costCurrency,
         reason: 'prompt_optimize',
       );
@@ -264,62 +287,27 @@ class AiPromptService {
           chapterId: '',
           canonicalHash: '',
           configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
-          state: AiRunState.failed,
+          state: AiRunState.success,
           attemptCount: 1,
           formalEligible: false,
           startedAt: started,
         ),
       );
-      rethrow;
-    }
-    final finished = DateTime.now();
-    final request = AiRequestRecord(
-      requestId: requestId,
-      runId: runId,
-      attemptNo: 1,
-      providerId: provider.id,
-      endpoint: AiChatCompletionsClient.endpoint(provider.baseUrl).toString(),
-      model: model,
-      mode: AiOutputMode.jsonObject,
-      usage: response.usage,
-      startedAt: started,
-      latencyMs: finished.difference(started).inMilliseconds,
-      rateSnapshot: rate,
-      costMicros: aiEstimateCostMicros(response.usage, rate),
-      currency: rate?.currency ?? effective.global.costCurrency,
-      reason: 'prompt_optimize',
-    );
-    await _store.putRequest(request);
-    await AiBudgetService.instance.settle(
-      reservation: reservation,
-      request: request,
-    );
-    await _store.putRun(
-      AiRunRecord(
-        runId: runId,
-        kind: AiRunKind.promptOptimize,
+      final body = response.content.trim();
+      if (body.isEmpty) {
+        throw const AiNetworkException('RESPONSE_EMPTY', '候选提示词为空');
+      }
+      final candidate = await createDraft(
         bookId: bookId,
-        chapterId: '',
-        canonicalHash: '',
-        configSnapshotHash: _hash(_settings.resolvedPrompt(bookId).text),
-        state: AiRunState.success,
-        attemptCount: 1,
-        formalEligible: false,
-        startedAt: started,
-      ),
-    );
-    final body = response.content.trim();
-    if (body.isEmpty) {
-      throw const AiNetworkException('RESPONSE_EMPTY', '候选提示词为空');
+        body: body,
+        feedbackRevisions: {
+          for (final f in feedback) f.feedbackId: f.caseRevision,
+        },
+      );
+      return candidate;
+    } finally {
+      await foreground.release();
     }
-    final candidate = await createDraft(
-      bookId: bookId,
-      body: body,
-      feedbackRevisions: {
-        for (final f in feedback) f.feedbackId: f.caseRevision,
-      },
-    );
-    return candidate;
   }
 
   Future<void> adopt(AiPromptCandidate candidate) async {

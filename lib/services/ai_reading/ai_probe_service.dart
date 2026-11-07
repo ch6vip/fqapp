@@ -42,66 +42,51 @@ class AiProbeService {
   }) async {
     await _settings.init();
     await _store.init();
-    final started = DateTime.now();
-    final requestId =
-        'req_probe_${started.microsecondsSinceEpoch.toRadixString(36)}';
-    final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
-    final reserved = await _budget.reserve(
-      bookId: probeBookId,
-      automatic: false,
-      countTask: true,
-      confirmedOverBudget: confirmedOverBudget,
-      requireEnabled: false,
-      requireConsent: false,
-      requestId: requestId,
-      runId: runId,
-    );
-    final reservation = reserved.reservation;
-    if (reservation == null) {
-      throw AiNetworkException(
-        reserved.needsConfirmation
-            ? 'BUDGET_CONFIRM'
-            : reserved.code ?? 'BUDGET_EXCEEDED',
-        reserved.reason ?? '预算已用完',
-      );
-    }
-
-    final runRecord = AiRunRecord(
-      runId: runId,
-      kind: AiRunKind.probe,
-      bookId: '',
-      chapterId: '',
-      canonicalHash: '',
-      configSnapshotHash: '',
-      state: AiRunState.running,
-      attemptCount: 1,
-      formalEligible: false,
-      startedAt: started,
-    );
-    // Persist the Run before the request so a crash between request/ledger and
-    // terminal update is recoverable instead of leaving an orphan request.
-    await _store.putRun(runRecord);
-    late final AiRequestLease foreground;
+    final foreground = await AiRequestForeground.acquire();
     try {
-      foreground = await AiRequestForeground.acquire();
-    } on AiNetworkException catch (error) {
-      await _budget.release(reservation);
-      await _store.putRun(
-        runRecord.copyWith(
-          state: AiRunState.failed,
-          finishedAt: DateTime.now(),
-          errorCodes: [error.code],
-          detail: error.message,
-        ),
+      final started = DateTime.now();
+      final requestId =
+          'req_probe_${started.microsecondsSinceEpoch.toRadixString(36)}';
+      final runId = 'run_${started.microsecondsSinceEpoch.toRadixString(36)}';
+      final reserved = await _budget.reserve(
+        bookId: probeBookId,
+        automatic: false,
+        countTask: true,
+        confirmedOverBudget: confirmedOverBudget,
+        requireEnabled: false,
+        requireConsent: false,
+        requestId: requestId,
+        runId: runId,
       );
-      rethrow;
-    }
+      final reservation = reserved.reservation;
+      if (reservation == null) {
+        throw AiNetworkException(
+          reserved.needsConfirmation
+              ? 'BUDGET_CONFIRM'
+              : reserved.code ?? 'BUDGET_EXCEEDED',
+          reserved.reason ?? '预算已用完',
+        );
+      }
 
-    var usage = const AiUsage();
-    String? errorCode;
-    AiModelCapability? capability;
-    Object? failure;
-    try {
+      final runRecord = AiRunRecord(
+        runId: runId,
+        kind: AiRunKind.probe,
+        bookId: '',
+        chapterId: '',
+        canonicalHash: '',
+        configSnapshotHash: '',
+        state: AiRunState.running,
+        attemptCount: 1,
+        formalEligible: false,
+        startedAt: started,
+      );
+      // Persist the Run before the request so a crash between request/ledger and
+      // terminal update is recoverable instead of leaving an orphan request.
+      await _store.putRun(runRecord);
+      var usage = const AiUsage();
+      String? errorCode;
+      AiModelCapability? capability;
+      Object? failure;
       try {
         capability = await _client.probe(
           profile: profile,
@@ -115,45 +100,47 @@ class AiProbeService {
           },
           abortTrigger: foreground.abortTrigger,
         );
-      } finally {
-        await foreground.release();
+      } catch (error) {
+        failure = error;
+        errorCode = error is AiNetworkException ? error.code : 'PROBE_FAILED';
       }
-    } catch (error) {
-      failure = error;
-      errorCode = error is AiNetworkException ? error.code : 'PROBE_FAILED';
+
+      final finished = DateTime.now();
+      final rate = _settings.rateFor(profile.id, model)?.snapshot();
+      final request = AiRequestRecord(
+        requestId: requestId,
+        runId: runId,
+        attemptNo: 1,
+        providerId: profile.id,
+        endpoint: AiChatCompletionsClient.endpoint(profile.baseUrl).toString(),
+        model: model,
+        mode: outputMode,
+        usage: usage,
+        startedAt: started,
+        latencyMs: finished.difference(started).inMilliseconds,
+        errorCode: errorCode,
+        rateSnapshot: rate,
+        costMicros: aiEstimateCostMicros(usage, rate),
+        currency: rate?.currency ?? _settings.global.costCurrency,
+        reason: 'provider_probe',
+      );
+      await _store.putRequest(request);
+      await _budget.settle(reservation: reservation, request: request);
+      await _store.putRun(
+        runRecord.copyWith(
+          state: capability?.ok == true
+              ? AiRunState.success
+              : AiRunState.failed,
+          finishedAt: finished,
+          errorCodes: [if (capability?.ok != true) errorCode ?? 'PROBE_FAILED'],
+          detail: capability?.detail,
+        ),
+      );
+
+      if (failure != null) throw failure;
+      return capability!;
+    } finally {
+      await foreground.release();
     }
-
-    final finished = DateTime.now();
-    final rate = _settings.rateFor(profile.id, model)?.snapshot();
-    final request = AiRequestRecord(
-      requestId: requestId,
-      runId: runId,
-      attemptNo: 1,
-      providerId: profile.id,
-      endpoint: AiChatCompletionsClient.endpoint(profile.baseUrl).toString(),
-      model: model,
-      mode: outputMode,
-      usage: usage,
-      startedAt: started,
-      latencyMs: finished.difference(started).inMilliseconds,
-      errorCode: errorCode,
-      rateSnapshot: rate,
-      costMicros: aiEstimateCostMicros(usage, rate),
-      currency: rate?.currency ?? _settings.global.costCurrency,
-      reason: 'provider_probe',
-    );
-    await _store.putRequest(request);
-    await _budget.settle(reservation: reservation, request: request);
-    await _store.putRun(
-      runRecord.copyWith(
-        state: capability?.ok == true ? AiRunState.success : AiRunState.failed,
-        finishedAt: finished,
-        errorCodes: [if (capability?.ok != true) errorCode ?? 'PROBE_FAILED'],
-        detail: capability?.detail,
-      ),
-    );
-
-    if (failure != null) throw failure;
-    return capability!;
   }
 }
