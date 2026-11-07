@@ -22,6 +22,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/media_item.dart';
+import '../../services/ai_reading/ai_controller.dart';
+import '../../services/ai_reading/ai_models.dart';
 import '../../services/reader_preferences.dart';
 import '../wenku/wenku_ui.dart';
 import 'reader_directory_fast_scroll.dart';
@@ -33,6 +35,9 @@ class ReaderDirectorySheet extends StatefulWidget {
   final List<Chapter> chapters;
   final int currentIndex;
   final Set<String> cachedIds;
+  final String bookId;
+  final List<AiChapterCheckStatus> aiStatuses;
+  final AiReadingController aiController;
 
   /// 阅读背景 preset：面板骨架、文字和控件配色都跟着它走。
   final ReaderThemePreset preset;
@@ -42,6 +47,9 @@ class ReaderDirectorySheet extends StatefulWidget {
     required this.chapters,
     required this.currentIndex,
     required this.cachedIds,
+    required this.bookId,
+    required this.aiStatuses,
+    required this.aiController,
     this.preset = ReaderThemePreset.light,
   });
 
@@ -54,6 +62,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _searchFocus = FocusNode();
   late List<int> _indexes;
+  late final Map<String, AiChapterCheckStatus> _aiStatuses;
   double _itemExtent = 60;
   int _scrollRevision = 0;
   bool _reversed = false;
@@ -101,9 +110,17 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   @override
   void initState() {
     super.initState();
+    _aiStatuses = {
+      for (final status in widget.aiStatuses) status.chapterId: status,
+    };
     _indexes = _visibleIndexes;
     _resetGroups();
+    widget.aiController.addListener(_onAiChanged);
     _schedulePosition(current: true);
+  }
+
+  void _onAiChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -135,6 +152,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
 
   @override
   void dispose() {
+    widget.aiController.removeListener(_onAiChanged);
     _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocus.dispose();
@@ -406,6 +424,121 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     );
   }
 
+  AiChapterCheckStatus? _statusFor(Chapter chapter) {
+    final live = widget.aiController.statusFor(widget.bookId, chapter.itemId);
+    if (live.running) {
+      return AiChapterCheckStatus(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+        chapterVersion: chapter.version,
+        state: AiChapterCheckState.running,
+        updatedAt: DateTime.now(),
+      );
+    }
+    if (live.error != null) {
+      return AiChapterCheckStatus(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+        chapterVersion: chapter.version,
+        state: AiChapterCheckState.failed,
+        updatedAt: DateTime.now(),
+      );
+    }
+    if (live.success || live.formal != null) {
+      return AiChapterCheckStatus(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+        chapterVersion: chapter.version,
+        state: AiChapterCheckState.checked,
+        updatedAt: DateTime.now(),
+      );
+    }
+    final stored = _aiStatuses[chapter.itemId];
+    if (stored == null || stored.state == AiChapterCheckState.unchecked) {
+      return null;
+    }
+    if (stored.chapterVersion.isNotEmpty &&
+        chapter.version.isNotEmpty &&
+        stored.chapterVersion != chapter.version) {
+      return null;
+    }
+    return stored;
+  }
+
+  Widget _statusWidget(ReaderThemePreset preset, AiChapterCheckStatus status) {
+    final eink = preset.isEink;
+    final color = switch (status.state) {
+      AiChapterCheckState.checked =>
+        eink ? Colors.black : const Color(0xFF617348),
+      AiChapterCheckState.failed =>
+        eink ? Colors.black : const Color(0xFFAD4634),
+      AiChapterCheckState.running => preset.accentColor,
+      AiChapterCheckState.unchecked => preset.mutedTextColor,
+    };
+    final icon = switch (status.state) {
+      AiChapterCheckState.checked => CupertinoIcons.check_mark_circled,
+      AiChapterCheckState.failed => CupertinoIcons.exclamationmark_circle,
+      AiChapterCheckState.running => null,
+      AiChapterCheckState.unchecked => null,
+    };
+    final label = switch (status.state) {
+      AiChapterCheckState.checked => '已校验',
+      AiChapterCheckState.failed => '失败',
+      AiChapterCheckState.running => '校对中',
+      AiChapterCheckState.unchecked => '未校验',
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 14,
+          height: 14,
+          child: status.state == AiChapterCheckState.running
+              ? Padding(
+                  padding: const EdgeInsets.all(1),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    color: color,
+                  ),
+                )
+              : Icon(icon, size: 14, color: color),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.15,
+            color: color,
+            fontWeight: status.state == AiChapterCheckState.running
+                ? FontWeight.w500
+                : FontWeight.w400,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget? _trailingFor(
+    ReaderThemePreset preset,
+    Chapter chapter,
+    bool current,
+    bool cached,
+  ) {
+    final status = _statusFor(chapter);
+    final lines = <Widget>[
+      if (current) const Text('正在阅读', style: TextStyle(fontSize: 10)),
+      if (status != null) _statusWidget(preset, status),
+      if (cached) const Text('已缓存', style: TextStyle(fontSize: 10)),
+    ];
+    if (lines.isEmpty) return null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: lines,
+    );
+  }
+
   Widget _row(BuildContext context, int index, ReaderThemePreset preset) {
     final chapter = widget.chapters[index];
     final current = index == widget.currentIndex;
@@ -439,16 +572,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 14, height: 1.45),
       ),
-      trailing: current || cached
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (current) const Text('正在阅读', style: TextStyle(fontSize: 10)),
-                if (cached) const Text('已缓存', style: TextStyle(fontSize: 10)),
-              ],
-            )
-          : null,
+      trailing: _trailingFor(preset, chapter, current, cached),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_preferences.dart';
 import '../../services/reader_dialogue.dart';
+import '../../services/ai_reading/ai_models.dart';
 import '../../services/text_replacement_engine.dart';
 import '../../services/reader_underline_store.dart';
 import 'reader_bubble.dart';
@@ -348,9 +349,11 @@ class _SourceBlock {
     this.displayStart,
     this.displayLength,
     this.map,
+    this.sourceIndex,
   );
   final int start, displayStart, displayLength;
   final String text;
+  final int? sourceIndex;
   final TextOffsetMap? map;
   int get end => start + text.length;
 }
@@ -424,6 +427,7 @@ class ReaderChapterLayout {
           originalIndex == null
               ? null
               : replacement?.paragraphMaps[originalIndex],
+          originalIndex,
         ),
       );
       sourceOffset +=
@@ -536,6 +540,32 @@ class ReaderChapterLayout {
       if (local.isNotEmpty) byBlock[block.index] = List.unmodifiable(local);
     }
     return Map.unmodifiable(byBlock);
+  }
+
+  /// Maps a final display offset to the AI canonical paragraph/requestText
+  /// offset. The layout includes a synthetic title block and image blocks; the
+  /// AI snapshot excludes both, so using sourceOffsetForDisplay directly would
+  /// shift a selection by the title length or land on the wrong paragraph.
+  ({int paragraph, int offset})? snapshotLocationForDisplayOffset(
+    int offset,
+    AiChapterSnapshot snapshot, {
+    TextBoundaryBias bias = TextBoundaryBias.start,
+  }) {
+    final sourceOffset = sourceOffsetForDisplay(offset, bias: bias);
+    final index = _floorIndex(
+      _sourceBlocks.length,
+      (i) => _sourceBlocks[i].start <= sourceOffset,
+    );
+    final block = _sourceBlocks[index];
+    final sourceIndex = block.sourceIndex;
+    if (sourceIndex == null) return null;
+    final paragraph = snapshot.paragraphBlockIndices.indexOf(sourceIndex);
+    if (paragraph < 0) return null;
+    final local = (sourceOffset - block.start).clamp(0, block.text.length);
+    return (
+      paragraph: paragraph,
+      offset: snapshot.paragraphStarts[paragraph] + local,
+    );
   }
 
   int sourceOffsetForDisplay(

@@ -49,6 +49,7 @@ import 'comic_reader_page.dart';
 import 'player_page.dart';
 import 'reader_page.dart';
 import 'shuqi_detail_page.dart';
+import 'ai_reading/settings/ai_book_settings_page.dart';
 
 /// Optional decorations for the detail page (currently the review block).
 /// Kept as one injected bundle so callers that already stub the detail and
@@ -578,59 +579,77 @@ class _DetailPageState extends State<DetailPage> {
 
   /// Upstream `_header`: archive bar with the back action and the cache entry.
   /// fqapp also keeps the audio entry here (its detail page owns 听书).
-  Widget _archiveHeader(BuildContext context) => ArchiveHeaderBar(
-    leading: GlassIconButton(
-      icon: CupertinoIcons.back,
-      label: '返回',
-      onPressed: () => Navigator.maybePop(context),
-    ),
-    title: FittedBox(
-      fit: BoxFit.scaleDown,
-      child: AppText(
-        _pageTitle,
-        key: const Key('detail_page_title'),
-        style: const TextStyle(
-          fontSize: 18,
-          height: 1.2,
-          fontWeight: FontWeight.w700,
-        ),
+  Widget _archiveHeader(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => ArchiveHeaderBar(
+      leading: GlassIconButton(
+        icon: CupertinoIcons.back,
+        label: '返回',
+        onPressed: () => Navigator.maybePop(context),
       ),
-    ),
-    actions: [
-      if (_isBook)
-        GlassIconButton(
-          key: const Key('detail_action_听书'),
-          icon: CupertinoIcons.headphones,
-          label: '听书',
-          onPressed: _openListening,
-        ),
-      if (_isBook)
-        GlassIconButton(
-          key: const Key('detail_action_下载'),
-          icon: _downloadProgress == null
-              ? CupertinoIcons.cloud_download
-              : CupertinoIcons.arrow_down_circle,
-          label: '缓存图书',
-          onPressed: _showDownloadSheet,
-        ),
-      if (_downloadProgress case final progress?)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: SizedBox.square(
-            key: const Key('detail_download_progress'),
-            dimension: 16,
-            // Determinate: a running whole-book batch must not keep an endless
-            // animation (and pumpAndSettle) alive.
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              value: progress.total == 0
-                  ? 0
-                  : progress.completed / progress.total,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
+      title: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: AppText(
+          _pageTitle,
+          key: const Key('detail_page_title'),
+          style: const TextStyle(
+            fontSize: 18,
+            height: 1.2,
+            fontWeight: FontWeight.w700,
           ),
         ),
-    ],
+      ),
+      actions: [
+        if (_isBook && _allChapters.isNotEmpty && constraints.maxWidth >= 360)
+          GlassIconButton(
+            key: const Key('detail_action_ai'),
+            icon: CupertinoIcons.sparkles,
+            label: '本书 AI 阅读优化',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AiBookSettingsPage(
+                  bookId: _contentId,
+                  title: widget.item.title,
+                  chapters: _allChapters,
+                ),
+              ),
+            ),
+          ),
+        if (_isBook)
+          GlassIconButton(
+            key: const Key('detail_action_听书'),
+            icon: CupertinoIcons.headphones,
+            label: '听书',
+            onPressed: _openListening,
+          ),
+        if (_isBook)
+          GlassIconButton(
+            key: const Key('detail_action_下载'),
+            icon: _downloadProgress == null
+                ? CupertinoIcons.cloud_download
+                : CupertinoIcons.arrow_down_circle,
+            label: '缓存图书',
+            onPressed: _showDownloadSheet,
+          ),
+        if (_downloadProgress case final progress?)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: SizedBox.square(
+              key: const Key('detail_download_progress'),
+              dimension: 16,
+              // Determinate: a running whole-book batch must not keep an endless
+              // animation (and pumpAndSettle) alive.
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                value: progress.total == 0
+                    ? 0
+                    : progress.completed / progress.total,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+      ],
+    ),
   );
 
   String get _shelfLabel => _inShelf ? '移出书架' : '加入书架';

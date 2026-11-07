@@ -21,6 +21,16 @@ class AudioPlaybackScope extends StatefulWidget {
     return owner.startSystemTts(book);
   }
 
+  /// Stops a system-TTS session for [bookId], if one exists. Used before an AI
+  /// display update when playback is paused so resuming cannot read stale text.
+  static Future<void> stopSystemTtsForBook(
+    BuildContext context,
+    String bookId,
+  ) {
+    final owner = context.findAncestorStateOfType<_AudioPlaybackScopeState>();
+    return owner?.stopSystemTtsForBook(bookId) ?? Future<void>.value();
+  }
+
   /// 在后台起播，不打开听书页；实现见 [ReaderAudioBridge]（同库 part）。
   @visibleForTesting
   static BackgroundStartHandler? startListeningOverride;
@@ -416,6 +426,15 @@ class _AudioPlaybackScopeState extends State<AudioPlaybackScope> {
   Future<void> stopTts(SystemTtsPlayback session) {
     final next = _queue.then((_) async {
       if (identical(_tts, session)) await _closeTts();
+    });
+    _queue = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<void> stopSystemTtsForBook(String bookId) {
+    final next = _queue.then((_) async {
+      final tts = _tts;
+      if (tts != null && tts.book.bookId == bookId) await _closeTts();
     });
     _queue = next.catchError((Object _) {});
     return next;

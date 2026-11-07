@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../models/chapter_ideas.dart';
+import '../../services/ai_reading/ai_controller.dart';
 import '../../services/chapter_text_formatter.dart';
 import '../../services/reader_underline_store.dart';
 import '../../services/text_replacement_engine.dart';
@@ -20,6 +21,8 @@ class JoinedReaderChapter {
     this.ideas = ChapterIdeas.empty,
     this.underlines = const {},
     this.rangeUnderlines = const [],
+    this.displayRevision = -1,
+    this.aiView,
   });
   final String text;
   final ChapterContent content;
@@ -28,6 +31,14 @@ class JoinedReaderChapter {
   final ChapterIdeas ideas;
   final Set<int> underlines;
   final List<ReaderRangeUnderline> rangeUnderlines;
+
+  /// Content-derived AI display revision (mode + formal result + protection +
+  /// custom rules). Used to decide whether a cached neighbor layout is stale.
+  final int displayRevision;
+
+  /// Travels with the content/layout so adopting a neighbor also adopts its
+  /// chapter-specific snapshot, rather than reusing the previously read one.
+  final AiChapterView? aiView;
 
   JoinedReaderChapter withLayout(ReaderChapterLayout value) =>
       JoinedReaderChapter(
@@ -38,6 +49,8 @@ class JoinedReaderChapter {
         ideas: ideas,
         underlines: underlines,
         rangeUnderlines: rangeUnderlines,
+        displayRevision: displayRevision,
+        aiView: aiView,
       );
 }
 
@@ -93,6 +106,7 @@ class ReaderJoinedScrollState extends State<ReaderJoinedScroll> {
   double? _pendingOffset;
   int _restoreRevision = 0;
   double _pendingCorrection = 0;
+  bool _refreshing = false;
 
   List<int> get _indices => _chapters.keys.toList()..sort();
   JoinedReaderChapter? chapterAt(int index) => _chapters[index];
@@ -158,12 +172,15 @@ class ReaderJoinedScrollState extends State<ReaderJoinedScroll> {
     super.didUpdateWidget(oldWidget);
     final spec = widget.chapter.layout.spec;
     final before = position;
+    final textChanged =
+        oldWidget.index == widget.index &&
+        oldWidget.chapter.text != widget.chapter.text;
     if (oldWidget.chapter.layout.spec != spec ||
         oldWidget.showParagraphBubbles != widget.showParagraphBubbles ||
-        oldWidget.index == widget.index &&
-            (oldWidget.chapter.text != widget.chapter.text ||
-                oldWidget.chapter.replacement != widget.chapter.replacement)) {
-      // A font/width/replacement change invalidates adjacent measurements.
+        textChanged) {
+      // A font/width/text change invalidates adjacent measurements. An AI
+      // replacement on the current chapter does NOT: keep the measured
+      // neighbors and only swap the current chapter's layout.
       ++_generation;
       _pending.clear();
       _errors.clear();
@@ -184,20 +201,93 @@ class ReaderJoinedScrollState extends State<ReaderJoinedScroll> {
       }
     } else {
       // Keep outgoing bubbles and measurements: changing the active chapter
-      // must not change the geometry of text already on screen.
+      // or applying an AI result to only that chapter must not change the
+      // geometry of neighbors already on screen.
+      final oldCurrent = _chapters[widget.index];
       _chapters[widget.index] = widget.chapter;
-      if (before != null &&
-          _chapters.containsKey(before.index) &&
-          (oldWidget.index != widget.index ||
-              !identical(oldWidget.chapter.layout, widget.chapter.layout))) {
+      if (before != null && _chapters.containsKey(before.index)) {
+        final layoutChanged =
+            oldCurrent == null ||
+            !identical(oldCurrent.layout, widget.chapter.layout);
+        final replacementChanged =
+            oldWidget.chapter.replacement != widget.chapter.replacement;
+        if (oldWidget.index != widget.index ||
+            layoutChanged ||
+            replacementChanged) {
+          final textOffset = before.chapter.layout.textOffsetAtScroll(
+            before.scroll,
+          );
+          _correctBy(
+            chapterStart(before.index) +
+                _chapters[before.index]!.layout.scrollForTextOffset(
+                  textOffset,
+                ) +
+                before.scroll -
+                before.chapter.layout.scrollForTextOffset(textOffset) -
+                (before.start + before.scroll),
+          );
+        }
+      }
+    }
+    _schedulePosition();
+  }
+
+  /// Loads already-cached neighboring chapters again and swaps only those
+  /// whose AI display revision changed. The visible chapter is owned by the
+  /// host through `didUpdateWidget`; this method never replaces it.
+  Future<void> refreshChapters() async {
+    if (!mounted || _chapters.isEmpty || _refreshing) return;
+    _refreshing = true;
+    try {
+      final generation = _generation;
+      final indices = _chapters.keys
+          .where((index) => index != widget.index)
+          .toList(growable: false);
+      for (final index in indices) {
+        final old = _chapters[index];
+        if (old == null) continue;
+        JoinedReaderChapter fresh;
+        try {
+          fresh = await widget.loader(index, old.layout.spec);
+        } catch (_) {
+          continue;
+        }
+        if (!mounted ||
+            generation != _generation ||
+            !_chapters.containsKey(index)) {
+          return;
+        }
+        if (index == widget.index) continue;
+        if (fresh.displayRevision == old.displayRevision) continue;
+        _replaceChapter(index, fresh);
+      }
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  void _replaceChapter(int index, JoinedReaderChapter chapter) {
+    if (!mounted) return;
+    final old = _chapters[index];
+    if (old == null) return;
+    final before = position;
+    final oldHeight = _height(old);
+    setState(() {
+      _chapters[index] = chapter;
+    });
+    final newHeight = _height(chapter);
+    if (before != null) {
+      if (index < before.index) {
+        // Everything before the visible chapter got taller/shorter. Move the
+        // scroll offset by the delta so the same text stays under the eye.
+        _correctBy(newHeight - oldHeight);
+      } else if (index == before.index) {
         final textOffset = before.chapter.layout.textOffsetAtScroll(
           before.scroll,
         );
         _correctBy(
-          chapterStart(before.index) +
-              _chapters[before.index]!.layout.scrollForTextOffset(textOffset) +
-              before.scroll -
-              before.chapter.layout.scrollForTextOffset(textOffset) -
+          chapterStart(index) +
+              chapter.layout.scrollForTextOffset(textOffset) -
               (before.start + before.scroll),
         );
       }
