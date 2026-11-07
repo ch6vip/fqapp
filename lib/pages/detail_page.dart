@@ -233,7 +233,27 @@ class _DetailPageState extends State<DetailPage> {
       ).showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
       return;
     }
-    final added = await ShelfStore.instance.toggle(widget.item);
+    final detail = _bookDetail;
+    // Persist the resolved metadata, without replacing the source or identity
+    // carried by the entry (notably series/episode ids for video results).
+    final item = detail == null
+        ? widget.item
+        : widget.item.copyWith(
+            title: detail.title.isNotEmpty ? detail.title : null,
+            author: detail.author.name.isNotEmpty ? detail.author.name : null,
+            cover: detail.cover.isNotEmpty ? detail.cover : null,
+            intro: detail.abstract.isNotEmpty ? detail.abstract : null,
+            categories: detail.tags.isNotEmpty
+                ? detail.tags
+                : detail.category.isNotEmpty
+                ? [detail.category]
+                : null,
+            creationStatus: detail.creationStatus >= 0
+                ? detail.creationStatus
+                : null,
+            wordNumber: detail.wordNumber > 0 ? detail.wordNumber : null,
+          );
+    final added = await ShelfStore.instance.toggle(item);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

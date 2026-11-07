@@ -134,6 +134,7 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   int _tab = 0;
   bool _editing = false;
   bool _importingBook = false;
+  bool _assigningCategory = false;
   final Set<String> _selected = {};
   int _todayMinutes = 0;
   List<_ShelfEntry> _shelf = const [];

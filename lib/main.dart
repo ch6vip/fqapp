@@ -275,17 +275,35 @@ class _FqAppState extends State<FqApp> {
                   navigatorKey: _navigatorKey,
                   navigatorObservers: [_audioRoutes],
                   builder: (context, child) {
+                    final palette = HomePalette.of(context);
                     final playback = AudioPlaybackScope(
                       key: _audioScopeKey,
                       navigatorKey: _navigatorKey,
                       recentListen: loadRecentListen,
                       child: child ?? const SizedBox.shrink(),
                     );
-                    return AudioFloatingRouteScope(
-                      routes: _audioRoutes,
-                      child: isWindowsDesktop
-                          ? DesktopAppFrame(child: playback)
-                          : playback,
+                    // Routes without an AppBar need a live fallback above the
+                    // Navigator; the covered root route cannot paint its style.
+                    // Reader/video annotations still override this default.
+                    return AnnotatedRegion<SystemUiOverlayStyle>(
+                      value:
+                          (palette.dark
+                                  ? SystemUiOverlayStyle.light
+                                  : SystemUiOverlayStyle.dark)
+                              .copyWith(
+                                statusBarColor: palette.canvas,
+                                systemNavigationBarColor: palette.canvas,
+                                systemNavigationBarDividerColor: palette.canvas,
+                                systemNavigationBarIconBrightness: palette.dark
+                                    ? Brightness.light
+                                    : Brightness.dark,
+                              ),
+                      child: AudioFloatingRouteScope(
+                        routes: _audioRoutes,
+                        child: isWindowsDesktop
+                            ? DesktopAppFrame(child: playback)
+                            : playback,
+                      ),
                     );
                   },
                   title: '什锦铺',
