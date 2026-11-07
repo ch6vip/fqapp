@@ -344,7 +344,7 @@ class _PlayerSplitPanelState extends State<PlayerSplitPanel> {
         !widget.episodeLabel.contains(status)) {
       parts.add(status);
     }
-    if (widget.episodes.isNotEmpty &&
+    if (hasCompleteEpisodeCatalogue(widget.episodes) &&
         !widget.episodeLabel.contains('${widget.episodes.length}集')) {
       parts.add('全${widget.episodes.length}集');
     }
@@ -586,6 +586,7 @@ class _PlayerSplitPanelState extends State<PlayerSplitPanel> {
   String _episodeProgress() {
     final count = widget.episodes.length;
     if (count == 0) return '';
+    if (!hasCompleteEpisodeCatalogue(widget.episodes)) return '当前视频';
     final current = widget.currentIndex.clamp(0, count - 1) + 1;
     return '第$current/$count集';
   }
