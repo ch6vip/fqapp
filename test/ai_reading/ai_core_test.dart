@@ -7,6 +7,7 @@ import 'package:fqapp/services/ai_reading/ai_chapter_snapshot.dart';
 import 'package:fqapp/services/ai_reading/ai_display_composition.dart';
 import 'package:fqapp/services/ai_reading/ai_feedback.dart';
 import 'package:fqapp/services/ai_reading/ai_models.dart';
+import 'package:fqapp/services/ai_reading/ai_prompt.dart';
 import 'package:fqapp/services/ai_reading/ai_protocol.dart';
 import 'package:fqapp/services/ai_reading/ai_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
@@ -370,6 +371,23 @@ void main() {
       aiEstimateCostMicros(const AiUsage(status: AiUsageStatus.unknown), rate),
       isNull,
     );
+  });
+
+  test('edit contract is program-owned and appended to both output modes', () {
+    final schema = aiBuildSystemPrompt(
+      behaviorPrompt: '自定义行为提示词',
+      outputMode: AiOutputMode.jsonSchema,
+    );
+    expect(schema, contains('自定义行为提示词'));
+    expect(schema, contains('original 必须与提供的原文完全一致'));
+    expect(schema, isNot(contains(kAiJsonObjectProtocol)));
+
+    final jsonObject = aiBuildSystemPrompt(
+      behaviorPrompt: '自定义行为提示词',
+      outputMode: AiOutputMode.jsonObject,
+    );
+    expect(jsonObject, contains('original 必须与提供的原文完全一致'));
+    expect(jsonObject, contains(kAiJsonObjectProtocol));
   });
 
   test('DeepSeek keeps low, high and max reasoning levels', () {
