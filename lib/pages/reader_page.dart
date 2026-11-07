@@ -41,13 +41,13 @@ import '../widgets/reader/reader_sync_pill.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
 import '../services/volume_key.dart';
+import '../services/reader_bookmark_store.dart';
 import '../services/reader_history.dart';
 import '../services/audio_preferences.dart';
 import '../services/reader_preferences.dart';
 import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
 import '../services/shelf_toggle.dart';
-import '../services/shelf_store.dart';
 import '../services/system_tts.dart';
 import '../widgets/chapter_cache_sheet.dart';
 import '../widgets/reader/reader_appearance_sheet.dart';
@@ -55,6 +55,9 @@ import '../widgets/reader/reader_bubble.dart';
 import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/reader_joined_scroll.dart';
 import '../widgets/reader/cue_index.dart';
+import '../widgets/reader/reader_bookmarks_panel.dart';
+import '../widgets/reader/reader_chrome.dart';
+import '../widgets/reader/reader_find_panel.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_cutout_insets.dart';
 import '../widgets/reader/reader_directory_sheet.dart';
@@ -78,6 +81,7 @@ part 'reader/reader_page_selection_overlay.dart';
 part 'reader/reader_page_chapter_loading.dart';
 part 'reader/reader_page_ideas.dart';
 part 'reader/reader_page_preferences.dart';
+part 'reader/reader_page_navigation.dart';
 part 'reader/reader_page_progress.dart';
 part 'reader/reader_page_build.dart';
 part 'reader/reader_page_content.dart';
@@ -116,6 +120,7 @@ class ReaderPage extends StatefulWidget {
   final bool localOnly;
   final ChapterTextLoader? chapterLoader;
   final ReaderStore? readerStore;
+  final ReaderBookmarkStore? bookmarkStore;
   final ChapterCache? chapterCache;
   final ReaderDevice? readerDevice;
   final ReaderImageProviderFactory? imageProviderFactory;
@@ -148,6 +153,7 @@ class ReaderPage extends StatefulWidget {
     this.localOnly = false,
     this.chapterLoader,
     this.readerStore,
+    this.bookmarkStore,
     this.chapterCache,
     this.readerDevice,
     this.imageProviderFactory,
@@ -166,7 +172,10 @@ class ReaderPage extends StatefulWidget {
 // Note: 菜单覆盖层与正文布局分离；见
 // .agents/notes/implemented/feature/2026-09-10-reader-interface.md
 class _ReaderPageState extends State<ReaderPage>
-    with WidgetsBindingObserver, _ReaderPageFields {
+    with
+        SingleTickerProviderStateMixin,
+        WidgetsBindingObserver,
+        _ReaderPageFields {
   /// Calls [setState] on behalf of the logic split into the `reader/` parts.
   ///
   /// Those extensions are methods of this State at runtime, but the analyzer
@@ -208,6 +217,7 @@ class _ReaderPageState extends State<ReaderPage>
       _replacement = result;
       _savedPosition = position;
       _narrationRange = null;
+      _locationHighlight = null;
       _selection = null;
       _selectionBarOpen = false;
       _chapterLayout = null;
@@ -303,6 +313,11 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void initState() {
     super.initState();
+    _chrome = AnimationController(
+      vsync: this,
+      duration: WenkuMotion.enter,
+      reverseDuration: WenkuMotion.exit,
+    );
     VolumeKeyService.instance.setOnVolumeKey(_onVolumeKey);
     _syncVolumeKeyEnabled();
     // 官方默认跟随：起播时（d.java:143-151）页面会自动同步到朗读处。阅读页
@@ -373,6 +388,12 @@ class _ReaderPageState extends State<ReaderPage>
   void didChangeDependencies() {
     super.didChangeDependencies();
     AudioFloatingRouteScope.configure(context, hidden: true);
+    _reduceReaderMotion =
+        _effectivePreset.isEink ||
+        MediaQuery.disableAnimationsOf(context) ||
+        MediaQuery.accessibleNavigationOf(context) ||
+        !PerformanceScope.of(context).motion;
+    if (_reduceReaderMotion) _chrome.value = _controlsVisible ? 1 : 0;
     final current = ModalRoute.isCurrentOf(context) ?? true;
     if (_routeCurrent == current) return;
     _routeCurrent = current;
@@ -382,7 +403,10 @@ class _ReaderPageState extends State<ReaderPage>
     // here — the sheet's own finally runs before this notification lands
     // (the sheet route is still present until its close animation ends),
     // and releasing there would briefly show the status bar (one flash).
-    if (current) _ideasSheetOpen = false;
+    if (current) {
+      _ideasSheetOpen = false;
+      _readerPanelOpen = false;
+    }
     _syncSystemBars();
     _syncVolumeKeyEnabled();
   }
@@ -397,6 +421,10 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void dispose() {
+    _chrome.dispose();
+    _locationHighlightTimer?.cancel();
+    _progressPreviewActive = false;
+    _pendingChapterPreview = null;
     _videoMatchRequest?.cancel();
     _videoOpenRequest?.cancel();
     _controlsVisibility.dispose();
@@ -447,6 +475,7 @@ class _ReaderPageState extends State<ReaderPage>
     }
     final resumed = state == AppLifecycleState.resumed;
     if (!resumed && _appActive) {
+      _finishChapterPreview();
       _cancelVideoOpen();
       _stopAutoTurn();
       ++_deviceGeneration;

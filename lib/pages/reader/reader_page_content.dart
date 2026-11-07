@@ -73,6 +73,7 @@ extension _ReaderPageContent on _ReaderPageState {
             key: const ValueKey('reader-page-surface'),
             behavior: HitTestBehavior.translucent,
             onTapUp: (details) {
+              _clearLocationHighlight();
               if (_selection != null) {
                 // A tap outside the selection cancels it without turning the
                 // page — the official reader behaves the same.
@@ -131,7 +132,7 @@ extension _ReaderPageContent on _ReaderPageState {
                               _onParagraphLongPressMoveUpdate,
                           onParagraphLongPressEnd: _onParagraphLongPressEnd,
                           selectionScope: scope,
-                          selection: _selection,
+                          selection: _paintedSelection,
                           rangeUnderlines: _displayRangeUnderlines,
                           narrationRange: _narrationRange,
                         )
@@ -230,7 +231,7 @@ extension _ReaderPageContent on _ReaderPageState {
                 spec: spec,
                 imageProviderFactory: widget.imageProviderFactory,
                 selectionScope: scope,
-                selection: _selection,
+                selection: _paintedSelection,
                 rangeUnderlines: _displayRangeUnderlines,
                 narrationRange: _narrationRange,
                 onParagraphLongPress: (block, position) =>

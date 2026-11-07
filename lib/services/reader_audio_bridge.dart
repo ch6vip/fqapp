@@ -284,7 +284,7 @@ abstract final class ReaderAudioBridge {
                         notice: narrators.isEmpty && tones.relatedNovel == null
                             ? null
                             : '真人讲书是另一本书的音频，切换后本页会停止跟随；'
-                                  '可在设置 → 更多设置 → 听书方式中从本页重新开始。',
+                                  '可在更多阅读操作 → 阅读设置 → 听书中从本页重新开始。',
                         onSelect: (option) {
                           if (selecting) return;
                           if (!_readerVoiceSessionCurrent(
@@ -327,7 +327,7 @@ abstract final class ReaderAudioBridge {
                                     title: const Text('切换真人讲书？'),
                                     content: const Text(
                                       '这是另一本书的音频，切换后本页会停止跟随，'
-                                      '可在设置 → 更多设置 → 听书方式中从本页重新开始。',
+                                      '可在更多阅读操作 → 阅读设置 → 听书中从本页重新开始。',
                                     ),
                                     actions: [
                                       TextButton(

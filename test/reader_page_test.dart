@@ -580,7 +580,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reader-settings')));
     await tester.pumpAndSettle();
 
-    expect(find.text('阅读设置'), findsOneWidget);
+    // 坞上的「外观」直接进外观分类网格。
+    expect(
+      find.byKey(const ValueKey('reader-settings-category-grid')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

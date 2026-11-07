@@ -65,7 +65,15 @@ extension _ReaderPageProgress on _ReaderPageState {
         _joinedKey.currentState != null &&
         !initialRestore &&
         _chapterLayout?.spec == spec;
-    final restored = initialRestore
+    final stablePreviewOffset = _settingsPreviewSourceOffset;
+    final restored = stablePreviewOffset != null
+        ? (
+            textOffset: layout.displayOffsetForSource(stablePreviewOffset),
+            scroll: layout.scrollForTextOffset(
+              layout.displayOffsetForSource(stablePreviewOffset),
+            ),
+          )
+        : initialRestore
         ? layout.restore(
             _savedPosition,
             chapterId: _chapter.itemId,
@@ -120,6 +128,10 @@ extension _ReaderPageProgress on _ReaderPageState {
   void _onScroll() {
     _saveTimer?.cancel();
     if (!_progressReady || _paged) return;
+    if (_progressPreviewActive || _settingsPreviewActive) {
+      _captureScrollProgress(updateTextOffset: !_settingsPreviewActive);
+      return;
+    }
     // 墨水屏滚动模式：按滚动距离累积，每滚够约 3 屏刷一次。
     if (einkModeNotifier.value && _scrollController.hasClients) {
       final offset = _scrollController.offset;
@@ -179,11 +191,17 @@ extension _ReaderPageProgress on _ReaderPageState {
     // Turning the page cancels the selection: the handles belong to the text,
     // the action bar's anchor would be stale. Reselecting is one long press.
     _closeSelectionBar(clearSelection: true);
+    _clearLocationHighlight();
     if (!_progressReady || _changingChapter || page == _pageIndex) return;
-    _setState(() {
-      _pageIndex = page;
-      _textOffset = _chapterLayout!.pages[page].start;
-    });
+    if (_settingsPreviewSourceOffset == null) {
+      _setState(() {
+        _pageIndex = page;
+        _textOffset = _chapterLayout!.pages[page].start;
+      });
+    } else {
+      _setState(() => _pageIndex = page);
+    }
+    if (_progressPreviewActive || _settingsPreviewActive) return;
     _settleReadTime();
     unawaited(_persistProgress());
     // 分页模式的实际翻页：累加墨水屏刷新计数（覆盖音量键/自动翻页/点按翻页）。
@@ -249,7 +267,9 @@ extension _ReaderPageProgress on _ReaderPageState {
   }
 
   Future<void> _persistProgress({bool createHistory = false}) async {
-    if (!_progressReady) return;
+    if (!_progressReady || _progressPreviewActive || _settingsPreviewActive) {
+      return;
+    }
     // The scrollable may already be detached when the reader is disposed.
     _captureScrollProgress();
     final joined = _joined ? _joinedKey.currentState?.position : null;
@@ -327,9 +347,11 @@ extension _ReaderPageProgress on _ReaderPageState {
   /// page while「下一章」lands on the first made the pair feel broken
   /// (issue #110).
   Future<void> _prev({bool startAtEnd = false}) async {
+    ++_readerNavigationGeneration;
     if (_index <= 0 || _changingChapter) return;
     // 用户主动换章 = 不想被朗读拽回去，否则轮询 100ms 后又跳回正在播的那章。
     _pauseListenFollow();
+    _finishChapterPreview();
     _changingChapter = true;
     try {
       _settleReadTime();
@@ -344,6 +366,7 @@ extension _ReaderPageProgress on _ReaderPageState {
   }
 
   Future<void> _next() async {
+    ++_readerNavigationGeneration;
     if (_changingChapter) return;
     if (_index >= widget.chapters.length - 1) {
       _showMessage('已是最后一章');
@@ -351,6 +374,7 @@ extension _ReaderPageProgress on _ReaderPageState {
     }
     // 同 [_prev]：主动翻到下一章也要退出跟随。
     _pauseListenFollow();
+    _finishChapterPreview();
     _changingChapter = true;
     try {
       _settleReadTime();
@@ -364,8 +388,15 @@ extension _ReaderPageProgress on _ReaderPageState {
     }
   }
 
-  Future<void> _jumpToChapter(int index, {bool followListening = false}) async {
-    if (!followListening) _pauseListenFollow();
+  Future<void> _jumpToChapter(
+    int index, {
+    bool followListening = false,
+    int? navigationGeneration,
+  }) async {
+    if (!followListening) {
+      _pauseListenFollow();
+      if (navigationGeneration == null) ++_readerNavigationGeneration;
+    }
     if (_changingChapter ||
         index == _index ||
         index < 0 ||
@@ -391,11 +422,12 @@ extension _ReaderPageProgress on _ReaderPageState {
       }
       _settleReadTime();
       await _persistProgress();
-      if (!mounted) return;
-      _setState(() {
-        _index = index;
-        _chapterSeekValue = null;
-      });
+      if (!mounted ||
+          (navigationGeneration != null &&
+              navigationGeneration != _readerNavigationGeneration)) {
+        return;
+      }
+      _setState(() => _index = index);
       await _load();
     } finally {
       _changingChapter = false;

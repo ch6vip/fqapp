@@ -18,6 +18,7 @@ import 'package:fqapp/widgets/reader/reader_joined_scroll.dart';
 import 'package:fqapp/widgets/reader/reader_status_bar.dart';
 
 import 'support/fakes.dart';
+import 'support/reader_settings_nav.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -240,14 +241,13 @@ void main() {
       await tester.pumpAndSettle();
       _expectAnchor(tester, store, anchor);
       await _openAppearance(tester);
-      for (var i = 0; i < 4; i++) {
-        await tester.ensureVisible(find.byTooltip('增大字号'));
-        await tester.tap(find.byTooltip('增大字号'));
-        await tester.pumpAndSettle();
+      // 字号在「字体」分类里；每次改一级都要保住段落锚点。
+      await openReaderSettingsCategory(tester, 'font');
+      for (var size = 19; size <= 22; size++) {
+        await setReaderSliderValue(tester, 'reader-font-size', size.toDouble());
         _expectAnchor(tester, store, anchor);
       }
-      await tester.tap(find.byTooltip('关闭排版设置'));
-      await tester.pumpAndSettle();
+      await closeReaderSettingsSheet(tester);
       expect(_pager(tester).layout.pages.length, isNot(oldCount));
       await tester.binding.setSurfaceSize(const Size(390, 760));
       await tester.pumpAndSettle();
@@ -269,6 +269,7 @@ void main() {
       await _tapSide(tester, 1);
       final anchor = store.entry!['textOffset'] as int;
       await _openAppearance(tester);
+      await openReaderSettingsCategory(tester, 'turn');
       await tester.tap(find.byKey(const ValueKey('reader-mode-scroll')));
       await tester.pumpAndSettle();
       expect(find.byType(ReaderPagedView), findsNothing);
@@ -277,7 +278,7 @@ void main() {
         find.byType(ReaderJoinedScroll),
       );
       expect(joined.position!.scroll, greaterThan(0));
-      await tester.tap(find.byTooltip('关闭排版设置'));
+      await closeReaderSettingsSheet(tester);
       await tester.pumpAndSettle();
       expect((await ReaderPreferences.load()).pageMode, ReaderPageMode.scroll);
       await tester.drag(_surface, const Offset(0, -280));
@@ -286,10 +287,11 @@ void main() {
       final newAnchor = store.entry!['textOffset'] as int;
       expect(newAnchor, greaterThan(anchor));
       await _openAppearance(tester);
+      await openReaderSettingsCategory(tester, 'turn');
       await tester.tap(find.byKey(const ValueKey('reader-mode-paged')));
       await tester.pumpAndSettle();
       _expectAnchor(tester, store, newAnchor);
-      await tester.tap(find.byTooltip('关闭排版设置'));
+      await closeReaderSettingsSheet(tester);
       await tester.pumpAndSettle();
       expect((await ReaderPreferences.load()).pageMode, ReaderPageMode.paged);
       expect(tester.takeException(), isNull);
@@ -399,7 +401,7 @@ void main() {
         expect(_pager(tester).pageIndex, 1);
         await _openAppearance(tester);
         expect(find.text('翻页'), findsOneWidget);
-        await tester.tap(find.byTooltip('关闭排版设置'));
+        await closeReaderSettingsSheet(tester);
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -585,5 +587,3 @@ Future<void> _capture(WidgetTester tester, String name) async {
     }
   });
 }
-
-

@@ -11,6 +11,7 @@ import 'package:fqapp/widgets/reader/reader_status_bar.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
+import 'support/reader_settings_nav.dart';
 
 /// Regression coverage for the Wenku8 reader-chrome port: glass dock, centered
 /// toolbar, the compact progress capsule, discrete settings commits and the
@@ -38,10 +39,17 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('reader-next-chapter')), findsOneWidget);
-    expect(find.byKey(const ValueKey('reader-chapter-seek')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-chapter-seek')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reader-chrome-progress-slider')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('reader-settings')), findsOneWidget);
     expect(find.text('目录'), findsOneWidget);
-    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('外观'), findsOneWidget);
+    expect(find.text('操作'), findsOneWidget);
+    expect(find.text('查找'), findsOneWidget);
+    expect(find.text('夜读'), findsOneWidget);
 
     // 胶囊和坞按上游 DockLayout 的宽度收紧，不再铺满整栏。
     final capsule = tester.getSize(
@@ -51,15 +59,14 @@ void main() {
     final dock = tester.getSize(
       find.byKey(const ValueKey('reader-liquid-dock')),
     );
-    expect(dock.width, lessThanOrEqualTo(DockLayout.widthFor(3) + .5));
+    expect(dock.width, lessThanOrEqualTo(DockLayout.widthFor(6) + .5));
 
-    // 章节滑条的无障碍值读作「第 N 章」，而不是默认百分比。
-    expect(
-      tester
-          .getSemantics(find.byKey(const ValueKey('reader-chapter-seek')))
-          .value,
-      '第 1 章',
+    // 章内进度滑条的无障碍标签是「本章进度」，值是该章内的百分比。
+    final sliderSemantics = tester.getSemantics(
+      find.byKey(const ValueKey('reader-slider-semantics-本章进度')),
     );
+    expect(sliderSemantics.label, '本章进度');
+    expect(sliderSemantics.value, endsWith('%'));
 
     final back = tester.widget<GlassIconButton>(
       find.byKey(const ValueKey('reader-back-entry')),
@@ -103,13 +110,20 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('增大字号'));
+    // 字号在「字体」分类里，是滑块而非步进器；拖动只预览，阅读页按
+    // 120ms 尾随合并收到一次写入。
+    await openReaderSettingsCategory(tester, 'font');
+    final slider = find.byKey(const ValueKey('reader-font-size'));
+    final gesture = await tester.startGesture(tester.getCenter(slider));
+    await gesture.moveBy(const Offset(40, 0));
     await tester.pump();
-    // 面板自身立即更新，阅读页按 120ms 尾随合并收到一次写入。
+    // 面板自身立即更新，阅读页等到合并窗口结束才收到写入。
     expect(changes, isEmpty);
     await tester.pump(const Duration(milliseconds: 150));
     expect(changes, hasLength(1));
-    expect(changes.single.fontSize, 19);
+    expect(changes.single.fontSize, greaterThan(18));
+    await gesture.up();
+    await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
