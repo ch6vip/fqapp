@@ -5,10 +5,12 @@ import 'package:http/http.dart' as http;
 
 import 'api_client.dart';
 import 'native_player.dart';
+import 'video_catalogue.dart';
 
 /// User-facing explanations only. Raw exceptions can contain signed video URLs
 /// or backend response bodies and must never become the on-screen message.
 enum PlaybackIssue {
+  offline('此集尚未缓存', '当前离线，请联网后播放或缓存此集，也可以选择已缓存的剧集。'),
   network('网络连接异常', '请检查 Wi-Fi 或移动网络，连接正常后重试。'),
   timeout('加载超时', '网络或视频响应较慢，请稍后重试。'),
   unavailable('视频暂时无法播放', '播放地址可能已失效，可以重试获取新地址，或切换其他剧集。'),
@@ -23,6 +25,7 @@ enum PlaybackIssue {
   const PlaybackIssue(this.title, this.message);
 
   static PlaybackIssue fromError(Object error) {
+    if (error is OfflineEpisodeUnavailable) return offline;
     if (error is TimeoutException) return timeout;
     if (error is NativePlaybackException) {
       final status = error.httpStatusCode;

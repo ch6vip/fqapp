@@ -104,9 +104,11 @@ String episodeTileLabel({
   required int index,
   bool trailer = false,
   bool highlight = false,
+  bool hasKnownIndex = true,
 }) {
   if (trailer) return '预告';
   if (highlight) return '高光';
+  if (!hasKnownIndex) return '当前';
   return '${index + 1}';
 }
 
@@ -794,7 +796,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
     );
     return Semantics(
       key: ValueKey('story-episode-$index'),
-      label: '第 ${index + 1} 集',
+      label: episode.hasKnownIndex ? '第 ${index + 1} 集' : '当前视频',
       value: active ? (widget.playing ? '正在播放' : '当前剧集') : null,
       button: true,
       selected: active,
@@ -819,6 +821,7 @@ class _StoryPlayerPanelState extends State<StoryPlayerPanel> {
                     index: index,
                     trailer: episode.trailer,
                     highlight: episode.highlight,
+                    hasKnownIndex: episode.hasKnownIndex,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1006,11 +1009,14 @@ class _StoryEpisodeDrawerState extends State<StoryEpisodeDrawer> {
                         ),
                     itemCount: widget.episodes.length,
                     itemBuilder: (context, index) {
+                      final episode = widget.episodes[index];
                       final active = index == playingIndex;
                       final watched = !active && widget.watched.contains(index);
                       return Semantics(
                         key: ValueKey('story-episode-$index'),
-                        label: '第 ${index + 1} 集',
+                        label: episode.hasKnownIndex
+                            ? '第 ${index + 1} 集'
+                            : '当前视频',
                         value: active
                             ? (widget.playing ? '正在播放' : '当前剧集')
                             : null,
@@ -1032,7 +1038,9 @@ class _StoryEpisodeDrawerState extends State<StoryEpisodeDrawer> {
                               children: [
                                 Center(
                                   child: Text(
-                                    '${index + 1}',
+                                    episode.hasKnownIndex
+                                        ? '${index + 1}'
+                                        : '当前',
                                     style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: active

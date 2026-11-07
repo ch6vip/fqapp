@@ -585,6 +585,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
   String get _seriesTitle =>
       widget.title.isEmpty ? _episodeTitle : widget.title;
 
+  String get _episodeNumberLabel =>
+      widget.episodes.isNotEmpty &&
+          widget.episodes[widget.currentIndex].hasKnownIndex
+      ? '第${widget.currentIndex + 1}集'
+      : '当前视频';
+
+  bool get _completeCatalogue => hasCompleteEpisodeCatalogue(widget.episodes);
+
   /// 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon`：
   /// `saasVideoData != null && !saasVideoData.isVertical()`。竖屏剧集
   /// （`vertical == true`）整颗「全屏观看」不渲染；`vertical` 未知时保持
@@ -3825,7 +3833,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   : Text(
                       // 官方播放页顶栏标题就是「第1集」这样的集数（截图），
                       // 剧名在底部信息层。
-                      '第${widget.currentIndex + 1}集',
+                      _episodeNumberLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -3852,7 +3860,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final total = widget.episodes.length;
     final status = widget.seriesStatus;
     final meta = [
-      if (total > 1) '全$total集',
+      if (_completeCatalogue && total > 1) '全$total集',
       if (status != null && status.isNotEmpty) status,
     ].join(' · ');
     return Column(
@@ -3860,7 +3868,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '$_seriesTitle｜第${widget.currentIndex + 1}集',
+          '$_seriesTitle｜$_episodeNumberLabel',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -4305,7 +4313,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
                 Expanded(
                   child: Text(
-                    widget.seriesStatus == null
+                    !_completeCatalogue
+                        ? ' · 完整目录暂不可用'
+                        : widget.seriesStatus == null
                         ? ' · 全${widget.episodes.length}集'
                         : ' · ${widget.seriesStatus} · 全${widget.episodes.length}集',
                     maxLines: 1,

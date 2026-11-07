@@ -721,6 +721,10 @@ class Chapter {
   /// 所以这里的 null 与 false 在展示上等价，但保留 null 让「未知」可区分。
   final bool? vertical;
 
+  /// False for a playable video supplied without its series catalogue. Its
+  /// position in a fallback list must not become a global episode number.
+  final bool hasKnownIndex;
+
   Chapter({
     required this.itemId,
     required this.title,
@@ -731,6 +735,7 @@ class Chapter {
     this.disabled = false,
     this.newlyUpdate = false,
     this.vertical,
+    this.hasKnownIndex = true,
   });
 
   factory Chapter.fromRaw(Map<String, dynamic> m, {int? index}) => Chapter(
@@ -753,6 +758,9 @@ class Chapter {
     vertical: _optionalFlag(m, const ['vertical']),
   );
 }
+
+bool hasCompleteEpisodeCatalogue(List<Chapter> episodes) =>
+    episodes.isNotEmpty && episodes.every((episode) => episode.hasKnownIndex);
 
 /// Explicit short-drama model used by the player and directory parser.
 class Episode {
@@ -889,6 +897,7 @@ List<List<Chapter>> parseDirectory(Map<String, dynamic> payload) {
             disabled: chapter.disabled,
             newlyUpdate: chapter.newlyUpdate,
             vertical: chapter.vertical,
+            hasKnownIndex: chapter.hasKnownIndex,
           ),
         );
       }
@@ -935,6 +944,7 @@ Chapter _withVersion(Chapter chapter, Map<String, String> versions) =>
         disabled: chapter.disabled,
         newlyUpdate: chapter.newlyUpdate,
         vertical: chapter.vertical,
+        hasKnownIndex: chapter.hasKnownIndex,
       )
     : chapter;
 
