@@ -1,13 +1,30 @@
+// Ported from Wenku8_Flutter (revision ebcd7f1):
+//   lib/reader_catalogue.dart -> ReaderCatalogue (header, search toggle, order
+//                                   control, current/cached row labels)
+//
+// fqapp keeps its own sheet route, debounced filtering, reversed projection,
+// itemExtent and the fast-scroll handle. The upstream volume grouping is not
+// carried because fqapp's `Chapter` list is already a flat directory.
+//
+// Mechanical substitutions:
+// - `app_ui.dart` AppText/GlassIconButton/GlassTextButton/JellyTapSurface ->
+//   shared `lib/widgets/wenku` exports.
+// - `AppSearchField` -> the already-ported shared widget.
+// - `NovelMotion` -> `WenkuMotion`.
+// - The upstream row layout (number column, title, 正在阅读 / 已缓存 labels)
+//   is kept; fqapp renders it with ListTile so the existing selected-row
+//   accessibility and tests continue to address the same semantics.
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
 import '../../services/ai_reading/ai_controller.dart';
 import '../../services/ai_reading/ai_models.dart';
 import '../../services/reader_preferences.dart';
+import '../wenku/wenku_ui.dart';
 import 'reader_directory_fast_scroll.dart';
 import 'reader_theme.dart';
 import 'settings/reader_settings_widgets.dart';
@@ -48,6 +65,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   double _itemExtent = 60;
   int _scrollRevision = 0;
   bool _reversed = false;
+  bool _searchOpen = false;
   String _query = '';
   // The directory can hold thousands of chapters; filtering on every keystroke
   // re-scans them all and rebuilds the sheet. Coalesce the input instead.
@@ -66,16 +84,6 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
 
   void _onAiChanged() {
     if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    widget.aiController.removeListener(_onAiChanged);
-    _searchDebounce?.cancel();
-    _searchController.dispose();
-    _searchFocus.dispose();
-    _scrollController.dispose();
-    super.dispose();
   }
 
   @override
@@ -104,6 +112,16 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     }
   }
 
+  @override
+  void dispose() {
+    widget.aiController.removeListener(_onAiChanged);
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    _searchFocus.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 200), () {
@@ -125,6 +143,19 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     _searchFocus.unfocus();
     _searchController.clear();
     _applyQuery('');
+  }
+
+  void _toggleSearch() {
+    setState(() => _searchOpen = !_searchOpen);
+    if (_searchOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _searchOpen) _searchFocus.requestFocus();
+      });
+    } else {
+      _searchFocus.unfocus();
+      _searchController.clear();
+      _applyQuery('');
+    }
   }
 
   void _schedulePosition({bool current = false, int? position}) {
@@ -176,95 +207,78 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     final currentValid =
         widget.currentIndex >= 0 &&
         widget.currentIndex < widget.chapters.length;
-    final scaler = MediaQuery.textScalerOf(context);
-    final searchHeight = math.max(48.0, scaler.scale(14) * 1.5 + 32) + 8;
-    final statusHeight = math.max(48.0, scaler.scale(12) * 1.5 + 24);
     return ReaderSettingsSheetFrame(
       preset: preset,
-      title: '目录 · ${widget.chapters.length} 章',
+      title: '目录',
       closeTooltip: '关闭',
       scrollKey: const ValueKey('reader-directory-scroll'),
       maxHeightFactor: MediaQuery.viewInsetsOf(context).bottom > 0 ? 1 : .86,
+      actions: [
+        GlassIconButton(
+          key: const ValueKey('reader-catalogue-search-toggle'),
+          icon: CupertinoIcons.search,
+          label: _searchOpen ? '收起搜索' : '搜索目录',
+          onPressed: _toggleSearch,
+        ),
+        Tooltip(
+          message: _reversed ? '切换为正序' : '切换为倒序',
+          child: GlassTextButton(
+            key: const ValueKey('reader-catalogue-order'),
+            compact: true,
+            selected: _reversed,
+            onPressed: _toggleOrder,
+            child: Text(_reversed ? '倒序' : '正序'),
+          ),
+        ),
+      ],
       // 目录是长列表，用有界 body 让列表自己滚动：软键盘弹起时列表底边
       // 停在键盘上沿，而不是把整块内容继续往下铺到键盘下面。
       body: LayoutBuilder(
         builder: (context, constraints) => Column(
           children: [
-            if (constraints.maxHeight >= searchHeight + 24)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                child: Row(
-                  children: [
-                    Expanded(child: _searchField(preset)),
-                    const SizedBox(width: 8),
-                    Tooltip(
-                      message: _reversed ? '切换为正序' : '切换为倒序',
-                      child: TextButton(
-                        onPressed: _toggleOrder,
-                        style: TextButton.styleFrom(
-                          foregroundColor: preset.textColor,
-                          minimumSize: const Size(48, 48),
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _reversed
-                                  ? LucideIcons.arrow_up
-                                  : LucideIcons.arrow_down,
-                              size: 18,
-                            ),
-                            Text(
-                              _reversed ? '倒序' : '正序',
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                          ],
-                        ),
+            AnimatedSize(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : WenkuMotion.enter,
+              alignment: Alignment.topCenter,
+              child: _searchOpen
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+                      child: AppSearchField(
+                        inputKey: const ValueKey('reader-chapter-search'),
+                        controller: _searchController,
+                        focusNode: _searchFocus,
+                        hint: '搜索章节名或输入章序',
+                        clearTooltip: '清空',
+                        onChanged: _onSearchChanged,
+                        onSubmitted: _applyQuery,
                       ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            if (currentValid && _query.isEmpty)
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 12, 2),
+                  child: TextButton.icon(
+                    onPressed: _locateCurrent,
+                    icon: const ArchiveIcon(
+                      CupertinoIcons.location_fill,
+                      size: 16,
                     ),
-                  ],
+                    label: const Text(
+                      '定位当前章',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: preset.accentColor,
+                    ),
+                  ),
                 ),
               ),
-            if (constraints.maxHeight >= searchHeight + statusHeight + 60)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _query.isNotEmpty
-                            ? '找到 ${_indexes.length} 章'
-                            : currentValid
-                            ? '当前第 ${widget.currentIndex + 1} 章'
-                            : '章节列表',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: preset.mutedTextColor,
-                        ),
-                      ),
-                    ),
-                    Flexible(
-                      child: TextButton.icon(
-                        onPressed: currentValid ? _locateCurrent : null,
-                        icon: const Icon(LucideIcons.locate_fixed, size: 16),
-                        label: const Text(
-                          '定位当前章',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        style: TextButton.styleFrom(
-                          foregroundColor: preset.accentColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            Divider(height: 1, color: preset.borderColor),
             Expanded(
               child: _indexes.isEmpty
                   ? Center(
@@ -283,7 +297,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
                         controller: _scrollController,
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
                         itemExtent: _itemExtent,
                         itemCount: _indexes.length,
                         itemBuilder: (context, position) =>
@@ -296,52 +310,6 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       ),
     );
   }
-
-  Widget _searchField(ReaderThemePreset preset) =>
-      ValueListenableBuilder<TextEditingValue>(
-        valueListenable: _searchController,
-        builder: (context, value, _) => TextField(
-          controller: _searchController,
-          focusNode: _searchFocus,
-          textInputAction: TextInputAction.search,
-          style: TextStyle(color: preset.textColor, fontSize: 14),
-          onChanged: _onSearchChanged,
-          onSubmitted: _applyQuery,
-          decoration: InputDecoration(
-            hintText: '搜索章节名或序号',
-            hintStyle: TextStyle(color: preset.mutedTextColor),
-            prefixIcon: Icon(
-              LucideIcons.search,
-              size: 20,
-              color: preset.mutedTextColor,
-            ),
-            suffixIcon: value.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: '清空',
-                    color: preset.mutedTextColor,
-                    onPressed: () {
-                      _searchController.clear();
-                      _applyQuery('');
-                    },
-                    icon: const Icon(LucideIcons.x),
-                  ),
-            filled: true,
-            fillColor: preset.fieldColor,
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 14,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: preset.isEink
-                  ? BorderSide(color: preset.borderColor)
-                  : BorderSide.none,
-            ),
-          ),
-        ),
-      );
 
   AiChapterCheckStatus? _statusFor(Chapter chapter) {
     final live = widget.aiController.statusFor(widget.bookId, chapter.itemId);
@@ -376,8 +344,6 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     if (stored == null || stored.state == AiChapterCheckState.unchecked) {
       return null;
     }
-    // The directory has a cheap version check; opening the chapter still
-    // verifies the real canonical hash.
     if (stored.chapterVersion.isNotEmpty &&
         chapter.version.isNotEmpty &&
         stored.chapterVersion != chapter.version) {
@@ -386,8 +352,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     return stored;
   }
 
-  Widget? _statusWidget(
-    BuildContext context,
+  Widget _statusWidget(
     ReaderThemePreset preset,
     AiChapterCheckStatus status,
   ) {
@@ -401,8 +366,8 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       AiChapterCheckState.unchecked => preset.mutedTextColor,
     };
     final icon = switch (status.state) {
-      AiChapterCheckState.checked => Icons.check_circle_outline,
-      AiChapterCheckState.failed => Icons.error_outline,
+      AiChapterCheckState.checked => CupertinoIcons.check_mark_circled,
+      AiChapterCheckState.failed => CupertinoIcons.exclamationmark_circle,
       AiChapterCheckState.running => null,
       AiChapterCheckState.unchecked => null,
     };
@@ -444,126 +409,60 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     );
   }
 
-  Widget _cacheWidget(ReaderThemePreset preset, {bool prominent = false}) =>
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: prominent ? 15 : 14,
-            height: 11,
-            child: Icon(
-              Icons.download_outlined,
-              size: prominent ? 13 : 12,
-              color: preset.mutedTextColor,
-            ),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            '已缓存',
-            style: TextStyle(
-              fontSize: prominent ? 11 : 10,
-              height: 1.1,
-              color: preset.mutedTextColor,
-            ),
-          ),
-        ],
-      );
-
-  Widget _trailingFor(
-    BuildContext context,
+  Widget? _trailingFor(
     ReaderThemePreset preset,
     Chapter chapter,
+    bool current,
+    bool cached,
   ) {
     final status = _statusFor(chapter);
-    final cached = widget.cachedIds.contains(chapter.itemId);
-    final hasStatus = status != null;
-    if (!hasStatus && !cached) return const SizedBox(width: 64);
-    final statusLine = hasStatus
-        ? _statusWidget(context, preset, status)
-        : null;
-    final cacheLine = cached
-        ? Tooltip(
-            message: '已缓存',
-            child: _cacheWidget(preset, prominent: !hasStatus),
-          )
-        : null;
-    return SizedBox(
-      width: 64,
-      height: 30,
-      child: statusLine != null && cacheLine != null
-          ? Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [statusLine, cacheLine],
-            )
-          : Align(
-              alignment: Alignment.centerLeft,
-              child: statusLine ?? cacheLine,
-            ),
+    final lines = <Widget>[
+      if (current) const Text('正在阅读', style: TextStyle(fontSize: 10)),
+      if (status != null) _statusWidget(preset, status),
+      if (cached) const Text('已缓存', style: TextStyle(fontSize: 10)),
+    ];
+    if (lines.isEmpty) return null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: lines,
     );
   }
 
   Widget _row(BuildContext context, int index, ReaderThemePreset preset) {
     final chapter = widget.chapters[index];
     final current = index == widget.currentIndex;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: Material(
-        borderRadius: BorderRadius.circular(8),
-        clipBehavior: Clip.antiAlias,
-        color: current && !preset.isEink
-            ? preset.accentColor.withValues(alpha: 0.10)
-            : Colors.transparent,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(
-                width: 3,
-                color: current ? preset.accentColor : Colors.transparent,
-              ),
-            ),
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            minLeadingWidth: 28,
-            horizontalTitleGap: 12,
-            minTileHeight: _itemExtent - 4,
-            titleAlignment: ListTileTitleAlignment.center,
-            selected: current,
-            selectedColor: preset.accentColor,
-            textColor: preset.textColor,
-            onTap: () => Navigator.pop(context, index),
-            leading: SizedBox(
-              width: math.max(
-                28,
-                MediaQuery.textScalerOf(context).scale(11) *
-                    widget.chapters.length.toString().length *
-                    .65,
-              ),
-              child: Text(
-                '${index + 1}',
-                textAlign: TextAlign.end,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: current ? preset.accentColor : preset.mutedTextColor,
-                  fontWeight: current ? FontWeight.w600 : FontWeight.normal,
-                ),
-              ),
-            ),
-            title: Text(
-              chapter.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 15,
-                height: 1.35,
-                fontWeight: current ? FontWeight.w600 : FontWeight.w400,
-              ),
-            ),
-            trailing: _trailingFor(context, preset, chapter),
-          ),
+    final cached = widget.cachedIds.contains(chapter.itemId);
+    return ListTile(
+      key: ValueKey('reader-directory-row-$index'),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+      minLeadingWidth: 38,
+      horizontalTitleGap: 8,
+      minTileHeight: _itemExtent - 4,
+      titleAlignment: ListTileTitleAlignment.center,
+      selected: current,
+      selectedColor: preset.accentColor,
+      selectedTileColor: preset.textColor.withValues(alpha: 0.06),
+      textColor: preset.textColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ArchiveDesign.panelRadius),
+      ),
+      onTap: () => Navigator.pop(context, index),
+      leading: SizedBox(
+        width: 38,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text('${index + 1}', style: const TextStyle(fontSize: 12)),
         ),
       ),
+      title: Text(
+        chapter.title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 14, height: 1.45),
+      ),
+      trailing: _trailingFor(preset, chapter, current, cached),
     );
   }
 }

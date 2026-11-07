@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
+import '../models/shelf_identity.dart';
 import 'encrypted_hive.dart';
 
 /// One 加入书架 record.
@@ -28,7 +29,6 @@ class ShelfStore {
   static final ShelfStore instance = ShelfStore._();
 
   static const boxName = 'shelf';
-  static const _keyPrefix = 'shelf_v1:';
 
   Box<dynamic>? _box;
   final ValueNotifier<int> _revision = ValueNotifier<int>(0);
@@ -49,10 +49,18 @@ class ShelfStore {
   /// The stable key of one shelf entry. The series id wins over the item id for
   /// the same reason the detail page prefers it: a short drama can be opened
   /// from a single episode and must still land on the series.
-  static String keyFor(String kind, String id) => '$_keyPrefix$kind:$id';
+  ///
+  /// The source is part of the identity: a 书旗 book shares numeric ids with
+  /// 番茄 books, and without the prefix one would look like the other. The
+  /// fanqie prefix is omitted so every existing record keeps its exact key.
+  static String keyFor(String kind, String id, {String source = 'fanqie'}) =>
+      ShelfIdentity.storageKeyFor(kind, id, source: source);
 
-  static String keyOf(MediaItem item) =>
-      keyFor(item.kind, item.seriesId ?? item.id);
+  static String keyOf(MediaItem item) => ShelfIdentity.storageKeyOf(item);
+
+  /// The source-qualified identity without the `shelf_v1:` storage prefix.
+  static String contentKeyOf(MediaItem item) =>
+      ShelfIdentity.contentKeyOf(item);
 
   Future<void> init() async {
     if (_openBox != null) return;
@@ -60,8 +68,8 @@ class ShelfStore {
     _revision.value++;
   }
 
-  bool contains(String kind, String id) {
-    final value = _openBox?.get(keyFor(kind, id));
+  bool contains(String kind, String id, {String source = 'fanqie'}) {
+    final value = _openBox?.get(keyFor(kind, id, source: source));
     return value is Map;
   }
 
@@ -77,7 +85,10 @@ class ShelfStore {
     for (final key in box.keys) {
       final raw = box.get(key);
       if (raw is! Map) continue;
-      final item = _itemFrom(raw);
+      // The storage key carries the source prefix for non-fanqie records;
+      // passing it through lets a legacy record that never wrote `source`
+      // heal its source instead of being read as a 番茄 book.
+      final item = _itemFrom(raw, storageKey: key.toString());
       if (item == null) continue;
       records.add(
         ShelfRecord(item: item, addedAt: _addedAt(raw) ?? DateTime(1970)),
@@ -204,6 +215,12 @@ class ShelfStore {
     'author': item.author,
     'badge': item.badge,
     'ep': item.ep,
+    // 番茄是默认来源，省略字段让旧记录形状保持不变。
+    if (item.source != 'fanqie') 'source': item.source,
+    if (item.intro.isNotEmpty) 'intro': item.intro,
+    if (item.categories.isNotEmpty) 'categories': item.categories,
+    if (item.creationStatus >= 0) 'creationStatus': item.creationStatus,
+    if (item.wordNumber > 0) 'wordNumber': item.wordNumber,
     'seriesId': item.seriesId,
     'episodeId': item.episodeId,
     'addedAt': addedAt.millisecondsSinceEpoch,
@@ -218,10 +235,19 @@ class ShelfStore {
 
   /// A broken record must not take the whole shelf down with it: unknown shapes
   /// are skipped, which is the same rule the history list follows.
-  static MediaItem? _itemFrom(Map<dynamic, dynamic> raw) {
+  ///
+  /// The source is resolved in three steps: an explicit valid `source` field,
+  /// then the source prefix of the storage key (self-healing for records
+  /// written before that field existed), then fanqie.
+  static MediaItem? _itemFrom(Map<dynamic, dynamic> raw, {String? storageKey}) {
     final id = raw['id']?.toString() ?? '';
     final title = raw['title']?.toString() ?? '';
     if (id.isEmpty && title.isEmpty) return null;
+    final recordedSource = raw['source']?.toString() ?? '';
+    final source =
+        recordedSource.isNotEmpty && ShelfIdentity.isValidSource(recordedSource)
+        ? recordedSource
+        : _sourceFromStorageKey(storageKey);
     return MediaItem(
       id: id,
       title: title.isEmpty ? '未知作品' : title,
@@ -230,8 +256,29 @@ class ShelfStore {
       badge: raw['badge']?.toString() ?? '',
       ep: raw['ep']?.toString() ?? '',
       kind: raw['kind']?.toString() ?? 'book',
+      source: source,
+      intro: raw['intro']?.toString() ?? '',
+      categories: [
+        if (raw['categories'] is List)
+          for (final value in raw['categories'] as List)
+            if (value is String && value.isNotEmpty) value,
+      ],
+      creationStatus: raw['creationStatus'] is num
+          ? (raw['creationStatus'] as num).toInt()
+          : -1,
+      wordNumber: raw['wordNumber'] is num
+          ? (raw['wordNumber'] as num).toInt()
+          : 0,
       seriesId: raw['seriesId']?.toString(),
       episodeId: raw['episodeId']?.toString(),
     );
+  }
+
+  static String _sourceFromStorageKey(String? storageKey) {
+    if (storageKey == null) return 'fanqie';
+    final contentKey = storageKey.startsWith(ShelfIdentity.storagePrefix)
+        ? storageKey.substring(ShelfIdentity.storagePrefix.length)
+        : storageKey;
+    return ShelfIdentity.parseContentKey(contentKey)?.source ?? 'fanqie';
   }
 }

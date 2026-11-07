@@ -6,10 +6,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/library_page.dart';
-import 'package:fqapp/pages/mine_page.dart';
+import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/services/shelf_view_store.dart';
 import 'package:fqapp/widgets/lazy_indexed_stack.dart';
+import 'package:fqapp/widgets/wenku/archive_shelf.dart';
 
 void main() {
   late Directory directory;
@@ -17,6 +21,7 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    ShelfViewStore.instance.resetForTest();
     directory = await Directory.systemTemp.createTemp('fqapp-visible-pages-');
     Hive.init(directory.path);
     await store.init();
@@ -42,7 +47,7 @@ void main() {
             index: value,
             children: const [
               LibraryPage(),
-              MinePage(),
+              ReadingStatisticsPage(),
               SizedBox.expand(child: Text('其他页面')),
             ],
           ),
@@ -86,7 +91,7 @@ void main() {
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
     final navigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
-      MaterialApp(navigatorKey: navigator, home: const MinePage()),
+      MaterialApp(navigatorKey: navigator, home: const ReadingStatisticsPage()),
     );
     await tester.pumpAndSettle();
     await _saveProgress(tester, 0);
@@ -115,6 +120,61 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('hidden shelf keeps one carousel and does not replay entrance', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await ShelfStore.instance.init();
+      await ShelfStore.instance.add(
+        MediaItem(
+          id: 'carousel-book',
+          title: '立体书架的书',
+          cover: '',
+          author: '作者',
+          badge: '',
+          ep: '',
+          kind: 'book',
+        ),
+      );
+    });
+    final index = ValueNotifier<int>(0);
+    addTearDown(index.dispose);
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<int>(
+          valueListenable: index,
+          builder: (context, value, child) => LazyIndexedStack(
+            index: value,
+            children: const [
+              LibraryPage(),
+              SizedBox.expand(child: Text('其他页面')),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final carousel = find.byType(ArchiveFileCarousel);
+    expect(carousel, findsOneWidget);
+    final state = tester.state<ArchiveFileCarouselState>(carousel);
+    expect(state.entranceCompleted, isTrue);
+
+    // Hidden tabs keep the same carousel state: no second ticker, no replay.
+    index.value = 1;
+    await tester.pumpAndSettle();
+    index.value = 0;
+    await tester.pumpAndSettle();
+    expect(find.byType(ArchiveFileCarousel), findsOneWidget);
+    expect(
+      tester.state<ArchiveFileCarouselState>(find.byType(ArchiveFileCarousel)),
+      same(state),
+    );
+    expect(state.entranceCompleted, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 Future<void> _showRankedBook(WidgetTester tester, String title) async {
@@ -123,7 +183,7 @@ Future<void> _showRankedBook(WidgetTester tester, String title) async {
     200,
     scrollable: find
         .descendant(
-          of: find.byType(MinePage),
+          of: find.byType(ReadingStatisticsPage),
           matching: find.byType(Scrollable),
         )
         .first,
@@ -149,7 +209,8 @@ Future<void> _saveProgress(WidgetTester tester, int update) async {
 Map<String, int> _recordBuilds() {
   final builds = <String, int>{};
   debugOnRebuildDirtyWidget = (element, builtOnce) {
-    if (element.widget is LibraryPage || element.widget is MinePage) {
+    if (element.widget is LibraryPage ||
+        element.widget is ReadingStatisticsPage) {
       final name = element.widget.runtimeType.toString();
       builds.update(name, (count) => count + 1, ifAbsent: () => 1);
     }

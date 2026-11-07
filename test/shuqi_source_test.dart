@@ -6,6 +6,8 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/shuqi_book.dart';
 import 'package:fqapp/pages/search_page.dart';
 
+import 'support/search_finders.dart';
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -136,7 +138,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), '凡人');
@@ -145,8 +147,36 @@ void main() {
 
     expect(calls, ['凡人']);
     expect(find.text('凡人修仙传'), findsOneWidget);
-    // 分类页签在书旗模式下不参与选中，数量仍是番茄那 6 个。
-    expect(find.byType(ChoiceChip), findsNWidgets(6));
+    // 书旗是分段的最后一段，番茄那 6 个分类仍在同一行。
+    for (final label in ['综合', '小说', '短剧', '漫剧', '漫画', '听书']) {
+      expect(searchSegment(label), findsOneWidget);
+    }
+  });
+
+  testWidgets('an empty shuqi reply shows no results instead of an error', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchPage(
+          searchLoader:
+              (query, {required int tabType, required int offset}) async {
+                return const <SearchTab>[];
+              },
+          shuqiSearchLoader: (key) async => {'source': 'shuqi', 'data': []},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(searchSegment('书旗'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'xiuxian');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+
+    expect(find.text('没有找到相关故事'), findsOneWidget);
+    expect(find.text('搜索失败，请稍后重试'), findsNothing);
   });
 
   testWidgets('a restored rating filter does not hide shuqi results', (
@@ -187,7 +217,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('search-shuqi-source')));
+    await tester.tap(searchSegment('书旗'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '凡人');
     await tester.testTextInput.receiveAction(TextInputAction.search);

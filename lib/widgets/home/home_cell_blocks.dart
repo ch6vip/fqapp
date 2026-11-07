@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/home_cell.dart';
 import '../../models/media_item.dart';
+import 'home_archive.dart';
 import 'home_design.dart';
-import 'home_media_card.dart';
+import 'home_rank_shelf.dart';
 import 'home_shelf.dart';
 
 // 流尾已拆到独立文件，这里保留导出，页面沿用原 import 即可。
@@ -12,54 +12,23 @@ export 'home_stream_footer.dart';
 
 /// Bookstore blocks that the shelf still renders.
 ///
-/// 首页改成「以书为主」后只保留两块有独立结构的区块：排行榜（511）与流尾
-/// （`aes.xml` 的三态文案）。卡片流（384/385）不再由区块自绘，交给
-/// `home_page.dart` 统一排成书架网格；官方那套 `asb.xml` / `b8w.xml` 的
-/// 尺寸引用随之移除，排行榜改成横向大封面轨道（见 [HomeRankCell]）。
+/// 2026-11 首页重做后只剩排行榜（511）有独立的区块结构，卡片流（384/385）
+/// 仍由 `home_page.dart` 统一排成网格，流尾在 `home_stream_footer.dart`。
+/// 排行榜的预览从「横向封面轨道」换成了立体书架（见 `home_rank_shelf.dart`）。
 
-/// 「更多」 — 12sp 灰字 + 箭头，放在分区头右端。
+/// 「完整榜单」入口。
 class HomeBlockMore extends StatelessWidget {
-  const HomeBlockMore({super.key, required this.onTap, this.label = '更多'});
+  const HomeBlockMore({super.key, required this.onTap, this.label = '完整榜单'});
 
   final VoidCallback onTap;
   final String label;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, height: 1.2, color: palette.muted),
-          ),
-          const SizedBox(width: 2),
-          Icon(LucideIcons.chevron_right, size: 13, color: palette.muted),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      HomeSectionAction(label: label, onTap: onTap);
 }
 
 // ── Rank block ─────────────────────────────────────────────────────────────
-
-const double _rankCardWidth = 100;
-const double _rankCoverHeight = 140;
-const double _rankCardGap = 12;
-
-/// 排行榜改成横向轨道后的整段高度：封面 + 8 + 两行书名 + 4 + 一行副标题。
-double _rankRailHeight(BuildContext context) {
-  final scaler = MediaQuery.textScalerOf(context);
-  return _rankCoverHeight +
-      8 +
-      scaler.scale(13) * 1.35 * 2 +
-      4 +
-      scaler.scale(11) * 1.3;
-}
 
 /// The rank boards shipped with the block
 /// (`rank_with_category_data.rank_algo_list[]`).
@@ -115,11 +84,10 @@ Widget buildRankCell(
   loadBoard: loadBoard,
 );
 
-/// `RankCellV3`(511): a section title, the board names, and one rail of books.
+/// `RankCellV3`(511): 分区标签、榜单名、一排立体书脊。
 ///
-/// 原版是「四行一页、横向翻页」的榜单预览，读起来像报表；改成大封面轨道
-/// 后，榜单的「排位」用封面左下角的大号数字直接表达（真实名次，不是装饰
-/// 序号）。榜名切换仍是原地换数据（`RankMixContentHolder.K7`）。
+/// 榜名切换仍是原地换数据（`RankMixContentHolder.K7`）；书脊阵列由
+/// [HomeRankShelf] 绘制，墨水屏和「减少动效」下按整本切换。
 class HomeRankCell extends StatefulWidget {
   const HomeRankCell({
     super.key,
@@ -191,60 +159,48 @@ class _HomeRankCellState extends State<HomeRankCell> {
     final cell = widget.cell;
     final books = _books;
     if (books.isEmpty) return const SizedBox.shrink();
+    final palette = HomePalette.of(context);
     final names = homeRankNames(cell);
     final title = cell.name.isEmpty ? '排行榜' : cell.name;
-    final railHeight = _rankRailHeight(context);
+    final stepped = palette.eink || MediaQuery.disableAnimationsOf(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        HomeSectionHeader(
+        HomeSectionLabel(
+          code: '01 / RANKING',
           title: title,
           action: HomeBlockMore(onTap: widget.onMore),
         ),
         if (names.length > 1)
           _BoardNames(names: names, selectedIndex: _index, onSelect: _select),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         if (_loading)
-          SizedBox(
-            height: railHeight,
-            child: const Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: HomePalette.accent,
+          LayoutBuilder(
+            builder: (context, constraints) => SizedBox(
+              height: HomeRankShelf.loadingHeight(
+                context,
+                constraints.maxWidth,
+              ),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: palette.eink ? palette.ink : HomePalette.accent,
+                  ),
                 ),
               ),
             ),
           )
         else
-          SizedBox(
-            height: railHeight,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-              itemCount: books.length,
-              separatorBuilder: (_, _) => const SizedBox(width: _rankCardGap),
-              itemBuilder: (context, index) {
-                final item = books[index];
-                return _RankCard(
-                  key: ValueKey('rank:${item.kind}:${item.id}'),
-                  item: item,
-                  rank: index + 1,
-                  onTap: () => widget.onOpen(item),
-                );
-              },
-            ),
-          ),
+          HomeRankShelf(books: books, onOpen: widget.onOpen, stepped: stepped),
       ],
     );
   }
 }
 
-/// The board names under the title: plain text tabs, selected in ink with a
-/// 2dp underline. 旧版的字号跳变（16/14）加 40% 透明度太吵，这里只留
-/// 字重与下划线。
+/// 榜名保留全部真实选项，选中态用浅底与字重区分，避免抢走书架焦点。
 class _BoardNames extends StatelessWidget {
   const _BoardNames({
     required this.names,
@@ -264,167 +220,49 @@ class _BoardNames extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: homeGutter),
       child: Row(
         children: [
-          for (var index = 0; index < names.length; index++)
-            Padding(
-              padding: EdgeInsets.only(left: index == 0 ? 0 : 20),
-              child: GestureDetector(
+          for (var index = 0; index < names.length; index++) ...[
+            if (index > 0) const SizedBox(width: 6),
+            Semantics(
+              selected: index == selectedIndex,
+              child: HomePressable(
                 onTap: () => onSelect(index),
-                behavior: HitTestBehavior.opaque,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Text(
-                        names[index],
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.2,
-                          fontWeight: index == selectedIndex
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: index == selectedIndex
-                              ? palette.ink
-                              : palette.muted,
-                        ),
-                      ),
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 28),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 11,
+                      vertical: 6,
                     ),
-                    Container(
-                      width: 16,
-                      height: 2,
-                      decoration: BoxDecoration(
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: index == selectedIndex
+                          ? (palette.eink ? palette.mark : palette.soft)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: palette.line),
+                    ),
+                    child: Text(
+                      names[index],
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.1,
+                        fontWeight: index == selectedIndex
+                            ? FontWeight.w600
+                            : FontWeight.w400,
                         color: index == selectedIndex
-                            ? palette.ink
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(1),
+                            ? (palette.eink ? palette.canvas : palette.ink)
+                            : palette.muted,
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
+          ],
         ],
-      ),
-    );
-  }
-}
-
-class _RankCard extends StatelessWidget {
-  const _RankCard({
-    super.key,
-    required this.item,
-    required this.rank,
-    required this.onTap,
-  });
-
-  final MediaItem item;
-  final int rank;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    final scaler = MediaQuery.textScalerOf(context);
-    final score = item.score;
-    final meta = item.rankTags.isNotEmpty
-        ? item.rankTags.first
-        : item.author.isNotEmpty
-        ? item.author
-        : score != null
-        ? homeScoreText(score)
-        : '';
-    return HomePressable(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      semanticLabel: '$rank ${item.title}',
-      child: SizedBox(
-        width: _rankCardWidth,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _RankCover(item: item, rank: rank),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: scaler.scale(13) * 1.35 * 2,
-              child: Text(
-                item.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.35,
-                  fontWeight: FontWeight.w600,
-                  color: palette.ink,
-                ),
-              ),
-            ),
-            if (meta.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                meta,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  height: 1.3,
-                  color: palette.muted,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The cover with a TOP-3 badge. 只有前三名戴角标：封面上不再压大号数字，
-/// 名次仍然是真的（轨道顺序 = 榜单顺序），但不再挡住书封。
-class _RankCover extends StatelessWidget {
-  const _RankCover({required this.item, required this.rank});
-
-  final MediaItem item;
-  final int rank;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: _rankCardWidth,
-      height: _rankCoverHeight,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            StoryCover(item: item, cacheWidth: 200),
-            if (rank <= 3)
-              Positioned(
-                left: 6,
-                top: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xB3000000),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    'TOP $rank',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      height: 1.1,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }

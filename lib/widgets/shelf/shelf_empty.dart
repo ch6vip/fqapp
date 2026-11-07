@@ -1,46 +1,63 @@
+// Ported from Wenku8_Flutter (revision ebcd7f1) notice grammar:
+//   `lib/app_ui.dart` ContentNotice (34dp ambient ArchiveIcon, 17sp title,
+//   thin-line message) and the archive empty-state composition.
+//
+// fqapp additions:
+// - The three existing empty-state classes keep their names, copy and action
+//   keys (`shelf-browse-button`, `shelf-cached-books-button`,
+//   `collection-find-drama-button`); only the visual grammar changes from the
+//   old HomePalette icon brick to the archive notice.
+// - `ShelfFilteredEmptyState` is new: a filtered-to-nothing state with a
+//   `shelf-clear-filters` action.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
-import '../home/home_design.dart';
-import 'shelf_design.dart';
+import '../wenku/src/app_text.dart';
+import '../wenku/wenku_glass.dart';
+import '../wenku/wenku_icons.dart';
 
-// 三种空态共用同一套尺度：图标砖 20dp 内边距 + 48dp 图标、标题 16sp w600、
-// 说明 13sp，间距 18 / 6。此前分别是 20/20/16 内边距、48/48/36 图标和
-// 16/14 字号，放在同一条 tab 里切换时会跳。
-const double _emptyIconPadding = 20;
-const double _emptyIconSize = 48;
-const double _emptyTitleSize = 16;
-const double _emptyMessageSize = 13;
-const double _emptyIconGap = 18;
-const double _emptyMessageGap = 6;
-
-const _emptyTitleStyle = TextStyle(
-  fontSize: _emptyTitleSize,
-  fontWeight: FontWeight.w600,
-);
-
-TextStyle _mutedMessage(HomePalette palette) =>
-    TextStyle(fontSize: _emptyMessageSize, color: palette.muted);
-
-Widget _iconBrick(HomePalette palette, IconData icon) => Container(
-  padding: const EdgeInsets.all(_emptyIconPadding),
-  decoration: BoxDecoration(
-    color: palette.soft,
-    borderRadius: BorderRadius.circular(ShelfTokens.radiusCard),
+/// The shared archive notice: 34dp ambient icon, 17sp title, 12sp message.
+Widget _archiveNotice(
+  BuildContext context, {
+  required IconData icon,
+  required String title,
+  String? message,
+  List<Widget> actions = const [],
+}) => Center(
+  child: SingleChildScrollView(
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ArchiveIcon(
+          icon,
+          ambient: true,
+          size: 34,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+        const SizedBox(height: 16),
+        AppText(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+        ),
+        if (message != null) ...[
+          const SizedBox(height: 8),
+          AppText(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.6,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (actions.isNotEmpty) ...[const SizedBox(height: 16), ...actions],
+      ],
+    ),
   ),
-  child: Icon(
-    icon,
-    size: _emptyIconSize,
-    // 墨水屏退化为纯黑：图标是这屏唯一的视觉锚点，灰阶容易糊成一片。
-    color: palette.eink ? Colors.black : palette.muted.withValues(alpha: 0.65),
-  ),
-);
-
-ButtonStyle _filledActionStyle(HomePalette palette) => FilledButton.styleFrom(
-  backgroundColor: palette.eink ? palette.ink : HomePalette.accent,
-  foregroundColor: palette.eink ? palette.canvas : Colors.white,
-  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
 );
 
 /// 空书架（官方文案延续）：书架暂无书籍 + 去书城找书。
@@ -54,44 +71,26 @@ class ShelfEmptyState extends StatelessWidget {
   const ShelfEmptyState({super.key, this.onBrowse, this.onCachedBooks});
 
   @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Center(
-      child: HomeEntrance(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _iconBrick(palette, LucideIcons.book_open),
-            const SizedBox(height: _emptyIconGap),
-            Text(
-              '书架暂无书籍',
-              style: _emptyTitleStyle.copyWith(color: palette.ink),
-            ),
-            const SizedBox(height: _emptyMessageGap),
-            Text('去书城发现海量故事，随时随地畅读', style: _mutedMessage(palette)),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              key: const Key('shelf-browse-button'),
-              onPressed: onBrowse,
-              icon: const Icon(LucideIcons.compass, size: 16),
-              label: const Text('去书城找书'),
-              style: _filledActionStyle(palette),
-            ),
-            if (onCachedBooks != null) ...[
-              const SizedBox(height: 10),
-              TextButton.icon(
-                key: const Key('shelf-cached-books-button'),
-                onPressed: onCachedBooks,
-                style: TextButton.styleFrom(foregroundColor: palette.muted),
-                icon: const Icon(LucideIcons.download, size: 16),
-                label: const Text('查看离线缓存'),
-              ),
-            ],
-          ],
-        ),
+  Widget build(BuildContext context) => _archiveNotice(
+    context,
+    icon: LucideIcons.book_open,
+    title: '书架暂无书籍',
+    message: '去书城发现海量故事，随时随地畅读',
+    actions: [
+      GlassPillButton(
+        key: const Key('shelf-browse-button'),
+        icon: LucideIcons.compass,
+        label: '去书城找书',
+        onPressed: onBrowse,
       ),
-    );
-  }
+      if (onCachedBooks != null)
+        GlassTextButton(
+          key: const Key('shelf-cached-books-button'),
+          onPressed: onCachedBooks,
+          child: const AppText('查看离线缓存'),
+        ),
+    ],
+  );
 }
 
 /// 收藏 tab 空态（官方收藏页形态）：文案随筛选变化（暂无短剧 / 暂无
@@ -107,28 +106,19 @@ class ShelfCollectionEmptyState extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Center(
-      child: HomeEntrance(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _iconBrick(palette, LucideIcons.clapperboard),
-            const SizedBox(height: _emptyIconGap),
-            Text(text, style: _emptyTitleStyle.copyWith(color: palette.ink)),
-            const SizedBox(height: 20),
-            FilledButton(
-              key: const Key('collection-find-drama-button'),
-              onPressed: onFindDrama,
-              style: _filledActionStyle(palette),
-              child: const Text('找短剧'),
-            ),
-          ],
-        ),
+  Widget build(BuildContext context) => _archiveNotice(
+    context,
+    icon: LucideIcons.clapperboard,
+    title: text,
+    actions: [
+      GlassPillButton(
+        key: const Key('collection-find-drama-button'),
+        icon: LucideIcons.clapperboard,
+        label: '找短剧',
+        onPressed: onFindDrama,
       ),
-    );
-  }
+    ],
+  );
 }
 
 /// 官方通用空态文案（RecyclerBookLayoutV2）：空历史 / 筛选无结果。
@@ -138,19 +128,32 @@ class ShelfEmptyHint extends StatelessWidget {
   const ShelfEmptyHint({super.key, required this.text});
 
   @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return Center(
-      child: HomeEntrance(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _iconBrick(palette, LucideIcons.search_x),
-            const SizedBox(height: _emptyIconGap),
-            Text(text, style: _emptyTitleStyle.copyWith(color: palette.ink)),
-          ],
-        ),
+  Widget build(BuildContext context) =>
+      _archiveNotice(context, icon: LucideIcons.search_x, title: text);
+}
+
+/// 筛选后无结果：给一条明确的「清除筛选」出口，避免用户以为书架空了。
+class ShelfFilteredEmptyState extends StatelessWidget {
+  final String text;
+  final VoidCallback? onClearFilters;
+
+  const ShelfFilteredEmptyState({
+    super.key,
+    required this.text,
+    this.onClearFilters,
+  });
+
+  @override
+  Widget build(BuildContext context) => _archiveNotice(
+    context,
+    icon: LucideIcons.search_x,
+    title: text,
+    actions: [
+      GlassTextButton(
+        key: const Key('shelf-clear-filters'),
+        onPressed: onClearFilters,
+        child: const AppText('清除筛选'),
       ),
-    );
-  }
+    ],
+  );
 }

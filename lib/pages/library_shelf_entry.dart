@@ -1,24 +1,25 @@
 part of 'library_page.dart';
 
-/// 书架 / 浏览历史 / 收藏行共用的展示模型与历史字段读取。原来写在
-/// `library_page.dart` 里；属于页面的数据整理职责，拆出来给状态类与各
-/// 版式共用。
-class _ShelfEntry {
+/// 书架 / 浏览历史 / 收藏行共用的展示模型与历史字段读取。
+///
+/// 实现 [ShelfProjectable]，排序 / 阅读状态 / 来源筛选由
+/// [ShelfProjection] 统一完成；[contentKey] 与 `ShelfStore.keyOf`、
+/// 分组 assignment、立体书架 identity 同源（design §1.3 #5）。
+class _ShelfEntry implements ShelfProjectable {
   final MediaItem item;
-
-  /// Stable identity of the row: `kind:contentId`, i.e. the same key the shelf
-  /// box and the history dedupe use.
-  final String selectionKey;
 
   /// 历史 / 删除 API 用的内容标识（`kind:contentId` 的 contentId 部分）：
   /// 历史条目取存储记录的 `contentId ?? id`（与 LibraryStore 的
   /// _historyIdentity 一致），书架条目取 `seriesId ?? id`。
+  @override
   final String contentId;
 
   /// Last read time in milliseconds; null when the work has no history yet.
+  @override
   final int? readTime;
 
   /// 加入书架时间，仅书架条目有值。
+  @override
   final int addedAt;
   final double? progress;
   final int? episode;
@@ -28,9 +29,19 @@ class _ShelfEntry {
   final int? latestChapterCount;
   final bool importedResume;
 
+  /// 番茄历史导入标记（fqapp 专有行为，tile meta 显示「番茄导入」）。
+  final bool fanqieImported;
+
+  /// 离线缓存扫描命中（仅番茄小说）。
+  final bool cached;
+
+  /// 历史条目的身份以 `LibraryStore._historyIdentity`（contentId ?? id）为准；
+  /// 书架条目直接由 [MediaItem] 推导。两者在短剧 seriesId 与 contentId
+  /// 不一致时可能不同，历史侧必须与历史索引保持同一把键。
+  final String? contentKeyOverride;
+
   const _ShelfEntry({
     required this.item,
-    required this.selectionKey,
     required this.contentId,
     required this.addedAt,
     this.readTime,
@@ -39,16 +50,18 @@ class _ShelfEntry {
     this.chapterCount,
     this.latestChapterCount,
     this.importedResume = false,
+    this.fanqieImported = false,
+    this.cached = false,
+    this.contentKeyOverride,
   });
 
   factory _ShelfEntry.fromRecord(
     ShelfRecord record,
     Map<String, dynamic>? history, {
     int? latestChapterCount,
+    bool cached = false,
   }) => _ShelfEntry(
     item: record.item,
-    selectionKey:
-        '${record.item.kind}:${record.item.seriesId ?? record.item.id}',
     contentId: record.item.seriesId ?? record.item.id,
     addedAt: record.addedAt.millisecondsSinceEpoch,
     readTime: _timeOf(history),
@@ -60,6 +73,8 @@ class _ShelfEntry {
         record.item.kind == 'book' &&
         history?['fanqieImported'] == true &&
         history?['chapterId'] != null,
+    fanqieImported: history?['fanqieImported'] == true,
+    cached: cached,
   );
 
   factory _ShelfEntry.fromHistory(Map<String, dynamic> history) {
@@ -74,11 +89,9 @@ class _ShelfEntry {
       seriesId: history['seriesId']?.toString(),
       episodeId: history['episodeId']?.toString(),
     );
-    final contentId = historyContentId(history);
     return _ShelfEntry(
       item: item,
-      selectionKey: '${item.kind}:$contentId',
-      contentId: contentId,
+      contentId: historyContentId(history),
       addedAt: 0,
       readTime: _timeOf(history),
       progress: _progressOf(history),
@@ -88,15 +101,44 @@ class _ShelfEntry {
           item.kind == 'book' &&
           history['fanqieImported'] == true &&
           history['chapterId'] != null,
+      fanqieImported: history['fanqieImported'] == true,
+      contentKeyOverride: ShelfIdentity.contentKeyFor(
+        item.kind,
+        historyContentId(history),
+        source: item.source,
+      ),
     );
   }
+
+  /// 源限定身份键：番茄 `book:123`，书旗 `shuqi/book:123`。
+  @override
+  String get contentKey =>
+      contentKeyOverride ?? ShelfIdentity.contentKeyOf(item);
+
+  /// 行 / 选中 / 立体书架共用的稳定键。
+  String get selectionKey => contentKey;
+
+  @override
+  String get kind => item.kind;
+
+  @override
+  String get source => item.source;
+
+  @override
+  String get title => item.title;
+
+  @override
+  String get author => item.author;
+
+  bool get isLocal => ImportedBookStore.isLocalBookId(item.id);
 
   /// 是否读到最后一章（含章内进度）。
   ///
   /// 官方用「共 N 章·已读完」（strings `bm6`）表达这个状态，而不是把百分比
   /// 四舍五入成 100%——总章数多、剩余章数少时 100% 无法区分「差一点」和
   /// 「读完了」（issue #110 第 3 条）。
-  bool get _finished {
+  @override
+  bool get finished {
     final total = _totalChapterCount;
     final chapter = episode;
     if (total == null || chapter == null) return false;
@@ -110,7 +152,7 @@ class _ShelfEntry {
   /// 读完时不再显示 100%，让「已读完」只由 [readingText] 表达一次。
   String? get badgeText {
     if (_hasUpdate) return '更新';
-    if (_finished) return null;
+    if (finished) return null;
     final total = _totalChapterCount;
     final chapter = episode;
     // 有总章数时用章序号，读者能看出「还剩多少章」。
@@ -130,7 +172,7 @@ class _ShelfEntry {
     final total = _totalChapterCount;
     final chapter = episode;
     if (total != null && chapter != null && chapter >= 0) {
-      if (_finished) return '共$total章·已读完';
+      if (finished) return '共$total章·已读完';
       return '${_hasUpdate ? '更新 · ' : ''}第${chapter + 1}章 · 共$total章';
     }
     final parts = <String>[];
@@ -149,7 +191,7 @@ class _ShelfEntry {
 
   int? get _totalChapterCount =>
       chapterCount != null &&
-      (latestChapterCount == null || latestChapterCount! < chapterCount!)
+          (latestChapterCount == null || latestChapterCount! < chapterCount!)
       ? chapterCount
       : latestChapterCount;
 
@@ -166,6 +208,20 @@ class _ShelfEntry {
   String? get subtitleText => item.author.trim().isEmpty
       ? bookshelfKindLabel(item.kind)
       : item.author.trim();
+
+  /// 立体书架行模型：整书进度直接透传，不在这里重算。
+  ArchiveShelfEntry toArchive() => ArchiveShelfEntry(
+    item: item,
+    read: readTime != null,
+    finished: finished,
+    fraction: progress,
+    chapterLabel: readingText,
+    totalChapters: _totalChapterCount,
+    sourceLabel: archiveSourceLabel(item, local: isLocal),
+    local: isLocal,
+    cached: cached,
+    updated: _hasUpdate,
+  );
 }
 
 double? _progressOf(Map<String, dynamic>? history) {

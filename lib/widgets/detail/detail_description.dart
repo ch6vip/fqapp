@@ -1,15 +1,17 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-import '../home/home_design.dart';
 import '../home/home_shelf.dart';
-import 'detail_states.dart';
+import '../wenku/wenku_ui.dart';
 
-/// `简介` block: the section heading, the clamped summary and an inline
+/// `简介` block: the archive section heading, the clamped summary and an inline
 /// expand/collapse control.
 ///
 /// The heading is a plain `简介` on every kind: the old `书籍简介` read as
-/// nonsense on audio and manga. The mockup's `展开` is plain 12dp muted text
-/// under the paragraph, not an accent button.
+/// nonsense on audio and manga. Kept for fqapp's desktop column; the phone
+/// detail page uses the ported `DetailArchiveSynopsis` instead. The shared
+/// archive heading carries no gutter of its own, so the desktop branch pads it
+/// to line up with the body text below.
 class DetailDescription extends StatefulWidget {
   final String text;
   final bool desktop;
@@ -37,9 +39,9 @@ class _DetailDescriptionState extends State<DetailDescription> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final style = TextStyle(
-      color: palette.ink,
+      color: scheme.onSurface,
       fontSize: widget.desktop ? 15 : 13,
       height: widget.desktop ? 1.65 : 1.5,
     );
@@ -52,11 +54,17 @@ class _DetailDescriptionState extends State<DetailDescription> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        DetailSectionHeader(title: widget.title),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: sectionHeader(context, widget.title, ''),
+        ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: widget.text.isEmpty
-              ? Text('暂无简介', style: style.copyWith(color: palette.muted))
+              ? Text(
+                  '暂无简介',
+                  style: style.copyWith(color: scheme.onSurfaceVariant),
+                )
               : LayoutBuilder(
                   builder: (context, constraints) {
                     final measure = TextPainter(
@@ -73,10 +81,10 @@ class _DetailDescriptionState extends State<DetailDescription> {
                         AnimatedSize(
                           duration: MediaQuery.disableAnimationsOf(context)
                               ? Duration.zero
-                              : const Duration(milliseconds: 260),
-                          curve: Curves.easeOutCubic,
+                              : WenkuMotion.enter,
+                          curve: WenkuMotion.ease,
                           alignment: Alignment.topCenter,
-                          child: Text(
+                          child: AppText(
                             widget.text,
                             key: const Key('detail_description_text'),
                             maxLines: _expanded ? null : 3,
@@ -87,17 +95,36 @@ class _DetailDescriptionState extends State<DetailDescription> {
                           ),
                         ),
                         if (canExpand)
-                          HomePressable(
+                          JellyTapSurface(
                             key: const Key('detail_description_toggle'),
-                            semanticLabel: _expanded ? '收起简介' : '展开简介',
                             onTap: () => setState(() => _expanded = !_expanded),
-                            borderRadius: BorderRadius.circular(4),
-                            child: Text(
-                              _expanded ? '收起' : '展开',
-                              style: TextStyle(
-                                color: palette.muted,
-                                fontSize: 12,
-                                height: 1.5,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AppText(
+                                    _expanded ? '收起' : '展开全部',
+                                    style: TextStyle(
+                                      color: scheme.onSurfaceVariant,
+                                      fontSize: 13,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 7),
+                                  AnimatedRotation(
+                                    turns: _expanded ? .5 : 0,
+                                    duration:
+                                        MediaQuery.disableAnimationsOf(context)
+                                        ? Duration.zero
+                                        : WenkuMotion.enter,
+                                    curve: WenkuMotion.ease,
+                                    child: const ArchiveIcon(
+                                      CupertinoIcons.chevron_down,
+                                      size: 12,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),

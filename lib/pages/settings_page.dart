@@ -1,21 +1,43 @@
-import '../services/desktop_platform.dart';
-import '../widgets/desktop_settings_body.dart';
+// Settings home.
+//
+// Layout ported from Wenku8_Flutter (revision ebcd7f1) `lib/pages.dart`
+// SettingsPage: archive masthead + `FeatureEntry` section cards opening
+// `ArchiveFeaturePage` option lists.
+//
+// Mechanical substitutions:
+// - Upstream `LibraryState` settings are replaced by fqapp's preference
+//   services; every fqapp setting, preference key and immediate-effect
+//   behaviour is preserved (theme mode / e-ink / OLED, reading entry points,
+//   listening, short drama playback, data and service pages).
+// - `GlassSettingMenu` and the glass switch come from fqapp's vendored
+//   `setting_menu.dart` / `glass_controls.dart`.
+// - Upstream items fqapp does not have (force portrait, start page, combined
+//   shelf, language, fonts, dictionaries, lane sync, widgets, frame rate,
+//   low-performance mode, haptics) are intentionally absent, per the product
+//   boundary: "do not add upstream settings fqapp lacks".
+// - Windows keeps the existing two-pane `DesktopSettingsBody` inside the
+//   archive shell so the desktop settings workflow is unchanged.
+
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/app_theme.dart';
 import '../services/audio_preferences.dart';
+import '../services/desktop_platform.dart';
 import '../services/native_player.dart';
-import '../services/player_preferences.dart';
 import '../services/player_layout_preferences.dart';
+import '../services/player_preferences.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/library_store.dart';
-import '../widgets/home/home_design.dart';
+import '../widgets/desktop_settings_body.dart';
+import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/wenku/wenku_ui.dart';
 import 'about_page.dart';
 import 'api_service_page.dart';
 import 'cached_books_page.dart';
@@ -27,7 +49,7 @@ import 'text_replacement_page.dart';
 import 'ai_reading/settings/ai_settings_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
-/// navigation). Each category opens its own CommonSetting-style page.
+/// navigation). Each category opens its own archive option page.
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -37,7 +59,7 @@ class SettingsPage extends StatelessWidget {
     unawaited(BookOpenPreferences.instance.load());
     final categories = <SettingsCategory>[
       SettingsCategory(
-        icon: LucideIcons.palette,
+        icon: SettingsCategoryIcons.appearance,
         title: '外观',
         subtitle: '主题模式、OLED 纯黑、播放页布局',
         // 用 builder 而不是固定 items：切到深色 / 切回浅色后，分类页重建
@@ -53,14 +75,14 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
       SettingsCategory(
-        icon: LucideIcons.book_open,
+        icon: SettingsCategoryIcons.reading,
         title: '阅读',
         subtitle: '阅读入口、正文替换、AI 阅读优化',
         items: [
           _shelfDirectReaderItem(),
           _discoverDirectReaderItem(),
           SettingsItem(
-            icon: LucideIcons.replace,
+            icon: CupertinoIcons.textformat,
             title: '正文替换',
             subtitle: '自定义普通文本或正则替换规则',
             onTap: (context, _) => Navigator.push(
@@ -80,17 +102,17 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
       SettingsCategory(
-        icon: LucideIcons.headphones,
+        icon: SettingsCategoryIcons.listening,
         title: '听书',
         subtitle: '后台播放、通知栏控制与系统朗读',
         items: [
           _backgroundAudioItem(),
           if (!isWindowsDesktop) _audioRateEngineItem(),
           SettingsItem(
-            icon: LucideIcons.mic,
+            icon: CupertinoIcons.mic,
             title: '系统朗读',
             subtitle: '选择 TTS 引擎与语速，支持本地书',
-            onTap: (context, setState) => Navigator.push(
+            onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SystemTtsSettingsPage()),
             ),
@@ -98,7 +120,7 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
       SettingsCategory(
-        icon: LucideIcons.film,
+        icon: SettingsCategoryIcons.drama,
         title: '短剧',
         subtitle: '播放',
         items: [
@@ -108,33 +130,33 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
       SettingsCategory(
-        icon: LucideIcons.database,
+        icon: SettingsCategoryIcons.data,
         title: '数据',
         subtitle: '备份与恢复、缓存、阅读与播放历史',
         items: [
           SettingsItem(
-            icon: LucideIcons.database,
+            icon: CupertinoIcons.folder,
             title: '备份与导入',
             subtitle: '本机备份、恢复与番茄书架导入',
-            onTap: (context, setState) => Navigator.push(
+            onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const LibraryBackupPage()),
             ),
           ),
           SettingsItem(
-            icon: LucideIcons.bookmark,
+            icon: CupertinoIcons.book,
             title: '小说离线缓存',
             subtitle: '离线续读、查看占用和清理缓存',
-            onTap: (context, setState) => Navigator.push(
+            onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const CachedBooksPage()),
             ),
           ),
           SettingsItem(
-            icon: LucideIcons.clapperboard,
+            icon: CupertinoIcons.play_rectangle,
             title: '短剧离线缓存',
             subtitle: '短剧下载、离线播放和清理缓存',
-            onTap: (context, setState) => Navigator.push(
+            onTap: (context, _) => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const CachedDramasPage()),
             ),
@@ -143,14 +165,14 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
       SettingsCategory(
-        icon: LucideIcons.cpu,
+        icon: SettingsCategoryIcons.service,
         title: '服务',
         subtitle: '本地接口地址与可用端点',
         pageBuilder: (_) => const ApiServicePage(),
         items: const [],
       ),
       SettingsCategory(
-        icon: LucideIcons.info,
+        icon: SettingsCategoryIcons.about,
         title: '关于',
         subtitle: '版本与应用信息',
         pageBuilder: (_) => const AboutPage(),
@@ -158,27 +180,67 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
-    return SettingsScaffold(
-      title: '设置',
-      body: isWindowsDesktop
-          ? DesktopSettingsBody(categories: categories)
-          : ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              children: [
-                SettingsGroupCard(
-                  children: [
-                    for (final cat in categories)
-                      SettingsRow(
-                        icon: cat.icon,
-                        iconTile: true,
-                        title: cat.title,
-                        subtitle: cat.subtitle,
-                        onTap: () => _openCategory(context, cat),
-                      ),
-                  ],
+    if (isWindowsDesktop) {
+      // The desktop body keeps its two-pane workflow; the archive shell only
+      // supplies the shared header and background.
+      return WenkuPage(
+        header: _header(context),
+        child: Padding(
+          padding: EdgeInsets.only(
+            top:
+                MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight,
+          ),
+          child: DesktopSettingsBody(categories: categories),
+        ),
+      );
+    }
+
+    return WenkuPage(
+      header: _header(context),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(
+            key: const PageStorageKey('settings'),
+            padding: featurePadding(context),
+            children: [
+              for (var index = 0; index < categories.length; index++) ...[
+                if (index > 0) const SizedBox(height: 14),
+                FeatureEntry(
+                  key: ValueKey('settings-entry-${categories[index].title}'),
+                  title: categories[index].title,
+                  subtitle: categories[index].subtitle,
+                  icon: categories[index].icon,
+                  onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
-            ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Settings is opened as a route (the “我的” entry and the Windows rail),
+  /// so the upstream tab-style [ArchiveMasthead] needs a way back. The
+  /// masthead stays untouched; the back button only appears when this page
+  /// actually sits on top of another route.
+  static Widget _header(BuildContext context) {
+    const masthead = ArchiveMasthead(title: '设置', code: '04 / SYSTEM PROFILE');
+    if (!Navigator.of(context).canPop()) {
+      return const Align(alignment: Alignment.centerLeft, child: masthead);
+    }
+    return Row(
+      children: [
+        GlassIconButton(
+          icon: CupertinoIcons.back,
+          label: '返回',
+          onPressed: () => Navigator.maybePop(context),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(child: masthead),
+      ],
     );
   }
 
@@ -203,26 +265,21 @@ class SettingsPage extends StatelessWidget {
   /// 主题模式（参考 legado 的 themeMode）：跟随系统 / 浅色 / 深色 / 墨水屏
   /// 四选一，墨水屏既然也是一种外观就并进这个入口，不再单列一个开关。
   SettingsItem _themeModeItem() => SettingsItem(
-    icon: LucideIcons.sun_moon,
+    icon: CupertinoIcons.moon_stars,
     title: '主题模式',
-    trailingBuilder: (context) => ListenableBuilder(
+    rowBuilder: (context) => ListenableBuilder(
       listenable: Listenable.merge([themeModeNotifier, einkModeNotifier]),
-      builder: (context, _) {
-        final palette = HomePalette.of(context);
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _appearance.label,
-              style: TextStyle(fontSize: 13, color: palette.muted),
-            ),
-            const SizedBox(width: 4),
-            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
-          ],
-        );
-      },
+      builder: (context, _) => GlassSettingMenu<_AppearanceChoice>(
+        icon: CupertinoIcons.moon_stars,
+        label: '主题模式',
+        value: _appearance,
+        options: {
+          for (final choice in _AppearanceChoice.values) choice: choice.label,
+        },
+        reduceMotion: MediaQuery.disableAnimationsOf(context),
+        onChanged: (choice) => _setAppearance(context, choice),
+      ),
     ),
-    onTap: (context, setState) => _showThemeModeDialog(context),
   );
 
   /// 当前外观：墨水屏优先级最高（深色反白在墨水屏上残影最重），
@@ -237,38 +294,6 @@ class SettingsPage extends StatelessWidget {
       case ThemeMode.system:
         return _AppearanceChoice.system;
     }
-  }
-
-  Future<void> _showThemeModeDialog(BuildContext context) async {
-    final selected = await showDialog<_AppearanceChoice>(
-      context: context,
-      builder: (c) => SimpleDialog(
-        title: const Text('主题模式'),
-        children: [
-          RadioGroup<_AppearanceChoice>(
-            groupValue: _appearance,
-            onChanged: (v) {
-              if (v != null) Navigator.pop(c, v);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final choice in _AppearanceChoice.values)
-                  RadioListTile<_AppearanceChoice>(
-                    value: choice,
-                    title: Text(choice.label),
-                    subtitle: choice == _AppearanceChoice.eink
-                        ? const Text('纯黑白、无毛玻璃、无过渡动画，适合墨水屏设备')
-                        : null,
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-    if (selected == null || !context.mounted) return;
-    await _setAppearance(context, selected);
   }
 
   /// 主题模式落盘：浅色 / 深色 / 跟随系统写 theme_mode，墨水屏另存
@@ -309,20 +334,18 @@ class SettingsPage extends StatelessWidget {
   /// OLED 纯黑：画布纯黑省电，卡片 / 弹层保持近黑，靠描边撑住层次。
   /// 只在深色外观下显示（浅色 / 墨水屏没有可省的黑）。
   SettingsItem _oledModeItem() => SettingsItem(
-    icon: LucideIcons.smartphone,
+    icon: CupertinoIcons.device_phone_portrait,
     title: 'OLED 纯黑',
-    subtitle: '大面积纯黑省电，仅在深色外观下生效',
-    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: oledModeNotifier,
-      builder: (context, value, _) => SettingsSwitch(
+      builder: (context, value, _) => SettingsToggleRow(
+        icon: CupertinoIcons.device_phone_portrait,
+        title: 'OLED 纯黑',
+        description: '大面积纯黑省电，仅在深色外观下生效',
         value: value,
-        semanticLabel: 'OLED 纯黑',
-        onChanged: (v) => unawaited(_setOledMode(context, v)),
+        onChanged: (v) => _setOledMode(context, v),
       ),
     ),
-    onTap: (context, setState) {
-      unawaited(_setOledMode(context, !oledModeNotifier.value));
-    },
   );
 
   Future<void> _setOledMode(BuildContext context, bool value) async {
@@ -345,59 +368,22 @@ class SettingsPage extends StatelessWidget {
   ///
   /// 只影响短剧播放页，Windows 隐藏（桌面已有 304dp 停靠选集面板）。
   SettingsItem _playerLayoutItem() => SettingsItem(
-    icon: LucideIcons.columns_2,
+    icon: CupertinoIcons.rectangle_split_3x1,
     title: '播放页布局',
-    subtitle: '短剧可分屏显示选集和评论，横屏时左右分栏',
-    trailingBuilder: (context) => ValueListenableBuilder<PlayerLayoutMode>(
+    rowBuilder: (context) => ValueListenableBuilder<PlayerLayoutMode>(
       valueListenable: PlayerLayoutPreferences.mode,
-      builder: (context, value, _) {
-        final palette = HomePalette.of(context);
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value.shortLabel,
-              style: TextStyle(fontSize: 13, color: palette.muted),
-            ),
-            const SizedBox(width: 4),
-            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
-          ],
-        );
-      },
-    ),
-    onTap: (context, setState) => _showPlayerLayoutDialog(context),
-  );
-
-  Future<void> _showPlayerLayoutDialog(BuildContext context) async {
-    final current = PlayerLayoutPreferences.mode.value;
-    final selected = await showDialog<PlayerLayoutMode>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text('播放页布局'),
-        children: [
-          RadioGroup<PlayerLayoutMode>(
-            groupValue: current,
-            onChanged: (value) {
-              if (value != null) Navigator.pop(dialogContext, value);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final mode in PlayerLayoutMode.values)
-                  RadioListTile<PlayerLayoutMode>(
-                    value: mode,
-                    title: Text(mode.label),
-                    subtitle: Text(mode.description),
-                  ),
-              ],
-            ),
-          ),
-        ],
+      builder: (context, value, _) => GlassSettingMenu<PlayerLayoutMode>(
+        icon: CupertinoIcons.rectangle_split_3x1,
+        label: '播放页布局',
+        value: value,
+        // 行内保留短标签（「自动分屏」），弹层里仍是完整说明性标签。
+        valueLabel: value.shortLabel,
+        options: {for (final mode in PlayerLayoutMode.values) mode: mode.label},
+        reduceMotion: MediaQuery.disableAnimationsOf(context),
+        onChanged: (mode) => _setPlayerLayout(context, mode),
       ),
-    );
-    if (selected == null || !context.mounted) return;
-    await _setPlayerLayout(context, selected);
-  }
+    ),
+  );
 
   Future<void> _setPlayerLayout(
     BuildContext context,
@@ -428,21 +414,20 @@ class SettingsPage extends StatelessWidget {
   /// 后台或锁屏用悬浮小窗继续播；关闭则切后台暂停（现有行为）。
   /// 开启时若无权限，先打开系统设置让用户授予，授予后回来再点一次。
   SettingsItem _floatingWindowItem() => SettingsItem(
-    icon: LucideIcons.video,
+    icon: CupertinoIcons.rectangle_on_rectangle,
     title: '切后台悬浮窗播放',
-    subtitle: '切到后台或锁屏时用悬浮小窗继续播放，需要悬浮窗权限',
-    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: PlayerPreferences.floatingWindow,
-      builder: (context, value, _) => SettingsSwitch(
+      builder: (context, value, _) => SettingsToggleRow(
+        icon: CupertinoIcons.rectangle_on_rectangle,
+        title: '切后台悬浮窗播放',
+        description: '切到后台或锁屏时用悬浮小窗继续播放，需要悬浮窗权限',
         value: value,
-        semanticLabel: '切后台悬浮窗播放',
-        onChanged: (enabled) => unawaited(_setFloatingWindow(context, enabled)),
+        // 系统授权页期间不能先把开关画成「开」；授权回来后才跟随偏好翻转。
+        optimistic: false,
+        onChanged: (enabled) => _setFloatingWindow(context, enabled),
       ),
     ),
-    onTap: (context, setState) {
-      final current = PlayerPreferences.floatingWindow.value;
-      unawaited(_setFloatingWindow(context, !current));
-    },
   );
 
   Future<void> _setFloatingWindow(BuildContext context, bool enabled) async {
@@ -467,61 +452,51 @@ class SettingsPage extends StatelessWidget {
   /// 书架的「我的书」和发现入口分成两条（issue #103）：书架里的书点开多半是
   /// 接着读，首页/搜索里的书往往还要先看简介，一条全局开关会让两边互相干扰。
   SettingsItem _shelfDirectReaderItem() => SettingsItem(
-    icon: LucideIcons.book_open,
+    icon: CupertinoIcons.book,
     title: '书架点书直接进入阅读',
-    subtitle: '在书架、阅读历史里点书时跳过详情页，接着上次进度读',
-    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: BookOpenPreferences.instance.shelfDirectReader,
-      builder: (context, value, _) => SettingsSwitch(
+      builder: (context, value, _) => SettingsToggleRow(
+        icon: CupertinoIcons.book,
+        title: '书架点书直接进入阅读',
+        description: '在书架、阅读历史里点书时跳过详情页，接着上次进度读',
         value: value,
-        semanticLabel: '书架点书直接进入阅读',
-        onChanged: (v) =>
-            unawaited(BookOpenPreferences.instance.setShelfDirectReader(v)),
+        onChanged: (v) => BookOpenPreferences.instance.setShelfDirectReader(v),
       ),
     ),
-    onTap: (context, setState) {
-      final current = BookOpenPreferences.instance.shelfDirectReader.value;
-      unawaited(BookOpenPreferences.instance.setShelfDirectReader(!current));
-    },
   );
 
   SettingsItem _discoverDirectReaderItem() => SettingsItem(
-    icon: LucideIcons.search,
+    icon: CupertinoIcons.search,
     title: '首页与搜索点书直接进入阅读',
-    subtitle: '在首页、搜索、榜单、作者页等入口点书时跳过详情页',
-    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: BookOpenPreferences.instance.discoverDirectReader,
-      builder: (context, value, _) => SettingsSwitch(
+      builder: (context, value, _) => SettingsToggleRow(
+        icon: CupertinoIcons.search,
+        title: '首页与搜索点书直接进入阅读',
+        description: '在首页、搜索、榜单、作者页等入口点书时跳过详情页',
         value: value,
-        semanticLabel: '首页与搜索点书直接进入阅读',
         onChanged: (v) =>
-            unawaited(BookOpenPreferences.instance.setDiscoverDirectReader(v)),
+            BookOpenPreferences.instance.setDiscoverDirectReader(v),
       ),
     ),
-    onTap: (context, setState) {
-      final current = BookOpenPreferences.instance.discoverDirectReader.value;
-      unawaited(BookOpenPreferences.instance.setDiscoverDirectReader(!current));
-    },
   );
+
   // ── 听书 ──────────────────────────────────────────────────────────────
 
   SettingsItem _backgroundAudioItem() => SettingsItem(
-    icon: LucideIcons.radio,
+    icon: CupertinoIcons.headphones,
     title: '后台听书与保活',
-    subtitle: '切到后台或锁屏时继续播放，并在通知栏常驻控制卡片',
-    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: AudioPreferences.instance.backgroundPlayback,
-      builder: (context, value, _) => SettingsSwitch(
+      builder: (context, value, _) => SettingsToggleRow(
+        icon: CupertinoIcons.headphones,
+        title: '后台听书与保活',
+        description: '切到后台或锁屏时继续播放，并在通知栏常驻控制卡片',
         value: value,
-        semanticLabel: '后台听书与保活',
-        onChanged: (v) =>
-            unawaited(AudioPreferences.instance.setBackgroundPlayback(v)),
+        onChanged: (v) => AudioPreferences.instance.setBackgroundPlayback(v),
       ),
     ),
-    onTap: (context, setState) {
-      final current = AudioPreferences.instance.backgroundPlayback.value;
-      unawaited(AudioPreferences.instance.setBackgroundPlayback(!current));
-    },
   );
 
   /// 听书倍速的变速实现（issue #129）：默认交给系统混音器，高倍速下明显
@@ -529,91 +504,40 @@ class SettingsPage extends StatelessWidget {
   ///
   /// 与「视频解码器」同理：audio sink 在 build 时定型，新建播放器才生效。
   SettingsItem _audioRateEngineItem() => SettingsItem(
-    icon: LucideIcons.gauge,
+    icon: CupertinoIcons.speedometer,
     title: '听书变速引擎',
-    subtitle: '高倍速发毛、像电音时可在两档间切换，重新进入听书页生效',
-    trailingBuilder: (context) => ValueListenableBuilder<AudioRateEngine>(
+    rowBuilder: (context) => ValueListenableBuilder<AudioRateEngine>(
       valueListenable: AudioPreferences.instance.rateEngine,
-      builder: (context, value, _) {
-        final palette = HomePalette.of(context);
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value.label,
-              style: TextStyle(fontSize: 13, color: palette.muted),
-            ),
-            const SizedBox(width: 4),
-            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
-          ],
-        );
-      },
-    ),
-    onTap: (context, setState) => _showAudioRateEngineDialog(context, setState),
-  );
-
-  Future<void> _showAudioRateEngineDialog(
-    BuildContext context,
-    StateSetter refresh,
-  ) async {
-    final current = AudioPreferences.instance.rateEngine.value;
-    final selected = await showDialog<AudioRateEngine>(
-      context: context,
-      builder: (c) => SimpleDialog(
-        title: const Text('听书变速引擎'),
-        children: [
-          RadioGroup<AudioRateEngine>(
-            groupValue: current,
-            onChanged: (v) {
-              if (v != null) Navigator.pop(c, v);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final value in AudioRateEngine.values)
-                  RadioListTile<AudioRateEngine>(
-                    value: value,
-                    title: Text(value.label),
-                    subtitle: Text(switch (value) {
-                      AudioRateEngine.wsola =>
-                        '与番茄官方同一套算法（FFmpeg atempo），高倍速听感最接近原声',
-                      AudioRateEngine.platform => '系统混音器变速，不依赖本应用的 native 库',
-                      AudioRateEngine.builtIn =>
-                        'Media3 内建 Sonic，最稳（默认，1.0.121 的行为）',
-                    }),
-                  ),
-              ],
-            ),
-          ),
-        ],
+      builder: (context, value, _) => GlassSettingMenu<AudioRateEngine>(
+        icon: CupertinoIcons.speedometer,
+        label: '听书变速引擎',
+        value: value,
+        options: {
+          for (final engine in AudioRateEngine.values) engine: engine.label,
+        },
+        reduceMotion: MediaQuery.disableAnimationsOf(context),
+        onChanged: AudioPreferences.instance.setRateEngine,
       ),
-    );
-    if (selected == null || !context.mounted) return;
-    await AudioPreferences.instance.setRateEngine(selected);
-    refresh(() {});
-  }
+    ),
+  );
 
   // ── 短剧 ──────────────────────────────────────────────────────────────
 
   /// 官方设置项「开启应用时默认静音」（`GlobalMuteConfig` 标题，持久层
   /// `open_mute_when_cold_start`，默认 false＝有声起播）。
   SettingsItem _muteWhenColdStartItem() => SettingsItem(
-    icon: LucideIcons.volume_x,
+    icon: CupertinoIcons.volume_off,
     title: '开启应用时默认静音',
-    subtitle: '进入短剧时静音播放，可在播放页取消',
-    // Switch 走 ValueListenableBuilder，翻转后无需依赖页面的 setState。
-    trailingBuilder: (context) => ValueListenableBuilder<bool>(
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
       valueListenable: DramaMutePreferences.instance.muteWhenColdStart,
-      builder: (context, value, _) => SettingsSwitch(
+      builder: (context, value, _) => SettingsToggleRow(
+        icon: CupertinoIcons.volume_off,
+        title: '开启应用时默认静音',
+        description: '进入短剧时静音播放，可在播放页取消',
         value: value,
-        semanticLabel: '开启应用时默认静音',
-        onChanged: (v) => unawaited(DramaMutePreferences.instance.set(v)),
+        onChanged: DramaMutePreferences.instance.set,
       ),
     ),
-    onTap: (context, setState) {
-      final current = DramaMutePreferences.instance.muteWhenColdStart.value;
-      unawaited(DramaMutePreferences.instance.set(!current));
-    },
   );
 
   /// 视频解码器（issue #92）：硬解异常的机型可以手动切软解。
@@ -621,80 +545,15 @@ class SettingsPage extends StatelessWidget {
   /// 只有**新起的播放器**会采用新设置——ExoPlayer 的 renderer 在 build 时
   /// 定型，所以行内说明写明需重新进入播放页。
   SettingsItem _videoDecoderItem() => SettingsItem(
-    icon: LucideIcons.monitor_play,
+    icon: CupertinoIcons.videocam,
     title: '视频解码器',
-    subtitle: '画面异常（黑屏、卡住、绿屏）时改用软解，重新进入播放页生效',
-    trailingBuilder: (context) => FutureBuilder<VideoDecoderPreference>(
-      future: PlayerPreferences.loadVideoDecoder(),
-      builder: (context, snapshot) {
-        final palette = HomePalette.of(context);
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              (snapshot.data ?? VideoDecoderPreference.automatic).label,
-              style: TextStyle(fontSize: 13, color: palette.muted),
-            ),
-            const SizedBox(width: 4),
-            Icon(LucideIcons.chevron_right, size: 18, color: palette.muted),
-          ],
-        );
-      },
-    ),
-    onTap: (context, setState) => _showVideoDecoderDialog(context, setState),
+    rowBuilder: (context) => const _VideoDecoderMenu(),
   );
-
-  Future<void> _showVideoDecoderDialog(
-    BuildContext context,
-    StateSetter refresh,
-  ) async {
-    final current = await PlayerPreferences.loadVideoDecoder();
-    if (!context.mounted) return;
-    final selected = await showDialog<VideoDecoderPreference>(
-      context: context,
-      builder: (c) => SimpleDialog(
-        title: const Text('视频解码器'),
-        children: [
-          RadioGroup<VideoDecoderPreference>(
-            groupValue: current,
-            onChanged: (v) {
-              if (v != null) Navigator.pop(c, v);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final value in VideoDecoderPreference.values)
-                  RadioListTile<VideoDecoderPreference>(
-                    value: value,
-                    title: Text(value.label),
-                    subtitle: value == VideoDecoderPreference.software
-                        ? const Text('更耗电，但能绕开部分芯片的硬解缺陷')
-                        : null,
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-    if (selected == null || !context.mounted) return;
-    try {
-      await DecoderPreferenceCache.set(selected);
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('解码器设置未能保存')));
-      }
-      return;
-    }
-    refresh(() {});
-  }
 
   // ── 数据 ──────────────────────────────────────────────────────────────
 
   SettingsItem _clearHistItem() => SettingsItem(
-    icon: LucideIcons.trash,
+    icon: CupertinoIcons.trash,
     title: '清空历史',
     subtitle: '删除全部阅读/播放历史与累计时长',
     onTap: (context, setState) => _confirmClear(
@@ -734,10 +593,63 @@ class SettingsPage extends StatelessWidget {
       }
     }
   }
+}
 
-  // ── 关于 ──────────────────────────────────────────────────────────────
-  // The About category opens the About page directly via its pageBuilder;
-  // no category-page items are needed.
+/// 视频解码器选择行：先读出持久化值，选择后把行内值同步为新选择。
+///
+/// Kept stateful so a save that only updates the decoder cache rebuilds the
+/// selector; the upstream `StateSetter` refresh pattern is not needed here.
+class _VideoDecoderMenu extends StatefulWidget {
+  const _VideoDecoderMenu();
+
+  @override
+  State<_VideoDecoderMenu> createState() => _VideoDecoderMenuState();
+}
+
+class _VideoDecoderMenuState extends State<_VideoDecoderMenu> {
+  VideoDecoderPreference _value = DecoderPreferenceCache.current;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final value = await PlayerPreferences.loadVideoDecoder();
+      if (mounted) setState(() => _value = value);
+    } catch (_) {
+      // Keep the in-memory default when disk cannot be read.
+    }
+  }
+
+  Future<void> _save(BuildContext context, VideoDecoderPreference value) async {
+    if (value == _value) return;
+    try {
+      await DecoderPreferenceCache.set(value);
+      if (mounted) setState(() => _value = value);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('解码器设置未能保存')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      GlassSettingMenu<VideoDecoderPreference>(
+        icon: CupertinoIcons.videocam,
+        label: '视频解码器',
+        value: _value,
+        options: {
+          for (final value in VideoDecoderPreference.values) value: value.label,
+        },
+        reduceMotion: MediaQuery.disableAnimationsOf(context),
+        onChanged: (value) => _save(context, value),
+      );
 }
 
 /// 主题模式的可选项：三种深浅色模式 + 墨水屏。墨水屏本不是 ThemeMode，

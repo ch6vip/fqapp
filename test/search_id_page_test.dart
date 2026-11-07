@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/services/search_history_store.dart';
-import 'package:fqapp/widgets/home/home_media_card.dart';
+
+import 'support/search_finders.dart';
 
 const _id = '7677801492920667198';
 
@@ -32,19 +33,18 @@ void main() {
       expect(ids, [_id]);
       expect(keywordCalls, 0);
       expect(find.text('精确漫剧'), findsOneWidget);
-      expect(find.byType(ChoiceChip), findsNWidgets(6));
+      for (final label in ['综合', '小说', '短剧', '漫剧', '漫画', '听书']) {
+        expect(searchSegment(label), findsOneWidget);
+      }
       expect(find.text('加载更多'), findsNothing);
-      expect(find.text('没有更多了'), findsNothing);
-      await tester.tap(find.widgetWithText(ChoiceChip, '短剧'));
+      expect(find.text(searchEndOfResults), findsNothing);
+      await tester.tap(searchSegment('短剧'));
       await tester.pumpAndSettle();
-      expect(find.byType(HomeMediaCard), findsNothing);
+      expect(searchGridTiles, findsNothing);
       expect(find.text('该分类下没有匹配的作品'), findsOneWidget);
-      await tester.tap(find.widgetWithText(ChoiceChip, '漫剧'));
+      await tester.tap(searchSegment('漫剧'));
       await tester.pumpAndSettle();
-      expect(
-        tester.widget<HomeMediaCard>(find.byType(HomeMediaCard)).item.kind,
-        'manju',
-      );
+      expect(searchVisibleKinds(tester).single, 'manju');
       expect(ids, [_id]);
       expect(keywordCalls, 0);
 
@@ -117,7 +117,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('未找到该 ID 对应的作品'), findsOneWidget);
-      expect(find.byType(HomeMediaCard), findsNothing);
+      expect(searchGridTiles, findsNothing);
       expect(keywords, isEmpty);
       await tester.tap(find.text('按关键词搜索'));
       await tester.pumpAndSettle();
@@ -140,12 +140,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('加载失败，点击重试'), findsOneWidget);
+    expect(find.text(searchRetry), findsOneWidget);
     expect(find.text('未找到该 ID 对应的作品'), findsNothing);
-    await tester.tap(find.widgetWithText(ChoiceChip, '漫剧'));
+    await tester.tap(searchSegment('漫剧'));
     await tester.pumpAndSettle();
     expect(attempts, 1);
-    await tester.tap(find.text('加载失败，点击重试'));
+    await tester.tap(find.text(searchRetry));
     await tester.pumpAndSettle();
     expect(attempts, 2);
     expect(find.text('重试成功'), findsOneWidget);
@@ -176,9 +176,9 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.tap(find.widgetWithText(ChoiceChip, '漫剧'));
+      await tester.tap(searchSegment('漫剧'));
       await tester.pump();
-      await tester.tap(find.widgetWithText(ChoiceChip, '漫画'));
+      await tester.tap(searchSegment('漫画'));
       await tester.pump();
       expect(idCalls, 1);
       await tester.enterText(find.byType(TextField), '新关键词');
@@ -233,7 +233,7 @@ void main() {
       await tester.pumpAndSettle();
       pending.first.complete(_item(_id, '过期 ID 结果', 'manju'));
       await tester.pumpAndSettle();
-      expect(find.text('搜索历史'), findsOneWidget);
+      expect(find.text(searchRecentHeading), findsOneWidget);
       expect(find.text('过期 ID 结果'), findsNothing);
       await tester.tap(find.text(_id));
       await tester.pump();

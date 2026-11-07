@@ -1,11 +1,26 @@
+// 系统朗读设置页。
+//
+// Chrome ported from Wenku8_Flutter (revision ebcd7f1)
+// `lib/listening/system_tts_page.dart`: ArchiveFeaturePage-style header,
+// engine rows and the archive action vocabulary. The upstream page is a
+// sheet panel; fqapp keeps a full route because it is linked from Settings.
+//
+// Mechanical substitutions:
+// - The upstream engine/voice sheet (`SystemSpeechEnginesPanel`, GlassTextButton
+//   rows) maps to this page's engine selector and rate slider; fqapp's engine
+//   and preference services (`SystemTts`, `SystemTtsPreferences`) are kept.
+// - `AppControls.toggle/slider` -> `GlassControls`
+//   (`lib/widgets/wenku/glass_controls.dart`).
+// - `showNovelFeedback` -> the existing SnackBar messages (same text).
+// - Empty/error states use `ContentNotice`, the shared archive state widget.
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/audio_floating_routes.dart';
 import '../services/system_tts.dart';
-import '../widgets/home/home_design.dart';
-import '../widgets/home/home_feed_states.dart';
-import '../widgets/settings/settings_widgets.dart';
+import '../widgets/settings/settings_archive_rows.dart';
+import '../widgets/wenku/wenku_ui.dart';
 
 class SystemTtsSettingsPage extends StatefulWidget {
   const SystemTtsSettingsPage({super.key});
@@ -105,7 +120,6 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     final selectedMissing =
         _prefs.engine != null &&
         !_engines.any((e) => e.package == _prefs.engine);
@@ -113,153 +127,147 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
         .where((e) => e.package == _defaultEngine)
         .firstOrNull
         ?.label;
-    return SettingsScaffold(
+    return ArchiveFeaturePage(
       title: '系统朗读',
-      body: _loading
+      code: 'AUDIO / SYSTEM ENGINES',
+      child: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              children: [
-                _bodyText(
-                  palette,
-                  '从小说或本地书阅读页点“听书”即可使用。支持已安装的系统 TTS '
-                  '引擎，例如 MultiTTS；音色和联网需求由引擎管理。',
-                ),
-                const SizedBox(height: 16),
-                if (_error case final error?)
-                  HomeStateView(
-                    icon: LucideIcons.circle_alert,
-                    title: '无法读取朗读引擎',
-                    message: error,
-                    actionLabel: '重试',
-                    actionIcon: LucideIcons.refresh_cw,
-                    onAction: _load,
-                  )
-                else if (_engines.isEmpty)
-                  const HomeStateView(
-                    icon: LucideIcons.volume_x,
-                    title: '没有找到朗读引擎',
-                    message: '请先安装并在引擎应用中配置中文语音。',
-                  )
-                else ...[
-                  SettingsGroupCard(
-                    children: [
-                      if (selectedMissing)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                          child: Text(
-                            '之前选择的引擎已不可用，请重新选择。',
-                            style: TextStyle(
-                              fontSize: 13,
-                              height: 1.5,
-                              color: palette.ink,
+          : Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: ListView(
+                  padding: featurePadding(context),
+                  children: [
+                    const SettingsHint(
+                      '从小说或本地书阅读页点“听书”即可使用。支持已安装的系统 TTS '
+                      '引擎，例如 MultiTTS；音色和联网需求由引擎管理。',
+                    ),
+                    const SizedBox(height: 16),
+                    if (_error case final error?)
+                      ContentNotice(
+                        icon: CupertinoIcons.wifi_exclamationmark,
+                        title: '无法读取朗读引擎',
+                        message: error,
+                        actionLabel: '重试',
+                        onRetry: _load,
+                      )
+                    else if (_engines.isEmpty)
+                      const ContentNotice(
+                        icon: CupertinoIcons.volume_off,
+                        title: '没有找到朗读引擎',
+                        message: '请先安装并在引擎应用中配置中文语音。',
+                      )
+                    else ...[
+                      SettingsPanel(
+                        children: [
+                          if (selectedMissing)
+                            AppText(
+                              '之前选择的引擎已不可用，请重新选择。',
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.5,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
                             ),
-                          ),
-                        ),
-                      _enginePicker(selectedMissing, defaultLabel),
-                      _ratePicker(palette),
+                          _enginePicker(selectedMissing, defaultLabel),
+                          _ratePicker(),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      const SettingsHint(
+                        '引擎和语速修改在关闭当前系统朗读、重新开始后生效。'
+                        '部分引擎暂停后会从当前短句重读。',
+                      ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  _bodyText(
-                    palette,
-                    '引擎和语速修改在关闭当前系统朗读、重新开始后生效。'
-                    '部分引擎暂停后会从当前短句重读。',
-                  ),
-                ],
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _openSettings,
-                  icon: const Icon(LucideIcons.settings_2, size: 18),
-                  label: const Text('打开系统语音设置'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: palette.ink,
-                    side: BorderSide(color: palette.line),
-                    minimumSize: const Size.fromHeight(46),
-                  ),
+                    const SizedBox(height: 20),
+                    Center(
+                      child: GlassTextButton(
+                        onPressed: _openSettings,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ArchiveIcon(CupertinoIcons.settings, size: 17),
+                            SizedBox(width: 8),
+                            AppText('打开系统语音设置'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
     );
   }
-
-  Widget _bodyText(HomePalette palette, String text) => Text(
-    text,
-    style: TextStyle(fontSize: 13, height: 1.6, color: palette.muted),
-  );
 
   Widget _enginePicker(bool selectedMissing, String? defaultLabel) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: DropdownButtonFormField<String>(
-        key: ValueKey(_prefs.engine ?? ''),
-        initialValue: selectedMissing ? null : (_prefs.engine ?? ''),
-        decoration: const InputDecoration(labelText: '朗读引擎'),
-        items: [
-          DropdownMenuItem(
-            value: '',
-            child: Text(
-              '系统默认${defaultLabel == null ? '' : ' · $defaultLabel'}',
+    final missingEngine = selectedMissing ? _prefs.engine : null;
+    final options = <String, String>{
+      '': '系统默认${defaultLabel == null ? '' : ' · $defaultLabel'}',
+      for (final engine in _engines) engine.package: engine.label,
+      ?missingEngine: '已不可用 · $missingEngine',
+    };
+    return GlassSettingMenu<String>(
+      icon: CupertinoIcons.waveform,
+      label: '朗读引擎',
+      value: _prefs.engine ?? '',
+      options: options,
+      reduceMotion: MediaQuery.disableAnimationsOf(context),
+      onChanged: _saving
+          ? (_) {}
+          : (value) => _save(
+              SystemTtsPreferences(
+                engine: value.isEmpty ? null : value,
+                rate: _prefs.rate,
+              ),
             ),
-          ),
-          for (final engine in _engines)
-            DropdownMenuItem(
-              value: engine.package,
-              child: Text(engine.label, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        isExpanded: true,
-        onChanged: _saving
-            ? null
-            : (value) {
-                if (value == null) return;
-                _save(
-                  SystemTtsPreferences(
-                    engine: value.isEmpty ? null : value,
-                    rate: _prefs.rate,
-                  ),
-                );
-              },
-      ),
     );
   }
 
-  Widget _ratePicker(HomePalette palette) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '语速 ${_prefs.rate.toStringAsFixed(1)}×',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: palette.ink,
+  Widget _ratePicker() {
+    final rate = _prefs.rate;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: AppText(
+                '语速',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
-          ),
-          Slider(
-            value: _prefs.rate,
-            min: 0.5,
-            max: 3,
-            divisions: 25,
-            label: '${_prefs.rate.toStringAsFixed(1)}×',
-            onChanged: _saving
-                ? null
-                : (value) => setState(() {
-                    _prefs = SystemTtsPreferences(
-                      engine: _prefs.engine,
-                      rate: value,
-                    );
-                  }),
-            onChangeEnd: _saving
-                ? null
-                : (value) => _save(
-                    SystemTtsPreferences(engine: _prefs.engine, rate: value),
-                  ),
-          ),
-        ],
-      ),
+            AppText(
+              '${rate.toStringAsFixed(1)}×',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        GlassControls.slider(
+          context,
+          value: rate,
+          min: .5,
+          max: 3,
+          divisions: 25,
+          onChanged: _saving
+              ? null
+              : (value) => setState(() {
+                  _prefs = SystemTtsPreferences(
+                    engine: _prefs.engine,
+                    rate: value,
+                  );
+                }),
+          onChangeEnd: _saving
+              ? null
+              : (value) => _save(
+                  SystemTtsPreferences(engine: _prefs.engine, rate: value),
+                ),
+        ),
+      ],
     );
   }
 }

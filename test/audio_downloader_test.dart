@@ -9,6 +9,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/audio_download_store.dart';
 import 'package:fqapp/services/audio_download_transfer.dart';
 import 'package:fqapp/services/audio_downloader.dart';
+import 'package:fqapp/services/download_resume_store.dart';
 
 /// 本地假 CDN：整文件 GET 与 `Range: bytes=a-` 续传都支持，并记录每次请求
 /// 的 Range 头，供断点续传断言使用。
@@ -171,6 +172,36 @@ class _MemoryStore implements AudioDownloadStore {
       chapters.values.fold<int>(0, (sum, chapter) => sum + chapter.bytes);
 }
 
+/// 可阻塞的断点记录：第一次写入时停住。
+///
+/// 下载协程在打开 `.part` 之后、开始收流之前必须写这条断点记录。测试用
+/// [firstWriteStarted] 等到它真的停在这里，再由 [release] 决定它何时继续；
+/// 这样「旧协程尚未收尾」是确定的，不依赖文件长度或计时器去猜协程当前的
+/// 异步状态。
+class _GatedJournal extends DownloadResumeStore {
+  _GatedJournal() : super.memory();
+
+  final Completer<void> _started = Completer<void>();
+  final Completer<void> _release = Completer<void>();
+  bool _gated = false;
+
+  Future<void> get firstWriteStarted => _started.future;
+
+  void release() {
+    if (!_release.isCompleted) _release.complete();
+  }
+
+  @override
+  Future<void> write(DownloadResumeEntry entry) async {
+    if (!_gated) {
+      _gated = true;
+      _started.complete();
+      await _release.future;
+    }
+    await super.write(entry);
+  }
+}
+
 void main() {
   late Directory temp;
   late _MemoryStore store;
@@ -197,8 +228,10 @@ void main() {
     HttpClient Function()? clientFactory,
     Duration connectTimeout = audioDownloadConnectTimeout,
     Duration readTimeout = audioDownloadReadTimeout,
+    DownloadResumeStore? resumeStore,
   }) => AudioDownloader(
     store: store,
+    resumeStore: resumeStore,
     concurrency: concurrency,
     clientFactory: clientFactory,
     connectTimeout: connectTimeout,
@@ -225,8 +258,7 @@ void main() {
     ],
   );
 
-  Chapter chapterOne() =>
-      Chapter(itemId: 'ch1', title: '一', volumeName: '');
+  Chapter chapterOne() => Chapter(itemId: 'ch1', title: '一', volumeName: '');
 
   Future<void> settle(AudioDownloader engine) async {
     // 引擎在后台跑；等所有任务离开等待/下载态。失败会自动重试（最多三次，
@@ -311,39 +343,49 @@ void main() {
     expect(File(cached!.filePath).readAsBytesSync(), content);
   });
 
-  test('a failing resolve is retried, then failed, then resume works', () async {
-    var attempts = 0;
-    var offline = true;
-    final engine = downloader(
-      resolve: (bookId, itemId, toneId) async {
-        attempts++;
-        if (offline) throw const SocketException('offline');
-        return AudioSource(itemId: itemId, url: cdn.url, toneId: toneId);
-      },
-    );
-    await engine.enqueue(book: book(), chapters: [chapterOne()]);
-    await settle(engine);
-    expect(engine.value.single.status, AudioDownloadStatus.failed);
-    expect(attempts, 3, reason: '首次 + 自动重试两次后放弃');
+  test(
+    'a failing resolve is retried, then failed, then resume works',
+    () async {
+      var attempts = 0;
+      var offline = true;
+      final engine = downloader(
+        resolve: (bookId, itemId, toneId) async {
+          attempts++;
+          if (offline) throw const SocketException('offline');
+          return AudioSource(itemId: itemId, url: cdn.url, toneId: toneId);
+        },
+      );
+      await engine.enqueue(book: book(), chapters: [chapterOne()]);
+      await settle(engine);
+      expect(engine.value.single.status, AudioDownloadStatus.failed);
+      expect(attempts, 3, reason: '首次 + 自动重试两次后放弃');
 
-    offline = false;
-    engine.resume('ch1', toneId: 'toneA');
-    await settle(engine);
-    expect(engine.value.single.status, AudioDownloadStatus.completed);
-    expect(store.chapters.containsKey('ch1|toneA'), isTrue);
-  });
+      offline = false;
+      engine.resume('ch1', toneId: 'toneA');
+      await settle(engine);
+      expect(engine.value.single.status, AudioDownloadStatus.completed);
+      expect(store.chapters.containsKey('ch1|toneA'), isTrue);
+    },
+  );
 
-  test('a 5xx is retried automatically and the chapter still completes', () async {
-    cdn.failFirstStatus = HttpStatus.serviceUnavailable;
-    final engine = downloader();
-    await engine.enqueue(book: book(), chapters: [chapterOne()]);
-    await settle(engine);
+  test(
+    'a 5xx is retried automatically and the chapter still completes',
+    () async {
+      cdn.failFirstStatus = HttpStatus.serviceUnavailable;
+      final engine = downloader();
+      await engine.enqueue(book: book(), chapters: [chapterOne()]);
+      await settle(engine);
 
-    final task = engine.value.single;
-    expect(task.status, AudioDownloadStatus.completed, reason: '${task.error}');
-    expect(cdn.requestCount, 2, reason: '第一次 503 后应自动再试一次');
-    expect(store.chapters.containsKey('ch1|toneA'), isTrue);
-  });
+      final task = engine.value.single;
+      expect(
+        task.status,
+        AudioDownloadStatus.completed,
+        reason: '${task.error}',
+      );
+      expect(cdn.requestCount, 2, reason: '第一次 503 后应自动再试一次');
+      expect(store.chapters.containsKey('ch1|toneA'), isTrue);
+    },
+  );
 
   test('a 4xx other than 408/429 is not retried', () async {
     cdn.failFirstStatus = HttpStatus.notFound;
@@ -376,27 +418,22 @@ void main() {
     expect(File(cached!.filePath).readAsBytesSync(), content.sublist(0, 100));
   });
 
-  test(
-    '服务器接了连接却不发正文时按超时重试，而不是永远挂着',
-    () async {
-      // 只发响应头就停住；客户端必须在读超时后自己收尾，别把 `_active` 的
-      // 槽位和协程永远占住。
-      cdn.stallFirstResponse = Completer<void>();
-      cdn.stallAllResponses = true;
-      cdn.stallAfter = 0;
+  test('服务器接了连接却不发正文时按超时重试，而不是永远挂着', () async {
+    // 只发响应头就停住；客户端必须在读超时后自己收尾，别把 `_active` 的
+    // 槽位和协程永远占住。
+    cdn.stallFirstResponse = Completer<void>();
+    cdn.stallAllResponses = true;
+    cdn.stallAfter = 0;
 
-      final engine = downloader(
-        readTimeout: const Duration(milliseconds: 120),
-      );
-      await engine.enqueue(book: book(), chapters: [chapterOne()]);
-      await settle(engine);
+    final engine = downloader(readTimeout: const Duration(milliseconds: 120));
+    await engine.enqueue(book: book(), chapters: [chapterOne()]);
+    await settle(engine);
 
-      final task = engine.value.single;
-      expect(task.status, AudioDownloadStatus.failed);
-      expect(task.error, '下载超时');
-      expect(cdn.requestCount, 3, reason: '超时按可重试的网络故障处理');
-    },
-  );
+    final task = engine.value.single;
+    expect(task.status, AudioDownloadStatus.failed);
+    expect(task.error, '下载超时');
+    expect(cdn.requestCount, 3, reason: '超时按可重试的网络故障处理');
+  });
 
   test('每次下载都给 HttpClient 设连接超时', () async {
     final clients = <HttpClient>[];
@@ -419,18 +456,13 @@ void main() {
   });
 
   test('discard 后立刻重下不会和旧协程并发写同一个 .part', () async {
-    final gate = Completer<void>();
-    cdn.stallFirstResponse = gate;
-    final part = File(
-      '${temp.path}${Platform.pathSeparator}ch1__toneA.m4a.part',
-    );
-    final engine = downloader();
+    final journal = _GatedJournal();
+    final engine = downloader(resumeStore: journal);
 
     await engine.enqueue(book: book(), chapters: [chapterOne()]);
-    // 旧协程已经收到第一段字节并且卡在收流上。
-    await _waitFor(
-      () => part.existsSync() && part.lengthSync() >= _FakeCdn.stallBytes,
-    );
+    // 旧协程已经发出请求并打开了 `.part`，现在被 journal 写入钉在 transfer
+    // 中间；是否收尾完全由测试决定，不存在「它碰巧已经结束」的窗口。
+    await journal.firstWriteStarted;
 
     await engine.discard('ch1', toneId: 'toneA');
     await engine.enqueue(book: book(), chapters: [chapterOne()]);
@@ -439,7 +471,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 100));
     expect(cdn.requestCount, 1, reason: '旧协程收尾前不得为同一章再起一轮');
 
-    gate.complete();
+    journal.release();
     await settle(engine);
 
     final task = engine.value.single;
@@ -476,13 +508,4 @@ void main() {
     await settle(engine);
     expect(engine.value.length, firstCount);
   });
-}
-
-Future<void> _waitFor(bool Function() condition) async {
-  final end = DateTime.now().add(const Duration(seconds: 10));
-  while (DateTime.now().isBefore(end)) {
-    if (condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  }
-  fail('条件在时限内未满足');
 }

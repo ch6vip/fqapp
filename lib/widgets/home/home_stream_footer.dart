@@ -6,7 +6,7 @@ import 'home_design.dart';
 ///
 /// Three states, all 12sp [HomePalette.muted]:
 /// loading「加载中...」/ retry「加载失败，点击重试」(tap reloads) /
-/// done「已显示全部内容」— the done form sits between two 12×0.5dp rules
+/// done「已经到底了」— the done form sits between two 12×0.5dp rules
 /// with 8dp top / 32dp bottom padding; the others take 16dp top / 24dp
 /// bottom (`vu`)。
 ///
@@ -49,15 +49,21 @@ class HomeStreamFooter extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(width: 12, height: 0.5, color: color),
+              // 档案式细线：1dp 实线 + 等宽留白，和分区标签同一种收尾。
+              Container(width: 18, height: 1, color: palette.line),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Text(
-                  '已显示全部内容',
-                  style: TextStyle(fontSize: 12, height: 1.2, color: color),
+                  '已经到底了',
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.2,
+                    letterSpacing: 0.3,
+                    color: color,
+                  ),
                 ),
               ),
-              Container(width: 12, height: 0.5, color: color),
+              Container(width: 18, height: 1, color: palette.line),
             ],
           ),
         );

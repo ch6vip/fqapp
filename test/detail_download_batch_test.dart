@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
-import 'package:fqapp/widgets/detail/detail_read_bar.dart';
 
 import 'support/fakes.dart';
 
@@ -60,9 +59,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
 
     // 修复前批次总量是「从续读位置到末章」的 4 章（重新缓存一遍已缓存的
-    // c0、c1）；修复后从第一个缺口开始，总量只剩 2 章。
-    final bar = tester.widget<DetailReadBar>(find.byType(DetailReadBar));
-    expect(bar.download?.total, 2, reason: '批次总量应为缺失的 2 章，而不是全部 4 章');
+    // c0、c1）；修复后从第一个缺口开始，总量只剩 2 章。下载弹层显示运行中
+    // 批次的 completed/total，头部只有环形进度。
+    await tester.tap(find.byKey(const Key('detail_action_下载')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.text('下载中 0/2'), findsOneWidget);
+    // Dismiss the sheet and let the batch finish.
+    await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
 
     // ChapterDownload 自身也会逐章跳过已缓存正文，因此实际抓取的只有缺口。

@@ -59,6 +59,30 @@ void main() {
     );
   });
 
+  test('rank counters survive parsing and cache round-trips', () {
+    final item = MediaItem.fromRaw({
+      'book_data': {
+        'book_id': 'b1',
+        'book_name': '榜书',
+        'author': '云中客',
+        'read_count': 2860000,
+        'creation_status': 1,
+      },
+    });
+    expect(item.readCount, '2860000');
+    expect(item.creationStatus, 1);
+
+    final restored = MediaItemJson.fromJson(item.toJson())!;
+    expect(restored.readCount, '2860000');
+    expect(restored.creationStatus, 1);
+
+    // 没带字段时保持未知，不把 -1 写成 0（0 表示已完结）。
+    final unknown = MediaItem.fromRaw({'book_id': 'b2'});
+    expect(unknown.readCount, '');
+    expect(unknown.creationStatus, -1);
+    expect(unknown.toJson().containsKey('creationStatus'), isFalse);
+  });
+
   test('parses list-shaped chapterListWithVolume', () {
     final payload = {
       'code': 200,

@@ -27,26 +27,26 @@ void main() {
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
     final sheet = tester.widget<BottomSheet>(find.byType(BottomSheet));
-    expect(sheet.backgroundColor, const Color(0xFF242427));
+    expect(sheet.backgroundColor, const Color(0xFF242424));
     expect(
       tester.widget<Text>(find.text('字体大小')).style?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     // 选中档（标准）用 ink，未选中档（大号）用 muted。
     expect(
       tester.widget<Text>(find.text('标准')).style?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     expect(
       tester.widget<Text>(find.text('大号')).style?.color,
-      const Color(0xFFA7A39E),
+      const Color(0xFFB7B7B7),
     );
     expect(
       tester
           .widget<Text>(find.byKey(const ValueKey('player-font-scale-preview')))
           .style
           ?.color,
-      const Color(0xFFF5F1EB),
+      const Color(0xFFF2F2F2),
     );
     expect(tester.takeException(), isNull);
   });

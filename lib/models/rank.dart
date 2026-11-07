@@ -110,6 +110,8 @@ class RankEntry {
     ep: '',
     kind: kind,
     seriesId: seriesId.isEmpty ? null : seriesId,
+    readCount: readCount,
+    creationStatus: creationStatus,
     rankTags: tags,
   );
 

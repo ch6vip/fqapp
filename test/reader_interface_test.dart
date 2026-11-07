@@ -203,7 +203,7 @@ void main() {
       await _openMenu(tester);
       await tester.tap(find.text('目录'));
       await tester.pumpAndSettle();
-      final directory = find.text('目录 · 2 章');
+      final directory = find.text('目录');
       expect(
         Theme.of(tester.element(directory)).colorScheme.brightness,
         Brightness.dark,
