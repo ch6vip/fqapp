@@ -60,6 +60,35 @@ void main() {
     await store.saveEpisode(seedEpisode('ep1', index: 1));
   }
 
+  Future<void> seedManyDramas() async {
+    for (var index = 0; index < 40; index++) {
+      final seriesId = 'series$index';
+      final episodeId = 'ep$index';
+      await store.ensureCatalogue(
+        CachedDrama(
+          id: seriesId,
+          title: 'Drama ${index + 1}',
+          cover: '',
+          episodes: [Chapter(itemId: episodeId, title: '第1集', volumeName: '')],
+        ),
+      );
+      await store.saveEpisode(
+        CachedEpisode(
+          seriesId: seriesId,
+          itemId: episodeId,
+          title: '第1集',
+          index: 0,
+          keyHex: 'k',
+          height: 1080,
+          variantName: '1080P',
+          bytes: 2048,
+          filePath: '/tmp/unused.mp4',
+          cachedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+    }
+  }
+
   Future<void> pumpPage(WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -322,7 +351,7 @@ void main() {
 
   testWidgets('经典主题的暂停任务可继续下载', (tester) async {
     final gate = Completer<EpisodeSource>();
-    final pendingDownloader = DramaDownloader(
+    final pendingDownloader = _CountingDownloader(
       store: store,
       // resolver 永不完成：任务停在暂停/续下状态，不触真网。
       resolve: (episode) => gate.future,
@@ -350,6 +379,16 @@ void main() {
     expect(find.byTooltip('继续下载'), findsOneWidget);
     expect(pendingDownloader.value.single.status, DramaDownloadStatus.paused);
 
+    // 主题切换只恢复内容锚点，不能把暂停任务重新入队。
+    await storeController.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(pendingDownloader.value.single.status, DramaDownloadStatus.paused);
+    expect(pendingDownloader.resumes, 0);
+    await storeController.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(pendingDownloader.value.single.status, DramaDownloadStatus.paused);
+    expect(pendingDownloader.resumes, 0);
+
     await tester.tap(find.byTooltip('继续下载'));
     await tester.pump();
 
@@ -357,5 +396,83 @@ void main() {
       pendingDownloader.value.single.status,
       isNot(DramaDownloadStatus.paused),
     );
+    expect(pendingDownloader.resumes, 1);
   });
+
+  testWidgets('40 部缓存：双向切主题按剧 ID 与行内偏移恢复，展开卡片保留', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await seedManyDramas();
+    final styleStore = await pumpDramaCacheWithStyle(tester, classic: false);
+
+    final list = find.byKey(const ValueKey('cached-dramas-scroll'));
+    final scrollable = find
+        .descendant(of: list, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    position.jumpTo(1300);
+    await tester.pump();
+
+    final mid = _firstVisibleDrama(tester, list);
+    expect(mid, isNotNull);
+    final midIndex = int.parse(mid!.id.substring('series'.length));
+    await tester.tap(find.text('Drama ${midIndex + 1}'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('drama-episode-ep$midIndex')), findsOneWidget);
+    final expandedBefore = _firstVisibleDrama(tester, list);
+    await styleStore.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ClassicFeaturePage), findsOneWidget);
+    expect(find.byType(CachedDramasPage), findsOneWidget);
+    final expandedAfter = _firstVisibleDrama(tester, list);
+    expect(expandedAfter, isNotNull);
+    expect(expandedAfter!.id, expandedBefore!.id);
+    expect(expandedAfter.offset, closeTo(expandedBefore.offset, 1.0));
+
+    // 尾部：第 31 部仍有足够行垫底，回到档案主题时保持同一行内偏移。
+    final tailRow = find.byKey(const ValueKey('cached-drama-row-series30'));
+    await tester.scrollUntilVisible(tailRow, 260, scrollable: scrollable);
+    await tester.ensureVisible(tailRow);
+    await tester.pump();
+    final tail = _firstVisibleDrama(tester, list);
+    await styleStore.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    final tailAfter = _firstVisibleDrama(tester, list);
+    expect(tailAfter, isNotNull);
+    expect(tailAfter!.id, tail!.id);
+    expect(tailAfter.offset, closeTo(tail.offset, 1.0));
+  });
+}
+
+({String id, double offset})? _firstVisibleDrama(
+  WidgetTester tester,
+  Finder list,
+) {
+  final viewport = tester.getRect(list);
+  final contentTop = viewport.top + kToolbarHeight;
+  for (var index = 0; index < 40; index++) {
+    final finder = find.text('Drama ${index + 1}');
+    if (finder.evaluate().isEmpty) continue;
+    final rect = tester.getRect(finder);
+    if (rect.bottom <= contentTop + 0.5) continue;
+    if (rect.top < contentTop - 0.5) continue;
+    if (rect.bottom > viewport.bottom + 0.5) continue;
+    return (id: 'series$index', offset: contentTop - rect.top);
+  }
+  return null;
+}
+
+class _CountingDownloader extends DramaDownloader {
+  _CountingDownloader({required super.store, super.resolve});
+
+  int resumes = 0;
+
+  @override
+  void resume(String itemId) {
+    resumes++;
+    super.resume(itemId);
+  }
 }

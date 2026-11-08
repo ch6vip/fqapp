@@ -199,6 +199,100 @@ void main() {
     await tester.pumpAndSettle();
     expect(sink.calls, isEmpty);
   });
+
+  testWidgets('40 条缓存导出中切主题：按同一本书恢复且不重启导出', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final cache = _StubCacheStore();
+    for (var index = 0; index < 40; index++) {
+      final id = 'book-$index';
+      await cache.saveBook(
+        CachedBook(id: id, title: 'Book ${index + 1}', chapters: [first]),
+      );
+      await cache.write(bookId: id, chapterId: '1', title: '第一章', text: '缓存正文');
+    }
+    final sink = _RecordingSink();
+    final gate = Completer<void>();
+    var directoryCalls = 0;
+    final styleStore = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    addTearDown(styleStore.dispose);
+    await tester.pumpWidget(
+      AppUiHost(
+        store: styleStore,
+        home: CachedBooksPage(
+          cacheStore: cache,
+          readerStore: MemoryReaderStore(),
+          exportDirectoryLoader: (bookId) async {
+            directoryCalls++;
+            return [first, second];
+          },
+          exportChapterLoader: (chapter) async {
+            await gate.future;
+            return '正文${chapter.itemId}';
+          },
+          exportSink: sink,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final list = find.byKey(const ValueKey('cached-books-scroll'));
+    final scrollable = find
+        .descendant(of: list, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    position.jumpTo(1300);
+    await tester.pump();
+
+    final pageState = tester.state(find.byType(CachedBooksPage));
+    final anchor = _firstVisibleExportBook(tester, list);
+    expect(anchor, isNotNull);
+    await tester.tap(find.byKey(Key('cached_book_export_${anchor!.id}')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(directoryCalls, 1);
+    expect(find.text('导出 0/2 章'), findsOneWidget);
+
+    // 进度行改变了行高，切换前重新取一次锚点。
+    final before = _firstVisibleExportBook(tester, list);
+    await styleStore.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ClassicFeaturePage), findsOneWidget);
+    expect(tester.state(find.byType(CachedBooksPage)), same(pageState));
+    expect(directoryCalls, 1);
+    expect(find.text('导出 0/2 章'), findsOneWidget);
+    expect(find.byTooltip('取消导出'), findsOneWidget);
+    final after = _firstVisibleExportBook(tester, list);
+    expect(after, isNotNull);
+    expect(after!.id, before!.id);
+    expect(after.offset, closeTo(before.offset, 1.0));
+
+    await tester.tap(find.byKey(Key('cached_book_export_${before.id}')));
+    await tester.pump();
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(sink.calls, isEmpty);
+  });
+}
+
+({String id, double offset})? _firstVisibleExportBook(
+  WidgetTester tester,
+  Finder list,
+) {
+  final viewport = tester.getRect(list);
+  final contentTop = viewport.top + kToolbarHeight;
+  for (var index = 0; index < 40; index++) {
+    final finder = find.text('Book ${index + 1}');
+    if (finder.evaluate().isEmpty) continue;
+    final rect = tester.getRect(finder);
+    if (rect.bottom <= contentTop + 0.5) continue;
+    if (rect.top < contentTop - 0.5) continue;
+    if (rect.bottom > viewport.bottom + 0.5) continue;
+    return (id: 'book-$index', offset: contentTop - rect.top);
+  }
+  return null;
 }
 
 class _RecordingSink implements TxtSink {
