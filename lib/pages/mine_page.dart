@@ -74,15 +74,17 @@ class _MinePageState extends State<MinePage> {
     if (!mounted || !_visible) return;
     _reloadTimer?.cancel();
     final store = LibraryStore.instance;
-    final stats = store.isInitialized
-        ? ReadingStats.from(
-            history: store.historySnapshot(),
-            readTime: store.readTimeSnapshot(),
-            readTimeKinds: store.readTimeKindSnapshot(),
-          )
-        : ReadingStats.empty;
+    // 装配降级时 store 可能还没就绪：保留 dirty，等下一次依赖变化再算，
+    // 否则经典「我的」会一直停在空统计。
+    if (!store.isInitialized) return;
     _storeDirty = false;
-    setState(() => _stats = stats);
+    setState(
+      () => _stats = ReadingStats.from(
+        history: store.historySnapshot(),
+        readTime: store.readTimeSnapshot(),
+        readTimeKinds: store.readTimeKindSnapshot(),
+      ),
+    );
   }
 
   @override
@@ -93,6 +95,8 @@ class _MinePageState extends State<MinePage> {
     super.dispose();
   }
 
+  // 刷新节奏（250ms 防抖 + TickerMode 可见性门）与 reading_statistics_page
+  // 同构；两处抽取见后续 issue。
   void _openEntry(Map<String, dynamic> entry) => openBookDetail(
     context,
     MediaItem(
