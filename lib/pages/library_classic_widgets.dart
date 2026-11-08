@@ -132,6 +132,76 @@ class _ClassicLayoutSegments extends StatelessWidget {
   );
 }
 
+/// 经典书架工具栏的分组胶囊：与「今日已读」胶囊同款外形，也是分组入口
+/// （点开就是现有的分类弹层）。选中分组时用强调色描边与文字，长分组名
+/// 只省略不折行，不会把工具栏挤高一行。
+class _ClassicGroupChip extends StatelessWidget {
+  const _ClassicGroupChip({
+    super.key,
+    required this.label,
+    required this.active,
+    required this.palette,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool active;
+  final HomePalette palette;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = active && !palette.eink;
+    final border = palette.eink || active
+        ? Border.all(color: accent ? HomePalette.accent : palette.line)
+        : null;
+    return Semantics(
+      button: true,
+      selected: active,
+      label: '书架分组：$label',
+      child: Tooltip(
+        message: '书架分组：$label',
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
+          child: Container(
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: palette.soft,
+              borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
+              border: border,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  LucideIcons.folder,
+                  size: ShelfTokens.iconInline,
+                  color: accent ? HomePalette.accent : palette.muted,
+                ),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: ShelfTokens.subtitle,
+                      fontWeight: FontWeight.w500,
+                      color: accent ? HomePalette.accent : palette.ink,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ClassicEmptyNotice extends StatelessWidget {
   const _ClassicEmptyNotice({
     required this.icon,
