@@ -195,9 +195,10 @@ class _ClassicToolbarAction extends StatelessWidget {
 
 /// Bottom chrome: the original one-piece top-rounded Material sheet.
 ///
-/// Row 1 is the whole-book chapter picker (old semantics, commits on release).
-/// Row 2 is the current chapter's internal progress, which is a different
-/// control with a different meaning and its own key/semantics.
+/// Top down: the whole-book chapter picker (old semantics, commits on
+/// release), the current chapter's internal progress (a different control with
+/// its own key/semantics), then the old two action rows — 目录/查找/书签 above
+/// 操作/AI/夜间/设置.
 class ReaderClassicControls extends StatefulWidget {
   const ReaderClassicControls({
     super.key,
@@ -446,69 +447,85 @@ class _ReaderClassicControlsState extends State<ReaderClassicControls> {
     );
   }
 
-  Widget _actions() => LayoutBuilder(
-    builder: (context, constraints) {
-      final actions = <Widget>[
-        _ClassicAction(
-          key: const ValueKey('reader-catalogue-entry'),
-          icon: LucideIcons.book_open,
-          label: '目录',
-          onTap: widget.onDirectory,
-        ),
-        _ClassicAction(
-          key: const ValueKey('reader-bookmarks-entry'),
-          icon: LucideIcons.bookmark,
-          label: '书签',
-          onTap: widget.onBookmarks,
-        ),
-        _ClassicAction(
-          key: const ValueKey('reader-find-entry'),
-          icon: LucideIcons.search,
-          label: '查找',
-          onTap: widget.onFind,
-        ),
-        _ClassicAction(
-          key: const ValueKey('reader-operations-entry'),
-          icon: LucideIcons.sliders_horizontal,
-          label: '操作',
-          onTap: widget.onOperations,
-        ),
-        if (widget.onAi != null)
-          _ClassicAction(
-            key: const ValueKey('reader-ai'),
-            icon: LucideIcons.sparkles,
-            label: widget.aiLabel,
-            onTap: widget.onAi,
-          ),
-        _ClassicAction(
-          key: const ValueKey('reader-night-entry'),
-          icon: widget.preset.isDark ? LucideIcons.sun : LucideIcons.moon,
-          label: widget.preset.isDark ? '日间' : '夜间',
-          onTap: widget.onNight,
-        ),
-        _ClassicAction(
-          key: const ValueKey('reader-settings'),
-          icon: LucideIcons.sliders_horizontal,
-          label: '设置',
-          onTap: widget.onAppearance,
-        ),
-      ];
-      final width = (constraints.maxWidth / actions.length).clamp(52.0, 92.0);
-      final row = Row(
-        mainAxisSize: MainAxisSize.min,
+  /// Two stable rows, as in the pre-#291 reader: content navigation first,
+  /// then display/feature actions. No horizontal scroll, so each entry keeps a
+  /// real touch target at 320dp; a short viewport scrolls the whole sheet
+  /// vertically instead of hiding a button sideways.
+  ///
+  /// `操作` rides in the feature row: it is a fqapp-only entry the old shell did
+  /// not have, and it must stay one tap away from 设置.
+  Widget _actions() => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Row(
+        key: const ValueKey('reader-classic-nav-row'),
         children: [
-          for (final action in actions) SizedBox(width: width, child: action),
+          Expanded(
+            child: _ClassicAction(
+              key: const ValueKey('reader-catalogue-entry'),
+              icon: LucideIcons.book_open,
+              label: '目录',
+              onTap: widget.onDirectory,
+            ),
+          ),
+          Expanded(
+            child: _ClassicAction(
+              key: const ValueKey('reader-find-entry'),
+              icon: LucideIcons.search,
+              label: '查找',
+              onTap: widget.onFind,
+            ),
+          ),
+          Expanded(
+            child: _ClassicAction(
+              key: const ValueKey('reader-bookmarks-entry'),
+              icon: LucideIcons.bookmark,
+              label: '书签',
+              onTap: widget.onBookmarks,
+            ),
+          ),
         ],
-      );
-      if (width * actions.length <= constraints.maxWidth) {
-        return Center(child: row);
-      }
-      return SingleChildScrollView(
-        key: const ValueKey('reader-classic-actions'),
-        scrollDirection: Axis.horizontal,
-        child: row,
-      );
-    },
+      ),
+      const SizedBox(height: 4),
+      Row(
+        key: const ValueKey('reader-classic-feature-row'),
+        children: [
+          Expanded(
+            child: _ClassicAction(
+              key: const ValueKey('reader-operations-entry'),
+              icon: LucideIcons.sliders_horizontal,
+              label: '操作',
+              onTap: widget.onOperations,
+            ),
+          ),
+          if (widget.onAi != null)
+            Expanded(
+              child: _ClassicAction(
+                key: const ValueKey('reader-ai'),
+                icon: LucideIcons.sparkles,
+                label: widget.aiLabel,
+                onTap: widget.onAi,
+              ),
+            ),
+          Expanded(
+            child: _ClassicAction(
+              key: const ValueKey('reader-night-entry'),
+              icon: widget.preset.isDark ? LucideIcons.sun : LucideIcons.moon,
+              label: widget.preset.isDark ? '日间' : '夜间',
+              onTap: widget.onNight,
+            ),
+          ),
+          Expanded(
+            child: _ClassicAction(
+              key: const ValueKey('reader-settings'),
+              icon: LucideIcons.sliders_horizontal,
+              label: '设置',
+              onTap: widget.onAppearance,
+            ),
+          ),
+        ],
+      ),
+    ],
   );
 }
 

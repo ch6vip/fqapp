@@ -454,34 +454,48 @@ extension _ReaderPageBuild on _ReaderPageState {
       ListenableBuilder(
         listenable: _scrollController,
         builder: (context, _) => classic
-            ? ReaderClassicControls(
-                // Two progress meanings live in this sheet; see the widget.
-                key: const ValueKey('reader-classic-controls'),
-                preset: preset,
-                chapterIndex: _index,
-                chapterCount: widget.chapters.length,
-                chapterTitleAt: (index) => widget
-                    .chapters[index.clamp(0, widget.chapters.length - 1)]
-                    .title,
-                fraction: _chapterLocalFraction,
-                onPrevious: _index > 0 && !_loading ? _prev : null,
-                onNext: _index < widget.chapters.length - 1 && !_loading
-                    ? _next
-                    : null,
-                onSeekEnd: (index) => unawaited(_jumpToChapter(index)),
-                onPreview: _previewChapterFraction,
-                onCommitted: _commitChapterFraction,
-                onPreviewChanged: _setChapterPreview,
-                onDirectory: _showDirectory,
-                onBookmarks: _showBookmarks,
-                onFind: _loading || !_progressReady ? null : _showFind,
-                onNight: _toggleNightTheme,
-                onAppearance: _showAppearanceSettings,
-                onOperations: () => _showAppearanceSettings(
-                  section: ReaderSettingsSection.operations,
+            // The archive dock runs its own chrome layers; the classic sheet is
+            // one Material panel, so the same `_chrome` drives it from outside.
+            // `maintainSize` keeps the measured height (and the selection bar's
+            // clearance) identical while it slides, and reduce-motion/e-ink
+            // already jump `_chrome` straight to its end value.
+            ? ReaderChromeLayer(
+                animation: _chrome,
+                interactionThreshold: 0,
+                maintainSize: true,
+                slide: const Offset(0, 1),
+                clip: false,
+                child: ReaderClassicControls(
+                  // Two progress meanings live in this sheet; see the widget.
+                  key: const ValueKey('reader-classic-controls'),
+                  preset: preset,
+                  chapterIndex: _index,
+                  chapterCount: widget.chapters.length,
+                  chapterTitleAt: (index) => widget
+                      .chapters[index.clamp(0, widget.chapters.length - 1)]
+                      .title,
+                  fraction: _chapterLocalFraction,
+                  onPrevious: _index > 0 && !_loading ? _prev : null,
+                  onNext: _index < widget.chapters.length - 1 && !_loading
+                      ? _next
+                      : null,
+                  onSeekEnd: (index) => unawaited(_jumpToChapter(index)),
+                  onPreview: _previewChapterFraction,
+                  onCommitted: _commitChapterFraction,
+                  onPreviewChanged: _setChapterPreview,
+                  onDirectory: _showDirectory,
+                  onBookmarks: _showBookmarks,
+                  onFind: _loading || !_progressReady ? null : _showFind,
+                  onNight: _toggleNightTheme,
+                  onAppearance: _showAppearanceSettings,
+                  onOperations: () => _showAppearanceSettings(
+                    section: ReaderSettingsSection.operations,
+                  ),
+                  onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
+                  aiLabel: _currentAiView?.hasCache == true
+                      ? 'AI 已校对'
+                      : 'AI 校对',
                 ),
-                onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
-                aiLabel: _currentAiView?.hasCache == true ? 'AI 已校对' : 'AI 校对',
               )
             : ReaderControls(
                 key: const ValueKey('reader-controls'),
