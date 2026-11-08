@@ -180,38 +180,54 @@ Active Connections
     expect(results.map((candidate) => candidate.url), expected);
   });
 
-  test(
-    'bounds concurrency and closes stalled connections after timeout',
-    () async {
-      var active = 0;
-      var peak = 0;
-      final stalled = await _Server.start((socket, owner) async {
-        active++;
-        if (active > peak) peak = active;
-        try {
-          await socket.drain<void>();
-        } finally {
-          active--;
-        }
-      });
-      addTearDown(stalled.close);
-      // Different loopback addresses reach the same wildcard listener.
-      final discovery = LocalProxyDiscovery(
-        readListeners: () async => [
-          for (var i = 1; i <= 6; i++)
-            Uri(host: '127.0.0.$i', port: stalled.port),
-        ],
-        maxConcurrent: 2,
-        timeout: const Duration(milliseconds: 80),
-      );
-      final clock = Stopwatch()..start();
-      expect(await discovery.discover(), isEmpty);
-      expect(clock.elapsed, lessThan(const Duration(seconds: 3)));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(peak, lessThanOrEqualTo(2));
-      expect(active, 0);
-    },
-  );
+  test('bounds concurrency and closes stalled connections after timeout', () async {
+    var active = 0;
+    var peerPeak = 0;
+    final releaseReads = Completer<void>();
+    var receivedEof = 0;
+    final allPeersClosed = Completer<void>();
+    final tracker = _SocketTracker();
+    final stalled = await _Server.start((socket, owner) async {
+      active++;
+      if (active > peerPeak) peerPeak = active;
+      try {
+        // Delay peer EOF consumption deterministically, as can happen under CI load.
+        await releaseReads.future;
+        await socket.drain<void>();
+      } finally {
+        active--;
+        receivedEof++;
+        if (receivedEof == tracker.connected) allPeersClosed.complete();
+      }
+    });
+    addTearDown(stalled.close);
+    // Different loopback addresses reach the same wildcard listener.
+    final discovery = LocalProxyDiscovery(
+      readListeners: () async => [
+        for (var i = 1; i <= 6; i++)
+          Uri(host: '127.0.0.$i', port: stalled.port),
+      ],
+      maxConcurrent: 2,
+      timeout: const Duration(milliseconds: 20),
+    );
+    final clock = Stopwatch()..start();
+    try {
+      expect(await tracker.run(discovery.discover), isEmpty);
+    } finally {
+      releaseReads.complete();
+    }
+    expect(clock.elapsed, lessThan(const Duration(seconds: 3)));
+    await allPeersClosed.future.timeout(const Duration(seconds: 3));
+    // Remote EOF processing can lag behind local destroy; count the client's
+    // connecting/open sockets for concurrency, and await each peer for cleanup.
+    expect(tracker.attempts, 12);
+    expect(tracker.peak, lessThanOrEqualTo(2));
+    expect(tracker.active, 0);
+    expect(tracker.connected, greaterThan(0));
+    expect(receivedEof, tracker.connected);
+    expect(peerPeak, greaterThan(2));
+    expect(active, 0);
+  });
 
   test('discovers IPv6 loopback HTTP proxy', () async {
     final proxy = await _Server.start(_httpProxy, ipv6: true);
@@ -371,6 +387,90 @@ class _TestReader {
     buffer.removeRange(0, length);
     return bytes;
   }
+}
+
+class _SocketTracker {
+  int active = 0;
+  int peak = 0;
+  int attempts = 0;
+  int connected = 0;
+
+  Future<T> run<T>(Future<T> Function() action) {
+    final parent = Zone.current;
+    return IOOverrides.runZoned(
+      action,
+      socketConnect:
+          (
+            dynamic host,
+            int port, {
+            dynamic sourceAddress,
+            int sourcePort = 0,
+            Duration? timeout,
+          }) async {
+            attempts++;
+            active++;
+            if (active > peak) peak = active;
+            try {
+              final socket = await parent.run(
+                () => Socket.connect(
+                  host,
+                  port,
+                  sourceAddress: sourceAddress,
+                  sourcePort: sourcePort,
+                  timeout: timeout,
+                ),
+              );
+              connected++;
+              return _TrackedSocket(socket, () => active--);
+            } catch (_) {
+              active--;
+              rethrow;
+            }
+          },
+    );
+  }
+}
+
+// Instruments real client sockets; all network I/O still reaches the OS.
+class _TrackedSocket extends Stream<Uint8List> implements Socket {
+  _TrackedSocket(this.socket, this.onDestroy);
+  final Socket socket;
+  final void Function() onDestroy;
+  bool destroyed = false;
+
+  @override
+  void destroy() {
+    socket.destroy();
+    if (!destroyed) {
+      destroyed = true;
+      onDestroy();
+    }
+  }
+
+  @override
+  StreamSubscription<Uint8List> listen(
+    void Function(Uint8List)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => socket.listen(
+    onData,
+    onError: onError,
+    onDone: onDone,
+    cancelOnError: cancelOnError,
+  );
+
+  @override
+  void add(List<int> data) => socket.add(data);
+
+  @override
+  void write(Object? object) => socket.write(object);
+
+  @override
+  Future<void> flush() => socket.flush();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _Server {
