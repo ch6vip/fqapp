@@ -493,6 +493,68 @@ void main() {
       expect(find.text('3 处匹配'), findsNothing);
     });
 
+    testWidgets('deep find results keep the top match both ways', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final paragraphs = <ReaderFindParagraph>[];
+      var start = 0;
+      for (var i = 0; i < 200; i++) {
+        final text = '第 $i 段 山中 ${'背景文字' * (i % 4 + 1)}';
+        paragraphs.add(ReaderFindParagraph(start: start, text: text));
+        start += text.length + 1;
+      }
+      await _launch<ReaderFindMatch>(
+        tester,
+        store,
+        ReaderFindPanel(
+          paragraphs: paragraphs,
+          preset: ReaderThemePreset.light,
+        ),
+        size: const Size(390, 700),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('reader-find-field')),
+        '山中',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(find.text('200 处匹配'), findsOneWidget);
+
+      final results = find.byKey(const ValueKey('reader-find-results'));
+      tester
+          .state<ScrollableState>(
+            find
+                .descendant(of: results, matching: find.byType(Scrollable))
+                .first,
+          )
+          .position
+          .jumpTo(6000);
+      await tester.pumpAndSettle();
+      final before = _firstVisibleFindResult(tester, 200);
+      expect(before, isNotNull);
+      final anchorResult = before!;
+      expect(anchorResult.$1, greaterThan(30), reason: '必须落在结果列表深处');
+
+      for (final style in const [
+        AppThemeStyle.archive,
+        AppThemeStyle.classic,
+        AppThemeStyle.archive,
+      ]) {
+        await store.select(style);
+        await tester.pumpAndSettle();
+        final after = _firstVisibleFindResult(tester, 200);
+        expect(after, isNotNull, reason: '${style.name} 必须仍有可见结果');
+        expect(after!.$1, anchorResult.$1, reason: '${style.name} 顶部匹配必须不变');
+        expect(
+          after.$2,
+          closeTo(anchorResult.$2, 2),
+          reason: '${style.name} 行内偏移必须保持',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('open find keeps the query when the style changes', (
       tester,
     ) async {
@@ -677,6 +739,68 @@ void main() {
       expect(back!.$1, before.$1);
       expect(back.$2, closeTo(before.$2, 2));
       expect(find.text('本书 14 条记录'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('deep heterogeneous bookmarks keep the record both ways', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      // First 100 rows have no excerpt (short), the last 100 carry a long one:
+      // row heights differ wildly, so a proportional guess cannot land on the
+      // same record when switching renderers deep in the list.
+      final marks = _PanelStore([
+        for (var i = 0; i < 200; i++)
+          _mark(i, text: i < 100 ? '' : '第 $i 条长摘录 ${'翻页前的那句话还在耳边。' * 16}'),
+      ]);
+      addTearDown(marks.changes.dispose);
+      await _launch<ReaderBookmark>(
+        tester,
+        store,
+        ReaderBookmarksPanel(
+          bookId: 'book',
+          preset: ReaderThemePreset.light,
+          store: marks,
+          onAdd: () async => null,
+        ),
+        size: const Size(390, 700),
+      );
+
+      final list = find.byKey(const ValueKey('reader-bookmarks-list'));
+      for (var i = 0; i < 10; i++) {
+        await tester.drag(list, const Offset(0, -820));
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      final before = _firstVisibleBookmark(tester, marks.records);
+      expect(before, isNotNull);
+      final anchorRecord = before!;
+      final targetIndex = marks.records.indexWhere(
+        (record) => record.key == anchorRecord.$1,
+      );
+      expect(targetIndex, greaterThanOrEqualTo(100), reason: '必须落在长摘录深段');
+
+      // classic → archive → classic → archive, all at the deep offset.
+      for (final style in const [
+        AppThemeStyle.archive,
+        AppThemeStyle.classic,
+        AppThemeStyle.archive,
+      ]) {
+        await store.select(style);
+        await tester.pumpAndSettle();
+        final after = _firstVisibleBookmark(tester, marks.records);
+        expect(after, isNotNull, reason: '${style.name} 必须仍有可见书签');
+        expect(after!.$1, anchorRecord.$1, reason: '${style.name} 顶部书签必须不变');
+        expect(
+          after.$2,
+          closeTo(anchorRecord.$2, 2),
+          reason: '${style.name} 行内偏移必须保持',
+        );
+        expect(
+          marks.records.indexWhere((record) => record.key == after.$1),
+          targetIndex,
+        );
+      }
       expect(tester.takeException(), isNull);
     });
 
