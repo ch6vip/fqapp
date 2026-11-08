@@ -904,14 +904,19 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
                           child: Padding(
                             padding: EdgeInsets.all(margin),
                             child: Center(
-                              child: SingleChildScrollView(
-                                primary: false,
+                              // The height cap belongs outside the scroll
+                              // view: inside, it would bound the Column too
+                              // and leave nothing to scroll.
+                              child: SizedBox(
+                                width: dialogWidth,
                                 child: ConstrainedBox(
                                   constraints: BoxConstraints(
-                                    maxWidth: dialogWidth,
                                     maxHeight: dialogHeight,
                                   ),
-                                  child: surface,
+                                  child: SingleChildScrollView(
+                                    primary: false,
+                                    child: surface,
+                                  ),
                                 ),
                               ),
                             ),
