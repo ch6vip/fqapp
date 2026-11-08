@@ -13,6 +13,7 @@ import '../services/backend_transport.dart';
 import '../services/desktop_platform.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/search/search_discovery.dart';
 import '../widgets/search/search_media_tile.dart';
 import '../widgets/search/search_score_filter.dart';
@@ -39,18 +40,113 @@ typedef HotSearchLoader = Future<HotSearch> Function();
 
 /// fqapp opens search as a route rather than upstream's in-shell overlay. The
 /// route keeps upstream's 420ms `ArchivePlaneTransition` (diagonal incoming
-/// sheet) instead of the platform page slide.
+/// sheet) for the archive style. The classic style uses the platform
+/// `PageTransitionsTheme` builder and duration, exactly like the rest of the
+/// app's `MaterialPageRoute`s, instead of the archive plane.
+///
+/// Only the transition changes: [builder], [RouteSettings] and the generic
+/// result type are the same in both styles. The transition policy is fixed when
+/// the route is pushed ([open]); the page body keeps reading the live scope.
 class SearchRoute<T> extends PageRouteBuilder<T> {
-  SearchRoute({required WidgetBuilder builder, super.settings})
-    : super(
-        transitionDuration: WenkuMotion.enter,
-        reverseTransitionDuration: WenkuMotion.exit,
-        pageBuilder: (context, _, _) => builder(context),
-        transitionsBuilder: (context, animation, _, child) =>
-            MediaQuery.disableAnimationsOf(context)
-            ? child
-            : ArchivePlaneTransition(animation: animation, child: child),
+  SearchRoute({
+    required WidgetBuilder builder,
+    super.settings,
+    this.classic = false,
+    Duration? classicTransitionDuration,
+    Duration? classicReverseTransitionDuration,
+  }) : super(
+         transitionDuration: classic
+             ? classicTransitionDuration ?? _fallbackTransitionDuration
+             : WenkuMotion.enter,
+         reverseTransitionDuration: classic
+             ? classicReverseTransitionDuration ?? _fallbackTransitionDuration
+             : WenkuMotion.exit,
+         pageBuilder: (context, _, _) => builder(context),
+       );
+
+  /// Pushes search with the transition of the current style. Use this instead
+  /// of constructing [SearchRoute] directly so classic/archive is resolved from
+  /// the caller's live [AppUiScope].
+  static SearchRoute<T> open<T>(
+    BuildContext context, {
+    required WidgetBuilder builder,
+    RouteSettings? settings,
+  }) {
+    if (!AppUiScope.isClassic(context)) {
+      return SearchRoute<T>(builder: builder, settings: settings);
+    }
+    final transition = _classicTransitionBuilder(context);
+    return SearchRoute<T>(
+      builder: builder,
+      settings: settings,
+      classic: true,
+      classicTransitionDuration: transition.transitionDuration,
+      classicReverseTransitionDuration: transition.reverseTransitionDuration,
+    );
+  }
+
+  static const _fallbackTransitionDuration = Duration(milliseconds: 300);
+
+  /// Resolved at push time; an open route never switches geometry mid-flight.
+  final bool classic;
+
+  static PageTransitionsBuilder _classicTransitionBuilder(
+    BuildContext context,
+  ) {
+    final theme = Theme.of(context);
+    return theme.pageTransitionsTheme.builders[theme.platform] ??
+        switch (theme.platform) {
+          TargetPlatform.iOS ||
+          TargetPlatform.macOS => const CupertinoPageTransitionsBuilder(),
+          _ => const ZoomPageTransitionsBuilder(),
+        };
+  }
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (classic) {
+      return _classicTransitionBuilder(context).buildTransitions<T>(
+        this,
+        context,
+        animation,
+        secondaryAnimation,
+        child,
       );
+    }
+    return MediaQuery.disableAnimationsOf(context)
+        ? child
+        : ArchivePlaneTransition(animation: animation, child: child);
+  }
+
+  /// Mirror `MaterialRouteTransitionMixin`: the page underneath animates out
+  /// with the same platform builder instead of snapping behind the new route.
+  @override
+  DelegatedTransitionBuilder? get delegatedTransition =>
+      classic ? _classicDelegatedTransition : null;
+
+  static Widget? _classicDelegatedTransition(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    bool allowSnapshotting,
+    Widget? child,
+  ) {
+    final theme = Theme.of(context);
+    return theme.pageTransitionsTheme
+        .delegatedTransition(theme.platform)
+        ?.call(
+          context,
+          animation,
+          secondaryAnimation,
+          allowSnapshotting,
+          child,
+        );
+  }
 }
 
 class SearchPage extends StatefulWidget {

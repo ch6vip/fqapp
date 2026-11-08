@@ -6,21 +6,26 @@
 // and an ArchiveRouteTitle.
 //
 // fqapp adaptation:
+// - The shell follows the live style: archive keeps this Wenku header, classic
+//   reuses the original canvas AppBar via [ClassicFeaturePage]. Both branches
+//   keep the same child and State.
 // - `DesktopSettingsBody` mounts each category page in a nested Navigator that
 //   holds exactly one route. `ArchiveFeaturePage` always pops, so pressing its
 //   back button there removed the only route and left the right pane blank.
 //   Here the back affordance is rendered only when the nearest Navigator can
 //   actually pop; the embedded (desktop) pane therefore keeps its content and
-//   switches categories from the sidebar instead.
+//   switches categories from the sidebar instead. The classic shell derives the
+//   same check from the nearest Navigator.
 // - `Navigator.maybePop` replaces `Navigator.pop` for the same reason: a stale
 //   tap on a surface that cannot pop is a no-op.
 
 import 'package:flutter/cupertino.dart';
 
+import '../app_ui/app_ui_scope.dart';
 import '../wenku/wenku_ui.dart';
 
 /// [ArchiveFeaturePage] with a back affordance only when there is something
-/// to pop.
+/// to pop, and the classic feature shell for the classic style.
 class SettingsArchivePage extends StatelessWidget {
   const SettingsArchivePage({
     super.key,
@@ -37,6 +42,9 @@ class SettingsArchivePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (AppUiScope.isClassic(context)) {
+      return ClassicFeaturePage(title: title, actions: actions, child: child);
+    }
     final canPop = Navigator.of(context).canPop();
     return WenkuPage(
       header: ArchiveHeaderBar(

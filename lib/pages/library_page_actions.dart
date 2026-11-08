@@ -203,7 +203,10 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
   }
 
   void _openSearch() {
-    Navigator.push(context, SearchRoute(builder: (_) => const SearchPage()));
+    Navigator.push(
+      context,
+      SearchRoute.open<void>(context, builder: (_) => const SearchPage()),
+    );
   }
 
   /// 优先用缓存续读；未命中时保留离线阅读与详情页加载入口。
