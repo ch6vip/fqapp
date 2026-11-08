@@ -190,6 +190,7 @@ void main() {
     // `setUp` creates its write queue in the real zone, and awaiting
     // `select()` from the test's fake-async zone then deadlocks.
     AppThemeStyleStore.instance.value = AppThemeStyle.archive;
+    resetAppUiTestDiagnostics();
     await tester.pumpWidget(const ProviderScope(child: FqApp()));
     await tester.pump();
 
@@ -199,7 +200,6 @@ void main() {
     );
     final audioScope = tester.state(find.byType(AudioPlaybackScope));
     expect(find.byType(AppUiScope), findsOneWidget);
-    resetAppUiTestDiagnostics();
     expect(AppUiScope.of(rootNavigator.context), AppThemeStyle.archive);
 
     await AppThemeStyleStore.instance.select(AppThemeStyle.classic);
@@ -213,8 +213,6 @@ void main() {
     );
     expect(tester.state(find.byType(AudioPlaybackScope)), same(audioScope));
     expect(AppUiScope.of(rootNavigator.context), AppThemeStyle.classic);
-    // The real entry point provides the scope; nothing fell back.
-    expect(AppUiScope.debugFallbackReads, 0);
 
     rootNavigator.push(
       MaterialPageRoute<void>(
@@ -224,6 +222,18 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('pushed:classic:false'), findsOneWidget);
+
+    rootNavigator.pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('pushed:classic:false'), findsNothing);
+    expect(
+      tester.state<NavigatorState>(find.byType(Navigator).first),
+      same(rootNavigator),
+    );
+    // Every live-style read in this scenario went through the production
+    // scope; nothing fell back to theme tokens.
+    expect(AppUiScope.debugFallbackReads, 0);
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
