@@ -565,19 +565,26 @@ void main() {
     ).pop();
     await tester.pumpAndSettle();
 
-    // 设置：进入完整设置网格；操作：直达操作分类。
+    // 设置：经典一屏面板（不是档案分类网格）；操作：同一面板内联操作项。
     await openAction('reader-settings');
     expect(
-      find.byKey(const ValueKey('reader-settings-scroll-grid')),
+      find.byKey(const ValueKey('reader-appearance-scroll')),
       findsOneWidget,
     );
-    await closePanel('reader-settings-scroll-grid');
+    expect(find.text('阅读设置'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('reader-settings-category-grid')),
+      findsNothing,
+    );
+    await closePanel('reader-appearance-scroll');
     await openAction('reader-operations-entry');
     expect(
-      find.byKey(const ValueKey('reader-settings-scroll-operations')),
+      find.byKey(const ValueKey('reader-appearance-scroll')),
       findsOneWidget,
     );
-    await closePanel('reader-settings-scroll-operations');
+    expect(find.text('点击区域'), findsOneWidget);
+    expect(find.text('音量键翻页'), findsOneWidget);
+    await closePanel('reader-appearance-scroll');
 
     // 书签：面板能加书签，记录落在注入的 store 且锚在当前章。
     await openAction('reader-bookmarks-entry');
