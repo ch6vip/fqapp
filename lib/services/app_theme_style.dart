@@ -13,7 +13,7 @@ enum AppThemeStyle {
   };
 
   String get description => switch (this) {
-    classic => '柔和圆角 · 简洁标题 · 紧凑排版',
+    classic => '老版界面 · 封面书架 · 阅读统计',
     archive => '纸张底色 · 档案编号 · 留白排版',
   };
 

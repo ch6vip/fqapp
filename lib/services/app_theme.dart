@@ -243,7 +243,7 @@ class AppTheme {
     final canvas = oled
         ? Colors.black
         : tokens.isClassic
-        ? (isDark ? const Color(0xFF171719) : const Color(0xFFF7F6F2))
+        ? (isDark ? const Color(0xFF151517) : const Color(0xFFF6F6F6))
         : (isDark ? const Color(0xFF191919) : const Color(0xFFF4F3EF));
     final surface = oled
         ? const Color(0xFF0C0C0E)

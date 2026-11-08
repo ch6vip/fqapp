@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../models/home_cell.dart';
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
+import 'classic_home_rank_rail.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
 import 'home_rank_shelf.dart';
@@ -162,6 +164,18 @@ class _HomeRankCellState extends State<HomeRankCell> {
     final palette = HomePalette.of(context);
     final names = homeRankNames(cell);
     final title = cell.name.isEmpty ? '排行榜' : cell.name;
+    if (AppStyleTokens.of(context).isClassic) {
+      return ClassicHomeRankRail(
+        title: title,
+        names: names,
+        selectedIndex: _index,
+        books: books,
+        loading: _loading,
+        onSelect: _select,
+        onOpen: widget.onOpen,
+        onMore: widget.onMore,
+      );
+    }
     final stepped = palette.eink || MediaQuery.disableAnimationsOf(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
