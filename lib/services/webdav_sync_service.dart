@@ -173,9 +173,7 @@ class WebDavSyncService with WidgetsBindingObserver {
             });
           }
         }
-        final merged = remoteDoc == null
-            ? localDoc
-            : localDoc.merge(remoteDoc);
+        final merged = remoteDoc == null ? localDoc : localDoc.merge(remoteDoc);
         if (!await client.write(merged.encode(), remote.etag)) continue;
         if (!current()) return;
 
@@ -228,7 +226,7 @@ class WebDavSyncService with WidgetsBindingObserver {
         }
         if (current()) {
           final stamp = DateTime.now().toLocal().toString().split('.').first;
-          status.value = '同步完成 · $stamp';
+          status.value = '同步完成 · 书架 ${merged.backup.shelf.length} 本 · $stamp';
         }
         return;
       }
@@ -252,7 +250,9 @@ class WebDavSyncService with WidgetsBindingObserver {
     if (encoded == null) return null;
     try {
       final payload =
-          jsonDecode(utf8.decode(GZipDecoder().decodeBytes(base64Decode(encoded))))
+          jsonDecode(
+                utf8.decode(GZipDecoder().decodeBytes(base64Decode(encoded))),
+              )
               as Map;
       payload.remove('createdAt');
       return sha256.convert(utf8.encode(jsonEncode(payload))).toString();

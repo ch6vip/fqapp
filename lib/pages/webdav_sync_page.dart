@@ -30,7 +30,7 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
     _directory = TextEditingController(text: config?.directory);
     _username = TextEditingController(text: config?.username);
     _password = TextEditingController(text: config?.password);
-    _enabled = config?.enabled ?? false;
+    _enabled = config?.enabled ?? true;
   }
 
   @override
@@ -56,8 +56,12 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
           enabled: _enabled,
         ),
       );
-      if (sync) await _service.sync();
-      if (mounted) setState(() => _message = sync ? '同步完成' : '设置已安全保存');
+      if (sync || _enabled) await _service.sync();
+      if (mounted) {
+        setState(
+          () => _message = sync || _enabled ? _service.status.value : '设置已安全保存',
+        );
+      }
     } catch (error) {
       if (mounted) {
         setState(
