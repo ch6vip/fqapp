@@ -1,0 +1,643 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_ce/hive.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:fqapp/models/author_profile.dart';
+import 'package:fqapp/models/book_comment.dart';
+import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/pages/author_page.dart';
+import 'package:fqapp/pages/detail_page.dart';
+import 'package:fqapp/pages/shuqi_detail_page.dart';
+import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/app_theme_style.dart';
+import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
+
+import 'support/fakes.dart';
+
+/// 经典 ⇄ 档案 切换后的内容连续性 (PR #292 审查 P1/P2).
+///
+/// The two layouts are different widget trees: the ScrollPosition is torn down
+/// on every switch. These tests scroll, switch one way and back, and assert the
+/// page comes back to the same *content* (section or row), without re-requesting
+/// data or replacing the page State / route.
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory hiveDirectory;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    hiveDirectory = await Directory.systemTemp.createTemp('fqapp-switch-');
+    Hive.init(hiveDirectory.path);
+    await ShelfStore.instance.init();
+  });
+
+  tearDown(() async {
+    await Hive.close();
+    if (hiveDirectory.existsSync()) {
+      await hiveDirectory.delete(recursive: true);
+    }
+  });
+
+  group('novel scroll continuity', () {
+    testWidgets('经典 keeps the visible section across 档案 and back', (
+      tester,
+    ) async {
+      final requests = <String>[];
+      final observer = _RouteObserver();
+      final store = await _pumpDetail(
+        tester,
+        requests: requests,
+        observer: observer,
+        size: const Size(360, 400),
+      );
+      addTearDown(store.dispose);
+
+      // Park the 目录 section exactly at the top: the section exists in both
+      // layouts, so the anchor is the content the user is looking at.
+      final reviews = find.text('目录');
+      expect(reviews, findsOneWidget);
+      await _scrollToTop(tester, reviews, 'detail_scroll');
+      final classicOffset = _offset(tester, 'detail_scroll');
+      expect(classicOffset, greaterThan(100));
+      expect(_viewportDy(tester, reviews, 'detail_scroll').abs(), lessThan(4));
+      final state = tester.state(find.byType(DetailPage));
+      final route = observer.lastRoute;
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(find.byType(WenkuPage), findsOneWidget);
+      // Same section, still at the top edge — not the top of the page.
+      expect(_offset(tester, 'detail_scroll'), greaterThan(100));
+      expect(
+        _viewportDy(tester, reviews, 'detail_scroll').abs(),
+        lessThan(20),
+        reason: '档案 must land on the same section, not at offset 0',
+      );
+      expect(requests, ['小说:book', '小说:book']);
+      expect(identical(tester.state(find.byType(DetailPage)), state), isTrue);
+      expect(identical(observer.lastRoute, route), isTrue);
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(find.byType(WenkuPage), findsNothing);
+      expect(_offset(tester, 'detail_scroll'), greaterThan(100));
+      expect(
+        _viewportDy(tester, reviews, 'detail_scroll').abs(),
+        lessThan(20),
+        reason: 'returning to 经典 must keep the same section in view',
+      );
+      expect(requests, ['小说:book', '小说:book']);
+      expect(identical(tester.state(find.byType(DetailPage)), state), isTrue);
+    });
+
+    testWidgets('deep inside 档案 catalogue 经典 falls back to the 目录 preview', (
+      tester,
+    ) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.archive);
+      await _size(tester);
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: DetailPage(
+            item: _book,
+            readerStore: MemoryReaderStore(),
+            chapterCache: MemoryChapterCache(),
+            detailLoader: (id, {String tab = '小说'}) async => {
+              'data': {'abstract': _longSummary},
+            },
+            directoryLoader: (id, {String tab = '小说'}) async => [
+              _chapters(60, volumeNames: false),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Scroll far into the inline catalogue.
+      final deep = find.byKey(
+        const ValueKey('detail-directory-entry-40'),
+        skipOffstage: false,
+      );
+      for (var i = 0; i < 40 && deep.evaluate().isEmpty; i++) {
+        await tester.drag(
+          find.byKey(const Key('detail_scroll')),
+          const Offset(0, -300),
+        );
+        await tester.pump();
+      }
+      expect(deep, findsWidgets);
+      expect(_offset(tester, 'detail_scroll'), greaterThan(1500));
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // The classic page only previews current ±1, so the fallback is the whole
+      // 目录 section (the old preview heading), not a fabricated row.
+      final heading = find.text('目录');
+      expect(heading, findsOneWidget);
+      final dy = _viewportDy(tester, heading, 'detail_scroll');
+      expect(dy, greaterThanOrEqualTo(0));
+      // The classic body is short: it scrolls as far as the layout allows, and
+      // the 目录 preview stays visible instead of silently restarting at the hero.
+      expect(dy, lessThan(450));
+      expect(_offset(tester, 'detail_scroll'), greaterThan(0));
+      expect(find.byKey(const Key('detail_preview_chapters')), findsOneWidget);
+    });
+
+    testWidgets('经典 expands the synopsis and keeps it open both ways', (
+      tester,
+    ) async {
+      final store = await _pumpDetail(tester);
+      addTearDown(store.dispose);
+
+      final toggle = find.byKey(const Key('detail_description_toggle'));
+      expect(toggle, findsOneWidget);
+      await tester.ensureVisible(toggle);
+      await tester.pump();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('收起'), findsOneWidget);
+      expect(_synopsisMaxLines(tester), isNull);
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(find.text('收起'), findsOneWidget);
+      expect(_synopsisMaxLines(tester), isNull);
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(find.text('收起'), findsOneWidget);
+      expect(_synopsisMaxLines(tester), isNull);
+
+      // The very same value drives both renderers: folding in one folds both.
+      await tester.tap(find.byKey(const Key('detail_description_toggle')));
+      await tester.pumpAndSettle();
+      expect(find.text('展开全部'), findsOneWidget);
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(find.text('展开全部'), findsOneWidget);
+      expect(_synopsisMaxLines(tester), 3);
+    });
+
+    testWidgets('档案 expands the synopsis and keeps it open in 经典', (
+      tester,
+    ) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.archive);
+      await _size(tester);
+      await tester.pumpWidget(_host(store: store, home: _detail(_longSummary)));
+      await tester.pumpAndSettle();
+
+      final toggle = find.byKey(const Key('detail_description_toggle'));
+      await tester.ensureVisible(toggle);
+      await tester.pump();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('收起'), findsOneWidget);
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(find.text('收起'), findsOneWidget);
+      expect(_synopsisMaxLines(tester), isNull);
+    });
+
+    testWidgets('a changed synopsis collapses again', (tester) async {
+      var calls = 0;
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester);
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: DetailPage(
+            item: _book,
+            readerStore: MemoryReaderStore(),
+            chapterCache: MemoryChapterCache(),
+            detailLoader: (id, {String tab = '小说'}) async {
+              calls++;
+              return {
+                'data': {'abstract': calls == 1 ? _longSummary : '另一本书的简介。'},
+              };
+            },
+            directoryLoader: (id, {String tab = '小说'}) async => [_chapters(3)],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final toggle = find.byKey(const Key('detail_description_toggle'));
+      await tester.ensureVisible(toggle);
+      await tester.pump();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('收起'), findsOneWidget);
+
+      // Pull to refresh: same book, different payload → collapsed again.
+      await tester.drag(
+        find.byKey(const Key('detail_scroll')),
+        const Offset(0, 2000),
+      );
+      await tester.pumpAndSettle();
+      await tester.fling(
+        find.byKey(const Key('detail_scroll')),
+        const Offset(0, 320),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(calls, 2);
+      expect(find.text('另一本书的简介。'), findsOneWidget);
+      expect(find.text('收起'), findsNothing);
+    });
+  });
+
+  group('书旗 scroll continuity', () {
+    testWidgets('keeps the same chapter across 经典 ⇄ 档案', (tester) async {
+      final calls = <String>[];
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester);
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: _shuqiPage(calls: calls),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(
+        find.byKey(const Key('shuqi-detail-scroll')),
+        const Offset(0, -600),
+      );
+      await tester.pumpAndSettle();
+      expect(_offset(tester, 'shuqi-detail-scroll'), greaterThan(300));
+      final before = _topShuqiRow(tester);
+      expect(before, isNotNull);
+      final state = tester.state(find.byType(ShuqiDetailPage));
+      final chapter = before!.index;
+      final rowDy = _rowDy(tester, chapter);
+      expect(rowDy, isNotNull);
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(find.byType(WenkuPage), findsOneWidget);
+      // Same chapter id, same place in the viewport — not the top of the list.
+      expect(_rowDy(tester, chapter), isNotNull);
+      expect((_rowDy(tester, chapter)! - rowDy!).abs(), lessThan(30));
+      expect(_offset(tester, 'shuqi-detail-scroll'), greaterThan(300));
+      expect(calls, ['book:34078', 'toc:34078']);
+      expect(
+        identical(tester.state(find.byType(ShuqiDetailPage)), state),
+        isTrue,
+      );
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(_rowDy(tester, chapter), isNotNull);
+      expect((_rowDy(tester, chapter)! - rowDy).abs(), lessThan(30));
+      expect(calls, ['book:34078', 'toc:34078']);
+      expect(
+        identical(tester.state(find.byType(ShuqiDetailPage)), state),
+        isTrue,
+      );
+    });
+  });
+
+  group('author scroll continuity', () {
+    testWidgets('keeps the same works in view across 经典 ⇄ 档案', (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester, const Size(400, 600));
+      var calls = 0;
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: AuthorPage(
+            authorId: _author.id,
+            fallbackName: _author.name,
+            loader: (_) async {
+              calls++;
+              return _author;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(
+        find.byKey(const Key('author_scroll')),
+        const Offset(0, -420),
+      );
+      await tester.pumpAndSettle();
+      expect(_offset(tester, 'author_scroll'), greaterThan(200));
+      final before = _topAuthorWork(tester);
+      expect(before, isNotNull);
+      final state = tester.state(find.byType(AuthorPage));
+      final work = before!.id;
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      // The anchor keeps the work it captured at the same viewport depth; the
+      // neighbouring works shift because 经典 is a 3-column grid and 档案 a list,
+      // so the check is "that work is still in view", not "same pixel line".
+      expect(_offset(tester, 'author_scroll'), greaterThan(200));
+      final archived = _workDy(tester, work);
+      expect(archived, isNotNull);
+      expect((archived! - before.dy).abs(), lessThan(2));
+      expect(calls, 1);
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(_offset(tester, 'author_scroll'), greaterThan(200));
+      // The work that covered the top edge in 档案 is the anchor there; it is
+      // placed back at the same depth in the grid, i.e. still on screen.
+      final back = _workDy(tester, work);
+      expect(back, isNotNull);
+      expect(back!, greaterThan(-1));
+      expect(back, lessThan(300));
+      expect(calls, 1);
+      expect(identical(tester.state(find.byType(AuthorPage)), state), isTrue);
+    });
+  });
+}
+
+const _longSummary =
+    '苏狂身穿玄幻世界，激活无敌宗门系统，开局就召唤出了大帝境强者！\n'
+    '只要招收天才进宗，还能继续抽取各类强者！\n'
+    '而且弟子的修为精进，也能百倍返还给苏狂！\n'
+    '于是，一段关于宗门、成长与奇遇的故事，就这样开始。\n'
+    '多年以后，当苏狂坐在万古之巅回望，才发现最初那座破败的山门，'
+    '才是所有传说真正开始的地方。';
+
+Widget _host({
+  required AppThemeStyleStore store,
+  required Widget home,
+  List<NavigatorObserver> observers = const [],
+}) => ValueListenableBuilder<AppThemeStyle>(
+  valueListenable: store,
+  builder: (context, style, _) => MaterialApp(
+    navigatorObservers: observers,
+    theme: AppTheme.createTheme(Brightness.light, style: style),
+    builder: (context, child) =>
+        AppUiScope(store: store, child: child ?? const SizedBox.shrink()),
+    home: home,
+  ),
+);
+
+Future<void> _size(
+  WidgetTester tester, [
+  Size size = const Size(393, 600),
+]) async {
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+}
+
+Widget _detail(String summary) => DetailPage(
+  item: _book,
+  readerStore: MemoryReaderStore(),
+  chapterCache: MemoryChapterCache(),
+  detailLoader: (id, {String tab = '小说'}) async => {
+    'data': {'abstract': summary},
+  },
+  directoryLoader: (id, {String tab = '小说'}) async => [_chapters(30)],
+);
+
+Future<AppThemeStyleStore> _pumpDetail(
+  WidgetTester tester, {
+  List<String>? requests,
+  _RouteObserver? observer,
+  Size size = const Size(393, 600),
+}) async {
+  final store = AppThemeStyleStore();
+  await store.select(AppThemeStyle.classic);
+  await _size(tester, size);
+  await tester.pumpWidget(
+    _host(
+      store: store,
+      observers: observer == null ? const [] : [observer],
+      home: DetailPage(
+        item: _book,
+        readerStore: MemoryReaderStore(),
+        chapterCache: MemoryChapterCache(),
+        extrasLoader: (_) async => const DetailExtras(
+          comments: BookCommentPage(
+            comments: [
+              BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲'),
+              BookComment(id: 'c2', text: '强烈推荐', userName: '读者乙'),
+              BookComment(id: 'c3', text: '一口气读完', userName: '读者丙'),
+            ],
+            totalCount: 3,
+          ),
+        ),
+        detailLoader: (id, {String tab = '小说'}) async {
+          requests?.add('$tab:$id');
+          return {
+            'data': {'abstract': _longSummary, 'creation_status': '1'},
+          };
+        },
+        directoryLoader: (id, {String tab = '小说'}) async {
+          requests?.add('$tab:$id');
+          return [_chapters(30)];
+        },
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return store;
+}
+
+/// Scrolls [scrollKey] so [target] starts exactly at the viewport's top edge.
+///
+/// Uses the page's own controller instead of a drag: a gesture smaller than
+/// the touch slop would not move the list at all.
+Future<void> _scrollToTop(
+  WidgetTester tester,
+  Finder target,
+  String scrollKey,
+) async {
+  final view = find.byKey(Key(scrollKey));
+  final controller = tester.widget<CustomScrollView>(view).controller!;
+  final dy = _viewportDy(tester, target, scrollKey);
+  final position = controller.position;
+  controller.jumpTo(
+    (controller.offset + dy)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble(),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// Position of one author work relative to the page viewport's top edge.
+double? _workDy(WidgetTester tester, String id) {
+  final f = find.byKey(ValueKey('author_work_$id'), skipOffstage: false);
+  if (f.evaluate().isEmpty) return null;
+  return _viewportDy(tester, f, 'author_scroll');
+}
+
+/// [target]'s top edge relative to the scroll view's top edge.
+double _viewportDy(WidgetTester tester, Finder target, String scrollKey) =>
+    tester.getTopLeft(target).dy -
+    tester.getTopLeft(find.byKey(Key(scrollKey))).dy;
+
+double _offset(WidgetTester tester, String scrollKey) {
+  final view = tester.widget<CustomScrollView>(find.byKey(Key(scrollKey)));
+  final controller = view.controller;
+  expect(controller, isNotNull, reason: '$scrollKey must own a controller');
+  return controller!.offset;
+}
+
+int? _synopsisMaxLines(WidgetTester tester) {
+  final text = tester.widget<Text>(
+    find.byKey(const Key('detail_description_text')),
+  );
+  return text.maxLines;
+}
+
+/// The first chapter row whose top edge is inside the viewport.
+({int index, double dy})? _topShuqiRow(WidgetTester tester) {
+  ({int index, double dy})? best;
+  for (var i = 0; i < 60; i++) {
+    final finder = find.byKey(
+      ValueKey('shuqi-chapter-$i'),
+      skipOffstage: false,
+    );
+    if (finder.evaluate().isEmpty) continue;
+    final dy = _viewportDy(tester, finder, 'shuqi-detail-scroll');
+    if (dy < 0) continue;
+    if (best == null || dy < best.dy) best = (index: i, dy: dy);
+  }
+  return best;
+}
+
+/// Position of one 书旗 chapter row relative to the scroll viewport's top edge,
+/// or null when the row is not built. The layout branches put a Material AppBar
+/// above one viewport and a frosted header over the other, so only the
+/// viewport-relative position is comparable.
+double? _rowDy(WidgetTester tester, int index) {
+  final finder = find.byKey(
+    ValueKey('shuqi-chapter-$index'),
+    skipOffstage: false,
+  );
+  if (finder.evaluate().isEmpty) return null;
+  return _viewportDy(tester, finder, 'shuqi-detail-scroll');
+}
+
+/// The first work card/row whose top edge is inside the viewport.
+({String id, double dy})? _topAuthorWork(WidgetTester tester) {
+  ({String id, double dy})? best;
+  for (final work in _author.works) {
+    final finder = find.byKey(
+      ValueKey('author_work_${work.id}'),
+      skipOffstage: false,
+    );
+    if (finder.evaluate().isEmpty) continue;
+    final dy = _viewportDy(tester, finder, 'author_scroll');
+    if (dy < 0) continue;
+    if (best == null || dy < best.dy) best = (id: work.id, dy: dy);
+  }
+  return best;
+}
+
+Widget _shuqiPage({List<String>? calls}) => ShuqiDetailPage(
+  bookId: '34078',
+  bookLoader: (_) async {
+    calls?.add('book:34078');
+    return _shuqiBook;
+  },
+  tocLoader: (_) async {
+    calls?.add('toc:34078');
+    return _shuqiToc(40);
+  },
+);
+
+List<Chapter> _chapters(int count, {bool volumeNames = true}) => [
+  for (var i = 0; i < count; i++)
+    Chapter(
+      itemId: 'chapter-${i + 1}',
+      title: '第${i + 1}章 故事的另一种可能',
+      volumeName: !volumeNames
+          ? ''
+          : i < count / 2
+          ? '第一卷 · 初见'
+          : '终卷 · 星河',
+    ),
+];
+
+const _shuqiBook = {
+  'data': {
+    'bookId': '34078',
+    'name': '凡人修仙传',
+    'author': '忘语',
+    'intro': '一个普通山村小子',
+    'kind': '玄幻',
+    'coverUrl': '',
+    'wordCount': '2451万字',
+    'status': '完结',
+  },
+};
+
+Map<String, dynamic> _shuqiToc(int count) => {
+  'data': {
+    'path': 'h5',
+    'total': count,
+    'chapters': [
+      for (var i = 0; i < count; i++)
+        {'chapterId': 'c$i', 'title': '第 ${i + 1} 章 山边小村', 'isVip': false},
+    ],
+  },
+};
+
+final _book = MediaItem(
+  id: 'book',
+  title: '开局废弃宗门，我召唤了大帝长老',
+  cover: '',
+  author: '香瓜贼甜',
+  badge: '玄幻脑洞',
+  ep: '',
+  kind: 'book',
+);
+
+AuthorProfile get _author => AuthorProfile(
+  id: '1988336383174046',
+  name: '七彩虹桥的吕师傅',
+  description: '人生是旷野呀朋友！',
+  level: '作家Lv.5',
+  followerCount: 20905,
+  workCount: 12,
+  works: [
+    for (var i = 0; i < 12; i++)
+      AuthorWork(
+        id: 'work-$i',
+        title: '作品 ${i + 1} 号：一段很长很长的书名用来占位',
+        abstract: '【轻松校园】',
+        category: '都市脑洞',
+        creationStatus: 1,
+        wordNumber: 115815,
+      ),
+  ],
+);
+
+class _RouteObserver extends NavigatorObserver {
+  Route<dynamic>? lastRoute;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    lastRoute = route;
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (newRoute != null) lastRoute = newRoute;
+  }
+}
