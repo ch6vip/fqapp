@@ -474,10 +474,15 @@ class _SearchPageState extends State<SearchPage> {
       final viewport = _viewportOf(box);
       if (viewport == null) continue;
       final top = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
-      if (top + box.size.height <= 0 || top >= viewportHeight) continue;
+      // 档案主题的玻璃页头盖在视口上：只与视口相交、但完全落在页头下面
+      // 的上一行不算“可见”，否则恢复后会跳过真正露出的那条作品。
+      final visibleTop = _visibleResultTop(viewport);
+      if (top + box.size.height <= visibleTop || top >= viewportHeight) {
+        continue;
+      }
       return _SearchResultAnchor(
         identity: _resultIdentity(items[index]),
-        distanceAboveVisibleTop: _visibleResultTop(viewport) - top,
+        distanceAboveVisibleTop: visibleTop - top,
       );
     }
     return null;
