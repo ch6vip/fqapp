@@ -67,7 +67,21 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
   }
 
   Widget _classicEmptyState() {
-    if (_tab == 0 && _shelf.isEmpty) {
+    final category = _tab == 0 ? _category : ShelfCategory.all;
+    // A selected group is empty only when no shelf entry belongs to it at all.
+    // Other active filters must keep the generic "没有符合筛选" copy: the
+    // group itself still has books, they are just hidden by source/reading.
+    final groupEmpty =
+        _tab == 0 &&
+        category != ShelfCategory.all &&
+        !_shelf.any(
+          (entry) => ShelfGroupStore.instance.matchesKey(
+            entry.contentKey,
+            entry.author,
+            category,
+          ),
+        );
+    if (_tab == 0 && _shelf.isEmpty && !groupEmpty) {
       return _ClassicEmptyNotice(
         icon: LucideIcons.book_open,
         title: '书架暂无书籍',
@@ -94,15 +108,20 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
       );
     }
     final filtered = _classicHasFilters;
+    final groupEmptyTitle = groupEmpty
+        ? '「${ShelfGroupStore.instance.nameOf(category)}」暂无书籍'
+        : null;
     return _ClassicEmptyNotice(
       icon: LucideIcons.search_x,
-      title: !filtered
-          ? '未找到相关内容'
-          : switch (_tab) {
-              0 => '没有符合筛选的书籍',
-              2 => '没有符合筛选的收藏',
-              _ => '没有符合筛选的记录',
-            },
+      title:
+          groupEmptyTitle ??
+          (!filtered
+              ? '未找到相关内容'
+              : switch (_tab) {
+                  0 => '没有符合筛选的书籍',
+                  2 => '没有符合筛选的收藏',
+                  _ => '没有符合筛选的记录',
+                }),
       actionLabel: filtered ? '清除筛选' : null,
       actionKey: const Key('shelf-clear-filters'),
       onAction: _clearFilters,
