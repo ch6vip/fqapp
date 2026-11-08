@@ -15,6 +15,7 @@ import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
+import 'package:fqapp/widgets/app_ui/content_anchor.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
@@ -392,41 +393,200 @@ void main() {
       final controller = tester
           .widget<CustomScrollView>(find.byKey(const Key('author_scroll')))
           .controller!;
-      controller.jumpTo(4000);
+      controller.jumpTo(4100);
       await tester.pumpAndSettle();
       final before = _topAuthorWork(tester);
       expect(before, isNotNull);
       final index = _author.works.indexWhere((work) => work.id == before!.id);
       expect(index, greaterThan(30), reason: 'must be a deep work');
       final state = tester.state(find.byType(AuthorPage));
+      final anchor = _capturedAnchor(
+        tester,
+        find.byType(AuthorPage),
+        'author_scroll',
+        _authorIndexOf,
+      );
+      final classicViewport = _viewportRect(tester, 'author_scroll');
+      final classicRect = _anchorRect(tester, anchor);
+      expect(classicRect, isNotNull);
+      expect(classicRect!.bottom, greaterThan(classicViewport.top));
+      final classicTop = classicRect.top - classicViewport.top;
 
       await store.select(AppThemeStyle.archive);
       await tester.pumpAndSettle();
       // Grid (3 columns) → list: the row is a different height, but the same
-      // work must be built and stay within a grid row of its old place.
-      final archived = _workDy(tester, before!.id);
-      expect(archived, isNotNull, reason: 'the work row must be built');
-      expect((archived! - before.dy).abs(), lessThan(400));
+      // work is built and still intersects the viewport.
+      final archivedViewport = _viewportRect(tester, 'author_scroll');
+      final archivedRect = _anchorRect(tester, anchor);
+      expect(archivedRect, isNotNull, reason: 'the work row must be built');
+      expect(
+        archivedRect!.bottom,
+        greaterThan(archivedViewport.top),
+        reason: 'the captured work must stay on screen',
+      );
+      expect(archivedRect.top, lessThan(archivedViewport.bottom));
       expect(_offset(tester, 'author_scroll'), greaterThan(2000));
       expect(calls, 1);
       expect(identical(tester.state(find.byType(AuthorPage)), state), isTrue);
 
       await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
-      // Back in the grid the anchored work sits at its old depth again, and the
-      // top of the viewport is the same grid row.
-      final back = _workDy(tester, before.id);
-      expect(back, isNotNull, reason: 'the work must still be built');
-      expect((back! - before.dy).abs(), lessThan(80));
-      final backTop = _topAuthorWork(tester);
-      expect(backTop, isNotNull);
-      final backIndex = _author.works.indexWhere(
-        (work) => work.id == backTop!.id,
+      // Back in the grid the anchored work sits at its old depth again (the
+      // depth is converted by row height, so the round trip is stable).
+      final backViewport = _viewportRect(tester, 'author_scroll');
+      final backRect = _anchorRect(tester, anchor);
+      expect(backRect, isNotNull);
+      expect(backRect!.bottom, greaterThan(backViewport.top));
+      expect(
+        (backRect.top - backViewport.top - classicTop).abs(),
+        lessThan(80),
+        reason: 'the round trip must come back to the same depth',
       );
-      expect((backIndex - index).abs(), lessThanOrEqualTo(3));
       expect(_offset(tester, 'author_scroll'), greaterThan(2000));
       expect(calls, 1);
       expect(identical(tester.state(find.byType(AuthorPage)), state), isTrue);
+    });
+  });
+
+  group('row height changes', () {
+    for (final fraction in [0.55, 0.88]) {
+      testWidgets('作者 grid ${(fraction * 100).round()}% 行内深度：锚点行仍在视口内并可往返', (
+        tester,
+      ) async {
+        final store = AppThemeStyleStore();
+        addTearDown(store.dispose);
+        await store.select(AppThemeStyle.classic);
+        await _size(tester, const Size(400, 600));
+        await tester.pumpWidget(
+          _host(
+            store: store,
+            home: AuthorPage(
+              authorId: _author.id,
+              fallbackName: _author.name,
+              loader: (_) async => _author,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Grid geometry at the top: pitch = card extent + row spacing.
+        final viewport = _viewportRect(tester, 'author_scroll');
+        final cardExtent = _anchorRect(tester, 'works/work:work-0')!.height;
+        final pitch = _workDy(tester, 'work-3')! - _workDy(tester, 'work-0')!;
+        final controller = tester
+            .widget<CustomScrollView>(find.byKey(const Key('author_scroll')))
+            .controller!;
+        controller.jumpTo(pitch * 16 + cardExtent * fraction);
+        await tester.pumpAndSettle();
+
+        final anchor = _capturedAnchor(
+          tester,
+          find.byType(AuthorPage),
+          'author_scroll',
+          _authorIndexOf,
+        );
+        final classicRect = _anchorRect(tester, anchor);
+        expect(classicRect, isNotNull);
+        final depth = viewport.top - classicRect!.top;
+        expect(depth, greaterThan(0), reason: 'inside a row, not the gap');
+        expect(classicRect.bottom, greaterThan(viewport.top));
+
+        await store.select(AppThemeStyle.archive);
+        await tester.pumpAndSettle();
+        final archivedViewport = _viewportRect(tester, 'author_scroll');
+        final archivedRect = _anchorRect(tester, anchor);
+        expect(archivedRect, isNotNull, reason: 'the row must be built');
+        // The list row is ~109dp tall, the grid card ~231dp: the same pixel
+        // depth would park the row above the viewport.
+        expect(
+          archivedRect!.bottom,
+          greaterThan(archivedViewport.top),
+          reason: 'the captured row must still intersect the viewport',
+        );
+        expect(archivedRect.top, lessThan(archivedViewport.bottom));
+        final archivedDepth = archivedViewport.top - archivedRect.top;
+        expect(archivedDepth, lessThan(depth));
+
+        await store.select(AppThemeStyle.classic);
+        await tester.pumpAndSettle();
+        final backViewport = _viewportRect(tester, 'author_scroll');
+        final backRect = _anchorRect(tester, anchor);
+        expect(backRect, isNotNull);
+        expect(backRect!.bottom, greaterThan(backViewport.top));
+        expect(
+          (backRect.top - backViewport.top - (classicRect.top - viewport.top))
+              .abs(),
+          lessThan(80),
+          reason: 'the round trip must come back to the same depth',
+        );
+      });
+    }
+
+    testWidgets('书旗 高行→矮行：archive 行内深度不把章节推离视口', (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.archive);
+      await _size(tester);
+      await tester.pumpWidget(
+        _host(store: store, home: _shuqiPage(chapters: 400)),
+      );
+      await tester.pumpAndSettle();
+
+      // Classic rows are shorter than the archive ones. Land near the bottom of
+      // an archive row so the copied pixel depth would clear the classic row.
+      final row0Top = _rowDy(tester, 0)!;
+      final archiveExtent = _anchorRect(tester, 'directory/chapter:c0')!.height;
+      final pitch = _rowDy(tester, 1)! - _rowDy(tester, 0)!;
+      expect(pitch, greaterThan(40));
+      expect(archiveExtent, greaterThan(40));
+      final controller = tester
+          .widget<CustomScrollView>(
+            find.byKey(const Key('shuqi-detail-scroll')),
+          )
+          .controller!;
+      controller.jumpTo(row0Top + pitch * 20 + archiveExtent - 4);
+      await tester.pumpAndSettle();
+
+      final anchor = _capturedAnchor(
+        tester,
+        find.byType(ShuqiDetailPage),
+        'shuqi-detail-scroll',
+        _shuqiIndexOf,
+      );
+      final archiveViewport = _viewportRect(tester, 'shuqi-detail-scroll');
+      final archiveRect = _anchorRect(tester, anchor);
+      expect(archiveRect, isNotNull);
+      final depth = archiveViewport.top - archiveRect!.top;
+      expect(depth, closeTo(archiveExtent - 4, 1));
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      final classicViewport = _viewportRect(tester, 'shuqi-detail-scroll');
+      final classicRect = _anchorRect(tester, anchor);
+      expect(classicRect, isNotNull);
+      // Precondition for the bug: the copied pixels would clear the shorter row.
+      expect(depth, greaterThan(classicRect!.height));
+      expect(
+        classicRect.bottom,
+        greaterThan(classicViewport.top),
+        reason: 'the chapter row must stay on screen',
+      );
+      expect(classicRect.top, lessThan(classicViewport.bottom));
+
+      // And the round trip returns to (about) the same in-row depth.
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      final backViewport = _viewportRect(tester, 'shuqi-detail-scroll');
+      final backRect = _anchorRect(tester, anchor);
+      expect(backRect, isNotNull);
+      expect(backRect!.bottom, greaterThan(backViewport.top));
+      expect(
+        (backRect.top -
+                backViewport.top -
+                (archiveRect.top - archiveViewport.top))
+            .abs(),
+        lessThan(80),
+      );
     });
   });
 
@@ -594,6 +754,51 @@ Future<void> _scrollToTop(
         .toDouble(),
   );
   await tester.pumpAndSettle();
+}
+
+/// The anchor the page itself would capture at the current offset, using the
+/// same helper and the same data-index resolver as the page.
+String _capturedAnchor(
+  WidgetTester tester,
+  Finder page,
+  String scrollKey,
+  int? Function(String anchorId) indexOf,
+) {
+  final controller = tester
+      .widget<CustomScrollView>(find.byKey(Key(scrollKey)))
+      .controller!;
+  final anchor = captureContentAnchor(
+    tester.element(page),
+    controller.position,
+    indexOf: indexOf,
+  );
+  expect(anchor, isNotNull);
+  return anchor!.id;
+}
+
+/// Global rect of an anchor's row, or null when the row is not mounted.
+Rect? _anchorRect(WidgetTester tester, String anchorId) {
+  final finder = find.byKey(contentAnchorKey(anchorId), skipOffstage: false);
+  if (finder.evaluate().isEmpty) return null;
+  return tester.getRect(finder);
+}
+
+Rect _viewportRect(WidgetTester tester, String scrollKey) =>
+    tester.getRect(find.byKey(Key(scrollKey)));
+
+int? _shuqiIndexOf(String anchorId) {
+  const prefix = 'directory/chapter:';
+  if (!anchorId.startsWith(prefix)) return null;
+  final id = anchorId.substring(prefix.length);
+  return int.tryParse(id.replaceFirst('c', ''));
+}
+
+int? _authorIndexOf(String anchorId) {
+  const prefix = 'works/work:';
+  if (!anchorId.startsWith(prefix)) return null;
+  final id = anchorId.substring(prefix.length);
+  final index = _author.works.indexWhere((work) => work.id == id);
+  return index < 0 ? null : index;
 }
 
 /// Position of one author work relative to the page viewport's top edge.
