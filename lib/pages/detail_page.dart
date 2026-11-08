@@ -14,6 +14,7 @@ import '../models/media_description.dart';
 import '../models/series_detail.dart';
 import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
+import '../services/app_theme_style.dart';
 import '../services/audio_history.dart';
 import '../services/book_open_preferences.dart';
 import '../services/catalogue_order_preferences.dart';
@@ -187,7 +188,18 @@ class _DetailPageState extends State<DetailPage> {
   /// widget trees, so the ScrollPosition is recreated and would otherwise
   /// restart at the top. The index resolver lets a row that the incoming
   /// layout has not built yet be located instead of collapsed to its section.
-  late final _anchors = ContentAnchorKeeper(_scroll, indexOf: _anchorIndexOf);
+  late final _anchors = ContentAnchorKeeper(
+    _scroll,
+    indexOf: _anchorIndexOf,
+    visibleTopInset: _anchorTopInset,
+  );
+
+  /// The archive phone shell scrolls under the floating glass header, so its
+  /// content starts below [archiveChromeInset]; the classic shell has a real
+  /// AppBar above the body. Desktop shares one widget tree for both styles and
+  /// has no anchor keys.
+  double _anchorTopInset(BuildContext context, AppThemeStyle style) =>
+      style == AppThemeStyle.classic ? 0 : archiveChromeInset(context);
 
   /// Data index of an anchored catalogue row, or null for section anchors.
   int? _anchorIndexOf(String anchorId) {
@@ -618,7 +630,9 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final classic = AppUiScope.isClassic(context);
+    final style = AppUiScope.of(context);
+    _anchors.noteLayoutStyle(style);
+    final classic = style == AppThemeStyle.classic;
     final desktop = isWindowsDesktop && MediaQuery.sizeOf(context).width >= 700;
     final overlay =
         (palette.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
