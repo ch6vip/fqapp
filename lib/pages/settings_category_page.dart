@@ -20,6 +20,10 @@
 
 import 'package:flutter/cupertino.dart';
 
+import '../services/app_style_tokens.dart';
+import '../widgets/settings/classic_settings_icons.dart';
+import '../widgets/settings/settings_widgets.dart';
+
 import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/wenku/wenku_ui.dart';
@@ -115,6 +119,20 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
   @override
   Widget build(BuildContext context) {
     final items = widget.itemsBuilder?.call(context) ?? widget.items;
+    if (AppStyleTokens.of(context).isClassic) {
+      return SettingsScaffold(
+        title: widget.title,
+        body: ListView(
+          key: PageStorageKey('settings-category-classic-${widget.title}'),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          children: [
+            SettingsGroupCard(
+              children: [for (final item in items) _buildItem(item)],
+            ),
+          ],
+        ),
+      );
+    }
     return SettingsArchivePage(
       title: widget.title,
       code: widget.code ?? settingsCategoryCode(widget.title),
@@ -145,6 +163,16 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
     final rowBuilder = item.rowBuilder;
     if (rowBuilder != null) return rowBuilder(context);
     final trailing = item.trailingBuilder?.call(context) ?? item.trailing;
+    if (AppStyleTokens.of(context).isClassic) {
+      return SettingsRow(
+        icon: classicSettingsIcon(item.title, item.icon),
+        iconTile: true,
+        title: item.title,
+        subtitle: item.subtitle,
+        trailing: trailing,
+        onTap: item.onTap == null ? null : () => item.onTap!(context, setState),
+      );
+    }
     return SettingsLinkRow(
       icon: item.icon,
       title: item.title,

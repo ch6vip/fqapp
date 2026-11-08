@@ -10,6 +10,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/book_detail.dart' show formatCounter;
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
 import '../../services/poster_cache.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
@@ -507,6 +508,9 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
                                   volumes: volumes,
                                   geometry: geometry,
                                   palette: palette,
+                                  coverRadius: AppStyleTokens.of(
+                                    context,
+                                  ).coverRadius,
                                   stepped: widget.stepped,
                                 ),
                               ),
@@ -562,6 +566,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
     _ShelfGeometry geometry,
   ) {
     final index = _focus.clamp(0, books.length - 1);
+    final coverRadius = AppStyleTokens.of(context).coverRadius;
     final innerWidth = math.max(1.0, geometry.width - 32);
     const gap = 12.0;
     final pitch = geometry.flatCover + gap;
@@ -596,7 +601,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
                   child: HomePressable(
                     onTap: () => _open(i),
                     semanticLabel: '打开 ${book.title}',
-                    borderRadius: BorderRadius.circular(homeCoverRadius),
+                    borderRadius: BorderRadius.circular(coverRadius),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -612,9 +617,7 @@ class _HomeRankShelfState extends State<HomeRankShelf> {
                           child: AspectRatio(
                             aspectRatio: 5 / 7,
                             child: ClipRRect(
-                              borderRadius: BorderRadius.circular(
-                                homeCoverRadius,
-                              ),
+                              borderRadius: BorderRadius.circular(coverRadius),
                               child: StoryCover(
                                 item: book,
                                 cacheWidth:
@@ -768,7 +771,9 @@ class _InfoRow extends StatelessWidget {
       child: HomePressable(
         onTap: onOpen,
         semanticLabel: '打开 ${book.title}',
-        borderRadius: BorderRadius.circular(homePanelRadius),
+        borderRadius: BorderRadius.circular(
+          AppStyleTokens.of(context).panelRadius,
+        ),
         child: SizedBox(
           height: heightFor(MediaQuery.textScalerOf(context)),
           child: Padding(
@@ -1034,6 +1039,7 @@ class _ShelfPainter extends CustomPainter {
     required this.volumes,
     required this.geometry,
     required this.palette,
+    required this.coverRadius,
     required this.stepped,
   }) : super(repaint: controller);
 
@@ -1042,6 +1048,7 @@ class _ShelfPainter extends CustomPainter {
   final List<_Volume> volumes;
   final _ShelfGeometry geometry;
   final HomePalette palette;
+  final double coverRadius;
   final bool stepped;
 
   @override
@@ -1163,11 +1170,13 @@ class _ShelfPainter extends CustomPainter {
     );
     volume.rank.paint(canvas, Offset(centreX - volume.rank.width / 2, y + 7));
 
-    final circle = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8
-      ..color = palette.muted;
-    canvas.drawCircle(Offset(centreX, y + g.bodyHeight - 12), 2.2, circle);
+    if (!palette.isClassic) {
+      final circle = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8
+        ..color = palette.muted;
+      canvas.drawCircle(Offset(centreX, y + g.bodyHeight - 12), 2.2, circle);
+    }
   }
 
   /// 抽出后露出的侧封：有图就画图（斜切进侧面的平行四边形），没有就退到
@@ -1204,6 +1213,12 @@ class _ShelfPainter extends CustomPainter {
       g.cover - margin * 2,
       g.bodyHeight - 46,
     );
+    canvas.save();
+    if (palette.isClassic) {
+      canvas.clipRRect(
+        RRect.fromRectAndRadius(art, Radius.circular(coverRadius)),
+      );
+    }
     final image = volume.image;
     if (image != null) {
       canvas.drawImageRect(
@@ -1249,8 +1264,11 @@ class _ShelfPainter extends CustomPainter {
     if (volume.sideAuthor.width > 0) {
       volume.sideAuthor.paint(canvas, Offset(art.left + 8, art.bottom - 16));
     }
+    canvas.restore();
     volume.sideRank.paint(canvas, Offset(margin, 7));
-    volume.sideRk.paint(canvas, Offset(margin, g.bodyHeight - 18));
+    if (!palette.isClassic) {
+      volume.sideRk.paint(canvas, Offset(margin, g.bodyHeight - 18));
+    }
     canvas.restore();
     canvas.restore();
   }

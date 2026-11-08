@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
 import 'home_design.dart';
 
-// 档案风格的最小零件：等宽编号、带定位方块的分区标签、一元化的圆角。
-//
-// 2026-11 首页重做（参照 Wenku8 发现页）：全页只有三档圆角——封面 3、
-// 面板 4、按钮胶囊；层级靠细线和等宽编号区分，不再用阴影和彩色角标。
+// Archive defaults remain available to callers without theme tokens.
+// The home presentation resolves its cover/panel radii from AppStyleTokens.
 
 /// 封面圆角。
 const double homeCoverRadius = 3;
@@ -105,7 +104,8 @@ class HomeCode extends StatelessWidget {
 
 /// 分区标签：等宽编号 → 一条细线 → 一个 4dp 定位方块，下一行是标题。
 ///
-/// 编号是真实顺序（01 排行榜、02 为你推荐），不是装饰序号。
+/// Section codes describe the archive's organisation, not a book's rank.
+/// Classic omits that row and its spacing; real rank labels use HomeCode.
 class HomeSectionLabel extends StatelessWidget {
   const HomeSectionLabel({
     super.key,
@@ -128,16 +128,18 @@ class HomeSectionLabel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              HomeCode(code),
-              const SizedBox(width: 10),
-              Expanded(child: Container(height: 1, color: palette.line)),
-              const SizedBox(width: 8),
-              Container(width: 4, height: 4, color: palette.mark),
-            ],
-          ),
-          const SizedBox(height: 4),
+          if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+            Row(
+              children: [
+                HomeCode(code),
+                const SizedBox(width: 10),
+                Expanded(child: Container(height: 1, color: palette.line)),
+                const SizedBox(width: 8),
+                Container(width: 4, height: 4, color: palette.mark),
+              ],
+            ),
+            const SizedBox(height: 4),
+          ],
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -180,7 +182,9 @@ class HomeSectionAction extends StatelessWidget {
     final palette = HomePalette.of(context);
     return HomePressable(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(homePanelRadius),
+      borderRadius: BorderRadius.circular(
+        AppStyleTokens.of(context).panelRadius,
+      ),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
         child: Row(

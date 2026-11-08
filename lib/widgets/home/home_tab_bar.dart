@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../services/app_style_tokens.dart';
+import 'classic_home_tab_bar.dart';
 import 'home_design.dart';
 
 class HomeCategory {
@@ -37,6 +39,13 @@ class HomeTabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (AppStyleTokens.of(context).isClassic) {
+      return ClassicHomeTabBar(
+        selectedIndex: selectedIndex,
+        onSelect: onSelect,
+        categories: categories,
+      );
+    }
     final palette = HomePalette.of(context);
     final duration = palette.eink || MediaQuery.disableAnimationsOf(context)
         ? Duration.zero

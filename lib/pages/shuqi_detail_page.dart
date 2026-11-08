@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
+import '../services/app_style_tokens.dart';
 import '../services/library_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/detail/detail_archive.dart';
@@ -343,7 +344,9 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
         final wide = constraints.maxWidth >= 650;
         final coverWidth = wide ? 150.0 : 118.0;
         final art = ClipRRect(
-          borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+          borderRadius: BorderRadius.circular(
+            AppStyleTokens.of(context).coverRadius,
+          ),
           child: SizedBox(
             width: coverWidth,
             height: coverWidth * 1.4,
@@ -391,8 +394,10 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
                 ),
               ),
             ],
-            const SizedBox(height: 12),
-            ArchiveCode(detailArchiveFileCode(book.bookId), inverse: true),
+            if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+              const SizedBox(height: 12),
+              ArchiveCode(detailArchiveFileCode(book.bookId), inverse: true),
+            ],
           ],
         );
         return Row(
