@@ -2,12 +2,15 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/app_style_tokens.dart';
+import '../app_ui/app_ui_scope.dart';
+import '../settings/settings_widgets.dart';
 
 import 'src/app_text.dart';
 import 'wenku_archive.dart';
 import 'wenku_glass.dart';
 import 'wenku_icons.dart';
 
+/// Archive feature page: milk paper, address code and the glass back affordance.
 class ArchiveFeaturePage extends StatelessWidget {
   const ArchiveFeaturePage({
     super.key,
@@ -37,6 +40,74 @@ class ArchiveFeaturePage extends StatelessWidget {
     ),
     child: child,
   );
+}
+
+/// Classic feature page: the original settings-style shell (canvas AppBar, no
+/// archive masthead/code/backdrop) around the same business body.
+///
+/// The back affordance follows the nearest Navigator: a single embedded route
+/// (the Windows two-pane settings Navigator) keeps its content instead of
+/// popping itself blank.
+class ClassicFeaturePage extends StatelessWidget {
+  const ClassicFeaturePage({
+    super.key,
+    required this.title,
+    required this.child,
+    this.actions = const [],
+  });
+
+  final String title;
+  final Widget child;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) => SettingsScaffold(
+    title: title,
+    actions: actions.isEmpty ? null : actions,
+    // A single embedded route must not offer a back affordance that would pop
+    // the only page blank (Windows two-pane settings).
+    showBack: Navigator.of(context).canPop(),
+    body: child,
+  );
+}
+
+/// Selects the shared business page's chrome for the live style.
+///
+/// The page content stays the same widget and State; only the header/shell
+/// changes. Existing call sites are migrated one by one (`ArchiveFeaturePage`
+/// and `SettingsArchivePage` stay available for their archive shapes).
+class AppFeaturePage extends StatelessWidget {
+  const AppFeaturePage({
+    super.key,
+    required this.title,
+    required this.code,
+    required this.child,
+    this.actions = const [],
+    this.canPop,
+  });
+
+  final String title;
+  final String code;
+  final Widget child;
+  final List<Widget> actions;
+
+  /// Archive shell override; the classic shell derives this from the nearest
+  /// Navigator (see [ClassicFeaturePage]).
+  final bool? canPop;
+
+  @override
+  Widget build(BuildContext context) {
+    if (AppUiScope.isClassic(context)) {
+      return ClassicFeaturePage(title: title, actions: actions, child: child);
+    }
+    return ArchiveFeaturePage(
+      title: title,
+      code: code,
+      actions: actions,
+      canPop: canPop ?? Navigator.of(context).canPop(),
+      child: child,
+    );
+  }
 }
 
 EdgeInsets featurePadding(BuildContext context) => EdgeInsets.fromLTRB(

@@ -2279,7 +2279,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _pushOverFeed(
         () => Navigator.push(
           context,
-          SearchRoute<void>(
+          SearchRoute.open<void>(
+            context,
             builder: (_) =>
                 widget.searchPageBuilder?.call(category) ??
                 SearchPage(initialCategory: category),

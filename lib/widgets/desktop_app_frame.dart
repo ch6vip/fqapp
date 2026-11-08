@@ -16,9 +16,10 @@ class DesktopAppFrame extends StatelessWidget {
     desktopTab.value = index;
   }
 
-  void _search(String query) {
+  void _search(BuildContext context, String query) {
     DesktopPlatform.navigatorKey.currentState?.push(
-      SearchRoute<void>(
+      SearchRoute.open<void>(
+        context,
         builder: (_) => SearchPage(initialQuery: query.isEmpty ? null : query),
       ),
     );
@@ -145,7 +146,8 @@ class DesktopAppFrame extends StatelessWidget {
                                         width: 440,
                                         child: TextField(
                                           key: const Key('desktop-search'),
-                                          onSubmitted: _search,
+                                          onSubmitted: (value) =>
+                                              _search(context, value),
                                           textInputAction:
                                               TextInputAction.search,
                                           decoration: InputDecoration(
