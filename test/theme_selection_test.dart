@@ -131,6 +131,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('both theme cards sit side by side and fit a phone screen', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final store = AppThemeStyleStore();
+    addTearDown(store.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.createTheme(Brightness.light),
+        home: ThemePage(store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final classic = tester.getRect(
+      find.byKey(const ValueKey('theme-choice-classic')),
+    );
+    final archive = tester.getRect(
+      find.byKey(const ValueKey('theme-choice-archive')),
+    );
+    // Comparing the two styles must not require scrolling past one of them.
+    expect(classic.top, archive.top);
+    expect(classic.right, lessThan(archive.left));
+    expect(archive.bottom, lessThan(640));
+    expect(
+      find.byKey(const ValueKey('theme-selected-archive-true')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('theme-selected-classic-false')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('choosing a theme preserves pushed route and saves selection', (
     tester,
   ) async {
