@@ -318,6 +318,24 @@ void main() {
       await directory.delete(recursive: true);
     });
 
+    test('a fresh device imports the online shelf from the server', () async {
+      remote = WebDavSyncDocument(
+        backup(
+          shelf: [
+            ShelfRecord(
+              item: item('from-other-device'),
+              addedAt: DateTime(2025),
+            ),
+          ],
+        ),
+      ).encode();
+      version++;
+      expect(ShelfStore.instance.records(), isEmpty);
+      await service.sync();
+      expect(ShelfStore.instance.records().single.item.id, 'from-other-device');
+      expect(service.status.value, contains('书架 1 本'));
+    });
+
     test(
       'pushes local state, retries a competing writer and imports progress',
       () async {
