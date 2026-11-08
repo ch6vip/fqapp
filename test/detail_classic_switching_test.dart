@@ -312,6 +312,124 @@ void main() {
     });
   });
 
+  group('deep lazy rows', () {
+    testWidgets('书旗 keeps a chapter 400 rows in, both ways', (tester) async {
+      final calls = <String>[];
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester);
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: _shuqiPage(calls: calls, chapters: 400),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 2000px deep: the target chapter is far outside the first built batch,
+      // so the incoming layout has to locate it by index before snapping.
+      final controller = tester
+          .widget<CustomScrollView>(
+            find.byKey(const Key('shuqi-detail-scroll')),
+          )
+          .controller!;
+      controller.jumpTo(2000);
+      await tester.pumpAndSettle();
+      final before = _topShuqiRow(tester);
+      expect(before, isNotNull);
+      expect(before!.index, greaterThan(30), reason: 'must be a deep row');
+      final chapter = before.index;
+      final state = tester.state(find.byType(ShuqiDetailPage));
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      // The row was not mounted at first; it must be built and placed back at
+      // its old depth instead of jumping to the 目录 header.
+      final archived = _rowDy(tester, chapter);
+      expect(archived, isNotNull, reason: 'the chapter row must be built');
+      expect((archived! - before.dy).abs(), lessThan(60));
+      expect(_offset(tester, 'shuqi-detail-scroll'), greaterThan(1500));
+      expect(calls, ['book:34078', 'toc:34078']);
+      expect(
+        identical(tester.state(find.byType(ShuqiDetailPage)), state),
+        isTrue,
+      );
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      final back = _rowDy(tester, chapter);
+      expect(back, isNotNull, reason: 'the chapter row must be built again');
+      expect(back, lessThan(600));
+      expect(calls, ['book:34078', 'toc:34078']);
+      expect(
+        identical(tester.state(find.byType(ShuqiDetailPage)), state),
+        isTrue,
+      );
+    });
+
+    testWidgets('作者 keeps a work 120 rows in, both ways', (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester, const Size(400, 600));
+      var calls = 0;
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: AuthorPage(
+            authorId: _author.id,
+            fallbackName: _author.name,
+            loader: (_) async {
+              calls++;
+              return _author;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final controller = tester
+          .widget<CustomScrollView>(find.byKey(const Key('author_scroll')))
+          .controller!;
+      controller.jumpTo(4000);
+      await tester.pumpAndSettle();
+      final before = _topAuthorWork(tester);
+      expect(before, isNotNull);
+      final index = _author.works.indexWhere((work) => work.id == before!.id);
+      expect(index, greaterThan(30), reason: 'must be a deep work');
+      final state = tester.state(find.byType(AuthorPage));
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      // Grid (3 columns) → list: the row is a different height, but the same
+      // work must be built and stay within a grid row of its old place.
+      final archived = _workDy(tester, before!.id);
+      expect(archived, isNotNull, reason: 'the work row must be built');
+      expect((archived! - before.dy).abs(), lessThan(400));
+      expect(_offset(tester, 'author_scroll'), greaterThan(2000));
+      expect(calls, 1);
+      expect(identical(tester.state(find.byType(AuthorPage)), state), isTrue);
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      // Back in the grid the anchored work sits at its old depth again, and the
+      // top of the viewport is the same grid row.
+      final back = _workDy(tester, before.id);
+      expect(back, isNotNull, reason: 'the work must still be built');
+      expect((back! - before.dy).abs(), lessThan(80));
+      final backTop = _topAuthorWork(tester);
+      expect(backTop, isNotNull);
+      final backIndex = _author.works.indexWhere(
+        (work) => work.id == backTop!.id,
+      );
+      expect((backIndex - index).abs(), lessThanOrEqualTo(3));
+      expect(_offset(tester, 'author_scroll'), greaterThan(2000));
+      expect(calls, 1);
+      expect(identical(tester.state(find.byType(AuthorPage)), state), isTrue);
+    });
+  });
+
   group('author scroll continuity', () {
     testWidgets('keeps the same works in view across 经典 ⇄ 档案', (tester) async {
       final store = AppThemeStyleStore();
@@ -549,7 +667,7 @@ double? _rowDy(WidgetTester tester, int index) {
   return best;
 }
 
-Widget _shuqiPage({List<String>? calls}) => ShuqiDetailPage(
+Widget _shuqiPage({List<String>? calls, int chapters = 40}) => ShuqiDetailPage(
   bookId: '34078',
   bookLoader: (_) async {
     calls?.add('book:34078');
@@ -557,7 +675,7 @@ Widget _shuqiPage({List<String>? calls}) => ShuqiDetailPage(
   },
   tocLoader: (_) async {
     calls?.add('toc:34078');
-    return _shuqiToc(40);
+    return _shuqiToc(chapters);
   },
 );
 
@@ -614,9 +732,9 @@ AuthorProfile get _author => AuthorProfile(
   description: '人生是旷野呀朋友！',
   level: '作家Lv.5',
   followerCount: 20905,
-  workCount: 12,
+  workCount: 120,
   works: [
-    for (var i = 0; i < 12; i++)
+    for (var i = 0; i < 120; i++)
       AuthorWork(
         id: 'work-$i',
         title: '作品 ${i + 1} 号：一段很长很长的书名用来占位',
