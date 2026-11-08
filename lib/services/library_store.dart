@@ -404,6 +404,44 @@ class LibraryStore implements ReaderStore {
   /// Sync differs from backup import: a newer remote reading position replaces
   /// an older local one. Re-check inside the write queue so reading while a
   /// WebDAV request is in flight cannot be overwritten by that response.
+  Future<void> replaceSyncedHistory({
+    required List<Map<String, dynamic>> history,
+    required Map<String, Map<String, int>> watched,
+  }) {
+    ReadingDataWriteGuard._forStore(this).history++;
+    return _serialize(() async {
+      final deleting = <dynamic>[];
+      for (final key in _histBox.keys) {
+        final record = _historyRecord(_histBox.get(key), id: key.toString());
+        if (record == null ||
+            !_historyIdentity(record).$2.startsWith('local_')) {
+          deleting.add(key);
+        }
+      }
+      await _histBox.deleteAll(deleting);
+      await _watchedBox.deleteAll(
+        _watchedBox.keys
+            .where((key) => !key.toString().startsWith('local_'))
+            .toList(),
+      );
+      for (final incoming in history) {
+        final kind = incoming['kind'] as String;
+        final id = incoming['id'] as String;
+        final scoped = kind == 'audio' || kind == 'manga';
+        final key = scoped ? '$kind:$id' : id;
+        await _histBox.put(key, {
+          ...incoming,
+          'id': key,
+          if (scoped) 'contentId': id,
+        });
+      }
+      await _watchedBox.putAll(watched);
+      _localHistoryCount = null;
+      await _histBox.flush();
+      await _watchedBox.flush();
+    });
+  }
+
   Future<void> mergeSyncedHistory(List<Map<String, dynamic>> records) =>
       _serialize(() async {
         final byIdentity = {

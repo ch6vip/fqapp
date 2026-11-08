@@ -340,59 +340,66 @@ void main() {
     });
 
     test(
-      'pushes local state, retries a competing writer and imports progress',
+      'cloud forcibly replaces local shelf and newer progress without PUT',
       () async {
-        await ShelfStore.instance.add(item('local'));
+        await ShelfStore.instance.add(item('local-only'));
         await LibraryStore.instance.addHistory({
           'id': 'progress',
           'kind': 'book',
-          'chapterId': 'c1',
-          'time': 100,
+          'chapterId': 'local-new',
+          'time': 900,
         });
-        conflict = true;
-        await service.sync();
-        var cloud = WebDavSyncDocument.decode(remote!);
-        expect(cloud.backup.shelf.single.item.id, 'local');
-        expect(
-          cloud.backup.history.map((e) => e['id']),
-          containsAll(['progress', 'second-device']),
-        );
-        expect(
-          (await LibraryStore.instance.historyEntry('second-device'))?['time'],
-          500,
-        );
-        remote = cloud
-            .merge(
-              WebDavSyncDocument(
-                backup(
-                  history: [
-                    {
-                      'id': 'progress',
-                      'kind': 'book',
-                      'chapterId': 'c2',
-                      'time': 200,
-                    },
-                  ],
-                ),
-              ),
-            )
-            .encode();
+        await LibraryStore.instance.addHistory({
+          'id': 'local-only',
+          'kind': 'book',
+          'time': 900,
+        });
+        remote = WebDavSyncDocument(
+          backup(
+            shelf: [
+              ShelfRecord(item: item('cloud-only'), addedAt: DateTime(2025)),
+            ],
+            history: [
+              {
+                'id': 'progress',
+                'kind': 'book',
+                'chapterId': 'cloud-old',
+                'time': 100,
+              },
+            ],
+          ),
+        ).encode();
         version++;
+        final before = remote!.toList();
         await service.sync();
+        expect(ShelfStore.instance.records().single.item.id, 'cloud-only');
         expect(
           (await LibraryStore.instance.historyEntry('progress'))?['chapterId'],
-          'c2',
+          'cloud-old',
         );
-        await ShelfStore.instance.removeKeys(['shelf_v1:book:local']);
-        await service.sync();
-        cloud = WebDavSyncDocument.decode(remote!);
-        expect(cloud.backup.shelf, isEmpty);
-        expect(cloud.removedShelf, contains('shelf_v1:book:local'));
+        expect(await LibraryStore.instance.historyEntry('local-only'), isNull);
+        expect(remote, orderedEquals(before));
+        expect(version, 1);
       },
     );
 
     test(
-      'automatic mode pushes changes and pulls on returning to the app',
+      'only a missing cloud file is seeded; a competing creator wins',
+      () async {
+        await ShelfStore.instance.add(item('local-only'));
+        conflict = true;
+        await service.sync();
+        expect(ShelfStore.instance.records(), isEmpty);
+        expect(
+          await LibraryStore.instance.historyEntry('second-device'),
+          isNotNull,
+        );
+        expect(WebDavSyncDocument.decode(remote!).backup.shelf, isEmpty);
+      },
+    );
+
+    test(
+      'automatic mode restores cloud after local changes and on resume',
       () async {
         await service.configure(
           WebDavConfig(
@@ -405,10 +412,7 @@ void main() {
         await service.sync();
         await ShelfStore.instance.add(item('automatic'));
         await Future<void>.delayed(const Duration(seconds: 4));
-        expect(
-          WebDavSyncDocument.decode(remote!).backup.shelf.single.item.id,
-          'automatic',
-        );
+        expect(ShelfStore.instance.records(), isEmpty);
         remote = WebDavSyncDocument.decode(remote!)
             .merge(
               WebDavSyncDocument(
