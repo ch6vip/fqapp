@@ -244,6 +244,9 @@ extension _ReaderPageSelection on _ReaderPageState {
       // reference rather than flip to a wrong place.
       topAnchor = null;
     }
+    // The classic bar has its own item metrics and an arrow that takes layout
+    // space; the anchor maths must use the same numbers the bar renders with.
+    // Read live so an open selection follows a style switch.
     final (position, below) = ReaderParagraphMenu.resolvePosition(
       anchor: anchor,
       topAnchor: topAnchor,
@@ -255,6 +258,7 @@ extension _ReaderPageSelection on _ReaderPageState {
       showBookmark: true,
       showAi: _currentAiView?.aiEnabled == true,
       avoidBottom: avoidBottom,
+      classic: AppUiScope.isClassic(context),
     );
     return Positioned(
       key: const ValueKey('reader-selection-bar'),
