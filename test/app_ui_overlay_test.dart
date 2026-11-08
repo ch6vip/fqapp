@@ -991,6 +991,122 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('classic confirm scrolls inside a short keyboard safe rect', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 360);
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 180);
+    addTearDown(tester.view.reset);
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final future = confirmArchiveAction(
+      context,
+      title: '删除记录',
+      message: '删除后不可恢复。',
+      confirmLabel: '删除',
+      confirmKey: const Key('confirm'),
+      cancelKey: const Key('cancel'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.takeException(), isNull);
+    final scrollable = tester.state<ScrollableState>(
+      find.byType(Scrollable).first,
+    );
+    expect(scrollable.position.maxScrollExtent, greaterThan(0));
+
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm')));
+    await tester.pumpAndSettle();
+    expect(await future, isTrue);
+  });
+
+  testWidgets('classic confirm scrolls a long message at large text scale', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 700);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    addTearDown(tester.view.reset);
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final message = List.generate(
+      40,
+      (index) => '第 $index 行：这是一段很长的确认说明。',
+    ).join('\n');
+    final future = confirmArchiveAction(
+      context,
+      title: '清空历史',
+      message: message,
+      confirmLabel: '清空',
+      confirmKey: const Key('confirm'),
+      cancelKey: const Key('cancel'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.takeException(), isNull);
+    final scrollable = tester.state<ScrollableState>(
+      find.byType(Scrollable).first,
+    );
+    expect(scrollable.position.maxScrollExtent, greaterThan(0));
+
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('cancel')));
+    await tester.pumpAndSettle();
+    expect(await future, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the modal scrim follows the live style and preview', (
     tester,
   ) async {
