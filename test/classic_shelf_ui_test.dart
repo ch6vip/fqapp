@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -203,6 +204,12 @@ void main() {
         expect(find.text('收藏'), findsOneWidget);
         expect(find.byKey(const Key('library-search-button')), findsOneWidget);
         expect(find.byKey(const Key('library-more-button')), findsOneWidget);
+        expect(
+          (tester.getCenter(find.byIcon(LucideIcons.search)).dy -
+                  tester.getCenter(find.byIcon(LucideIcons.ellipsis)).dy)
+              .abs(),
+          lessThan(3),
+        );
         expect(find.text('今日已读0分钟'), findsOneWidget);
         for (final name in ['grid', 'double', 'list']) {
           expect(find.byKey(Key('shelf-layout-$name')), findsOneWidget);
