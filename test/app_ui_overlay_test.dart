@@ -5,6 +5,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/pages/api_service_page.dart';
 import 'package:fqapp/pages/search_page.dart';
 import 'package:fqapp/pages/settings_category_page.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
@@ -620,6 +621,668 @@ void main() {
     expect(await classicResult, 'classic-done');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('AppFeaturePage keeps child State and focus across shells', (
+    tester,
+  ) async {
+    final store = AppThemeStyleStore();
+    addTearDown(store.dispose);
+    var inits = 0;
+    var disposals = 0;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                key: const ValueKey('open-feature'),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => AppFeaturePage(
+                      title: '标题',
+                      code: 'SYSTEM / TEST',
+                      child: _DraftProbe(
+                        onInit: () => inits++,
+                        onDispose: () => disposals++,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('打开'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('open-feature')));
+    await tester.pumpAndSettle();
+    final state = tester.state(find.byType(_DraftProbe));
+    expect(inits, 1);
+    await tester.enterText(find.byKey(const ValueKey('draft-field')), '未提交草稿');
+    await tester.pump();
+    expect(_draftFocus(tester).hasFocus, isTrue);
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScaffold), findsOneWidget);
+    expect(tester.state(find.byType(_DraftProbe)), same(state));
+    expect(inits, 1);
+    expect(disposals, 0);
+    expect(_draftText(tester), '未提交草稿');
+    expect(find.text('未提交草稿'), findsOneWidget);
+    expect(_draftFocus(tester).hasFocus, isTrue);
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(find.byType(WenkuPage), findsOneWidget);
+    expect(tester.state(find.byType(_DraftProbe)), same(state));
+    expect(inits, 1);
+    expect(disposals, 0);
+    expect(_draftText(tester), '未提交草稿');
+    expect(_draftFocus(tester).hasFocus, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('SettingsArchivePage keeps child State and focus across shells', (
+    tester,
+  ) async {
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    var inits = 0;
+    var disposals = 0;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                key: const ValueKey('open-settings-page'),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => SettingsArchivePage(
+                      title: '外观',
+                      code: 'SYSTEM / APPEARANCE',
+                      child: _DraftProbe(
+                        onInit: () => inits++,
+                        onDispose: () => disposals++,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('打开'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('open-settings-page')));
+    await tester.pumpAndSettle();
+    final state = tester.state(find.byType(_DraftProbe));
+    expect(inits, 1);
+    expect(find.byType(SettingsScaffold), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('draft-field')), '页面草稿');
+    await tester.pump();
+    expect(_draftFocus(tester).hasFocus, isTrue);
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(find.byType(WenkuPage), findsOneWidget);
+    expect(tester.state(find.byType(_DraftProbe)), same(state));
+    expect(inits, 1);
+    expect(disposals, 0);
+    expect(_draftText(tester), '页面草稿');
+    expect(_draftFocus(tester).hasFocus, isTrue);
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScaffold), findsOneWidget);
+    expect(tester.state(find.byType(_DraftProbe)), same(state));
+    expect(inits, 1);
+    expect(disposals, 0);
+    expect(_draftText(tester), '页面草稿');
+    expect(_draftFocus(tester).hasFocus, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'a scrolled open menu keeps its offset and result across shells',
+    (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      late BuildContext context;
+
+      await tester.pumpWidget(
+        AppUiHost(
+          store: store,
+          home: Scaffold(
+            body: Center(
+              child: Builder(
+                builder: (value) {
+                  context = value;
+                  return const SizedBox(
+                    key: Key('menu-anchor'),
+                    width: 80,
+                    height: 40,
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final result = showGlassMenu<String>(
+        context: context,
+        builder: (menu) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < 40; i++)
+              GlassMenuItem(
+                order: i,
+                label: '行 $i',
+                onPressed: () => Navigator.pop(menu, 'v$i'),
+              ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.drag(find.text('行 2'), const Offset(0, -240));
+      await tester.pumpAndSettle();
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position;
+      expect(position.pixels, greaterThan(200));
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(find.byType(GlassMenuStretch), findsNothing);
+      final movedPosition = tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position;
+      // The scrollable element is reparented; the offset is what must carry
+      // over (row heights differ slightly between the two surfaces).
+      expect(movedPosition.pixels, closeTo(position.pixels, .01));
+
+      await tester.tap(find.text('行 8'));
+      await tester.pumpAndSettle();
+      expect(await result, 'v8');
+
+      // The reverse direction keeps it too, and cancellation still works.
+      final classicFirst = showGlassMenu<String>(
+        context: context,
+        builder: (menu) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < 40; i++)
+              GlassMenuItem(
+                order: i,
+                label: '行 $i',
+                onPressed: () => Navigator.pop(menu, 'v$i'),
+              ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.drag(find.text('行 2'), const Offset(0, -240));
+      await tester.pumpAndSettle();
+      final classicOffset = tester
+          .state<ScrollableState>(find.byType(Scrollable))
+          .position
+          .pixels;
+      expect(classicOffset, greaterThan(200));
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(
+        tester.state<ScrollableState>(find.byType(Scrollable)).position.pixels,
+        closeTo(classicOffset, .01),
+      );
+      await tester.tapAt(const Offset(6, 6));
+      await tester.pumpAndSettle();
+      expect(await classicFirst, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('classic confirm centers inside the keyboard safe rect', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<bool> open() => confirmArchiveAction(
+      context,
+      title: '删除记录',
+      message: '删除后不可恢复。',
+      confirmLabel: '删除',
+      confirmKey: const Key('confirm'),
+      cancelKey: const Key('cancel'),
+    );
+
+    final future = open();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final openRect = tester.getRect(
+      find.byKey(const ValueKey('archive-confirm')),
+    );
+    expect(openRect.bottom, lessThanOrEqualTo(600 - 24 + .5));
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await tester.pumpAndSettle();
+    final keyboardRect = tester.getRect(
+      find.byKey(const ValueKey('archive-confirm')),
+    );
+    expect(keyboardRect.bottom, lessThanOrEqualTo(300 - 24 + .5));
+    expect(keyboardRect.top, greaterThanOrEqualTo(24 - .5));
+    await tester.tap(find.byKey(const Key('confirm')));
+    await tester.pumpAndSettle();
+    expect(await future, isTrue);
+
+    // Opening with the keyboard already up, then hiding it, recentres.
+    final second = open();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      tester.getRect(find.byKey(const ValueKey('archive-confirm'))).bottom,
+      lessThanOrEqualTo(300 - 24 + .5),
+    );
+    tester.view.viewInsets = const FakeViewPadding();
+    await tester.pumpAndSettle();
+    final recentred = tester.getRect(
+      find.byKey(const ValueKey('archive-confirm')),
+    );
+    expect(recentred.bottom, lessThanOrEqualTo(600 - 24 + .5));
+    expect(recentred.bottom, greaterThan(300));
+    await tester.tap(find.byKey(const Key('cancel')));
+    await tester.pumpAndSettle();
+    expect(await second, isFalse);
+  });
+
+  testWidgets('classic confirm respects asymmetric safe areas in a nested '
+      'overlay', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.padding = const FakeViewPadding(
+      left: 40,
+      top: 20,
+      right: 10,
+      bottom: 30,
+    );
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.reset);
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    late BuildContext nestedContext;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Center(
+          child: SizedBox(
+            width: 600,
+            height: 480,
+            child: Navigator(
+              onGenerateRoute: (_) => MaterialPageRoute<void>(
+                builder: (context) {
+                  nestedContext = context;
+                  return const Scaffold(body: Center(child: Text('嵌套页')));
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final future = confirmArchiveAction(
+      nestedContext,
+      title: '嵌套确认',
+      message: '确认后继续。',
+      confirmLabel: '继续',
+      confirmKey: const Key('nested-confirm'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final rect = tester.getRect(find.byKey(const ValueKey('archive-confirm')));
+    // Global safe rect: left 40, top 20, right 790, bottom 300.
+    expect(rect.left, greaterThanOrEqualTo(40 + 24 - .5));
+    expect(rect.top, greaterThanOrEqualTo(20 + 24 - .5));
+    expect(rect.right, lessThanOrEqualTo(790 - 24 + .5));
+    expect(rect.bottom, lessThanOrEqualTo(300 - 24 + .5));
+    await tester.tap(find.byKey(const Key('nested-confirm')));
+    await tester.pumpAndSettle();
+    expect(await future, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the modal scrim follows the live style and preview', (
+    tester,
+  ) async {
+    final store = AppThemeStyleStore();
+    addTearDown(store.dispose);
+    final previewing = ValueNotifier<bool>(false);
+    addTearDown(previewing.dispose);
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final result = showJellySheet<void>(
+      context: context,
+      previewing: previewing,
+      builder: (_) => const SizedBox(height: 120, child: Text('遮罩弹层')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final route = ModalRoute.of(tester.element(find.text('遮罩弹层')))!;
+    expect(_barrierAlpha(tester), closeTo(.16, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .16));
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(_barrierAlpha(tester), closeTo(.5, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .5));
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(_barrierAlpha(tester), closeTo(.16, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .16));
+
+    previewing.value = true;
+    await tester.pumpAndSettle();
+    expect(find.byType(AnimatedModalBarrier), findsNothing);
+
+    previewing.value = false;
+    await tester.pumpAndSettle();
+    expect(_barrierAlpha(tester), closeTo(.16, .001));
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(_barrierAlpha(tester), closeTo(.5, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .5));
+
+    Navigator.of(context).pop();
+    await tester.pumpAndSettle();
+    await result;
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the confirmation scrim follows the live style', (tester) async {
+    final store = AppThemeStyleStore();
+    addTearDown(store.dispose);
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final future = confirmArchiveAction(
+      context,
+      title: '清空历史',
+      message: '全部清除。',
+      confirmLabel: '清空',
+      confirmKey: const Key('confirm'),
+      cancelKey: const Key('cancel'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final route = ModalRoute.of(tester.element(find.text('清空历史')))!;
+    expect(_barrierAlpha(tester), closeTo(.16, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .16));
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(_barrierAlpha(tester), closeTo(.5, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .5));
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(_barrierAlpha(tester), closeTo(.16, .001));
+    expect(route.barrierColor, Colors.black.withValues(alpha: .16));
+
+    await tester.tap(find.byKey(const Key('cancel')));
+    await tester.pumpAndSettle();
+    expect(await future, isFalse);
+  });
+
+  testWidgets('classic preview only makes the surface transparent', (
+    tester,
+  ) async {
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    final previewing = ValueNotifier<bool>(false);
+    addTearDown(previewing.dispose);
+    var taps = 0;
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final result = showJellySheet<void>(
+      context: context,
+      previewing: previewing,
+      builder: (_) => _PreviewProbe(onTap: () => taps++),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(_sheetCardMaterial(tester).color, isNot(Colors.transparent));
+    expect(find.text('preview:classic'), findsOneWidget);
+
+    previewing.value = true;
+    await tester.pumpAndSettle();
+    expect(_sheetCardMaterial(tester).color, Colors.transparent);
+    expect(find.text('preview:classic'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('preview-tap')));
+    await tester.pump();
+    expect(taps, 1);
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<GlassOverlaySurface>(find.byType(GlassOverlaySurface))
+          .transparent,
+      isTrue,
+    );
+    expect(find.text('preview:archive'), findsOneWidget);
+
+    previewing.value = false;
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<GlassOverlaySurface>(find.byType(GlassOverlaySurface))
+          .transparent,
+      isFalse,
+    );
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(_sheetCardMaterial(tester).color, isNot(Colors.transparent));
+    Navigator.of(context).pop();
+    await tester.pumpAndSettle();
+    await result;
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('classic preview keeps guarded drag semantics', (tester) async {
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+    final previewing = ValueNotifier<bool>(true);
+    addTearDown(previewing.dispose);
+    final canPop = ValueNotifier<bool>(false);
+    addTearDown(canPop.dispose);
+    late BuildContext context;
+
+    await tester.pumpWidget(
+      AppUiHost(
+        store: store,
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox(
+                  key: Key('anchor'),
+                  width: 60,
+                  height: 40,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final result = showJellySheet<void>(
+      context: context,
+      previewing: previewing,
+      guardDragDismiss: true,
+      builder: (_) => ValueListenableBuilder<bool>(
+        valueListenable: canPop,
+        builder: (context, allowed, _) => PopScope(
+          canPop: allowed,
+          child: const SizedBox(
+            height: 200,
+            child: Center(child: Text('受保护面板')),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.drag(find.text('受保护面板'), const Offset(0, 320));
+    await tester.pumpAndSettle();
+    expect(find.text('受保护面板'), findsOneWidget);
+
+    canPop.value = true;
+    await tester.pump();
+    await tester.drag(find.text('受保护面板'), const Offset(0, 320));
+    await tester.pumpAndSettle();
+    expect(find.text('受保护面板'), findsNothing);
+    await result;
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('classic API page does not reserve the archive header twice', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final store = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(store.dispose);
+
+    await tester.pumpWidget(
+      AppUiHost(store: store, home: const ApiServicePage()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScaffold), findsOneWidget);
+    expect(find.byType(WenkuPage), findsNothing);
+    expect(find.byKey(const ValueKey('api-status-dot')), findsOneWidget);
+    expect(find.byType(AppGlassSwitch), findsOneWidget);
+    final appBarBottom = tester.getBottomLeft(find.byType(AppBar)).dy;
+    final classicPanel = tester.getTopLeft(find.byType(ContentPanel).first).dy;
+    expect(classicPanel - appBarBottom, closeTo(12, 1.5));
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+    expect(find.byType(WenkuPage), findsOneWidget);
+    final archivePanel = tester.getTopLeft(find.byType(ContentPanel).first).dy;
+    expect(archivePanel, closeTo(76, 2));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 double _anchorOpacity(WidgetTester tester) => tester
@@ -673,6 +1336,94 @@ class _OverlayProbeState extends State<_OverlayProbe> {
           key: const ValueKey('probe-close'),
           onPressed: () => Navigator.pop(context),
           child: const Text('关闭'),
+        ),
+      ],
+    ),
+  );
+}
+
+String _draftText(WidgetTester tester) => tester
+    .widget<TextField>(find.byKey(const ValueKey('draft-field')))
+    .controller!
+    .text;
+
+FocusNode _draftFocus(WidgetTester tester) => tester
+    .widget<TextField>(find.byKey(const ValueKey('draft-field')))
+    .focusNode!;
+
+double _barrierAlpha(WidgetTester tester) => tester
+    .widget<AnimatedModalBarrier>(find.byType(AnimatedModalBarrier))
+    .color
+    .value!
+    .a;
+
+Material _sheetCardMaterial(WidgetTester tester) =>
+    tester.widgetList<Material>(find.byType(Material)).firstWhere((material) {
+      final shape = material.shape;
+      return shape is RoundedRectangleBorder &&
+          shape.borderRadius ==
+              const BorderRadius.vertical(top: Radius.circular(16));
+    });
+
+/// Stateful page content: proves a shell switch keeps the same Element/State
+/// (draft and focus included) instead of re-inflating it.
+class _DraftProbe extends StatefulWidget {
+  const _DraftProbe({required this.onInit, required this.onDispose});
+
+  final VoidCallback onInit;
+  final VoidCallback onDispose;
+
+  @override
+  State<_DraftProbe> createState() => _DraftProbeState();
+}
+
+class _DraftProbeState extends State<_DraftProbe> {
+  final _controller = TextEditingController(text: '初始');
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.onInit();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    widget.onDispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(16),
+    child: TextField(
+      key: const ValueKey('draft-field'),
+      controller: _controller,
+      focusNode: _focus,
+    ),
+  );
+}
+
+/// Sheet foreground for preview checks: its action must stay visible and
+/// tappable while only the panel material is transparent.
+class _PreviewProbe extends StatelessWidget {
+  const _PreviewProbe({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('preview:${AppStyleTokens.of(context).style.name}'),
+        TextButton(
+          key: const ValueKey('preview-tap'),
+          onPressed: onTap,
+          child: const Text('预览动作'),
         ),
       ],
     ),
