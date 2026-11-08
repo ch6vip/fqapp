@@ -362,6 +362,96 @@ void main() {
         tolerance: 1.5,
       );
     });
+
+    testWidgets('番茄预览记录标题被回收后仍按内容 ID 保持位置', (tester) async {
+      mockBackupChannel(tester, open: _fanqieHistoryBytes());
+      final store = await pumpStyled(
+        tester,
+        const FanqieHistoryImportPage(),
+        size: const Size(400, 360),
+      );
+      await tester.tap(find.text('从历史文件导入'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('导入预览'), findsOneWidget);
+
+      final row = find.byKey(const ValueKey('fanqie-record-103'));
+      await Scrollable.ensureVisible(tester.element(row), alignment: 0);
+      await tester.pumpAndSettle();
+      // Stop with the record just above the viewport top: the row is partly
+      // visible and the next one is partly visible below it.
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -21));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('导入预览'),
+        findsNothing,
+        reason: 'section 标题必须已经离开列表构建窗口，否则本次用例没有覆盖目标场景',
+      );
+      final before = tester.getTopLeft(row).dy;
+      expect(before, lessThan(0));
+      expect(find.text('历史作品 3'), findsOneWidget);
+      expect(find.text('历史作品 4'), findsOneWidget, reason: '第四条记录必须部分可见');
+
+      for (final style in [
+        AppThemeStyle.archive,
+        AppThemeStyle.classic,
+        AppThemeStyle.archive,
+      ]) {
+        final position = positionOf(tester);
+        // The anchor has to be recoverable inside the new scroll range, not
+        // clamped at a boundary (that would hide a lost anchor).
+        expect(position.pixels, greaterThan(position.minScrollExtent));
+        expect(position.maxScrollExtent, greaterThan(position.minScrollExtent));
+        store.value = style;
+        await tester.pumpAndSettle();
+        expect(find.textContaining('导入预览'), findsNothing);
+        expect(row, findsOneWidget, reason: '${style.name} 下同一记录必须仍在列表里');
+        expect(
+          tester.getTopLeft(row).dy,
+          closeTo(before, 1.5),
+          reason: '${style.name} 下记录相对视口的位置必须保持，标题不在构建树时也一样',
+        );
+        final after = positionOf(tester);
+        expect(after.pixels, greaterThan(0));
+        expect(after.pixels, lessThan(after.maxScrollExtent));
+        expect(tester.takeException(), isNull);
+      }
+    });
+
+    testWidgets('高刷新率下锚点跟随到主题动画结束（60/120/240/360Hz）', (tester) async {
+      // The follow-up pass used to be a fixed 24 frames: at 360 Hz that is
+      // ~67 ms, short of the 200 ms theme animation, so the target section
+      // drifted a few pixels after the pass had already stopped.
+      for (final hz in [60, 120, 240, 360]) {
+        final store = await pumpStyled(
+          tester,
+          const ApiServicePage(),
+          size: const Size(400, 500),
+        );
+        await tester.tap(find.text('查看可用接口'));
+        await tester.pumpAndSettle();
+        final section = find.byKey(const ValueKey('api-network-card'));
+        await Scrollable.ensureVisible(tester.element(section), alignment: 0);
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(section).dy, closeTo(0, 1));
+
+        store.value = AppThemeStyle.archive;
+        // Advance exactly one display frame at a time for longer than the
+        // theme animation, so a frame-count window shows up as drift.
+        final frame = Duration(microseconds: (1000000 / hz).round());
+        final frames = (600 * 1000 / (1000000 / hz)).ceil();
+        for (var i = 0; i < frames; i++) {
+          await tester.pump(frame);
+        }
+        expect(
+          tester.getTopLeft(section).dy,
+          closeTo(0, 1.5),
+          reason: '${hz}Hz 下主题动画结束时分区不得残留位移',
+        );
+        expect(tester.takeException(), isNull);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    });
   });
 
   testWidgets('经典 TTS 写失败保留已提交引擎，重试成功后调速不写回旧引擎', (tester) async {
