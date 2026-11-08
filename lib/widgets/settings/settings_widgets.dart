@@ -23,6 +23,9 @@ AppBar settingsAppBar(
   required String title,
   List<Widget>? actions,
   PreferredSizeWidget? bottom,
+  // Embedded panes (Windows two-pane settings) own a Navigator with exactly
+  // one route; a back button there cannot pop, so the shell can omit it.
+  bool showBack = true,
 }) {
   final palette = HomePalette.of(context);
   return AppBar(
@@ -32,10 +35,13 @@ AppBar settingsAppBar(
     scrolledUnderElevation: 0,
     centerTitle: true,
     leadingWidth: 56,
-    leading: const Padding(
-      padding: EdgeInsets.only(left: 10),
-      child: Center(child: HomeBackButton()),
-    ),
+    automaticallyImplyLeading: false,
+    leading: showBack
+        ? const Padding(
+            padding: EdgeInsets.only(left: 10),
+            child: Center(child: HomeBackButton()),
+          )
+        : null,
     title: Text(title),
     actions: actions,
     bottom: bottom,
@@ -51,6 +57,8 @@ class SettingsScaffold extends StatelessWidget {
     this.actions,
     this.bottom,
     this.resizeToAvoidBottomInset,
+    this.showBack = true,
+    this.extendBodyBehindAppBar = false,
   });
 
   final String title;
@@ -59,16 +67,27 @@ class SettingsScaffold extends StatelessWidget {
   final PreferredSizeWidget? bottom;
   final bool? resizeToAvoidBottomInset;
 
+  /// Default keeps the original settings behaviour; the feature-page shell
+  /// passes the nearest Navigator's `canPop` for embedded panes.
+  final bool showBack;
+
+  /// The classic feature shell extends the body behind its opaque AppBar so a
+  /// page that still uses the archive header clearance keeps the same first-row
+  /// position instead of reserving status bar + toolbar height twice.
+  final bool extendBodyBehindAppBar;
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Scaffold(
       backgroundColor: palette.canvas,
+      extendBodyBehindAppBar: extendBodyBehindAppBar,
       appBar: settingsAppBar(
         context,
         title: title,
         actions: actions,
         bottom: bottom,
+        showBack: showBack,
       ),
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
       body: body,
