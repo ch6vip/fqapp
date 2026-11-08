@@ -18,11 +18,13 @@ import '../models/text_replacement_rule.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
+import '../services/app_theme_style.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_adaptive.dart';
 import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
+import '../widgets/settings/settings_scroll_anchor.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
@@ -38,6 +40,11 @@ class _TextReplacementPageState extends State<TextReplacementPage> {
       widget.store ?? TextReplacementStore.instance;
   bool _loading = true;
   bool _saving = false;
+
+  /// One list for both presentations: the shell swaps around it, so the scroll
+  /// position and the remembered section survive a style switch.
+  final _scroll = ScrollController();
+  late final _anchor = SettingsScrollAnchor(_scroll);
 
   @override
   void initState() {
@@ -58,6 +65,8 @@ class _TextReplacementPageState extends State<TextReplacementPage> {
   @override
   void dispose() {
     _store.changes.removeListener(_changed);
+    _anchor.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -114,24 +123,28 @@ class _TextReplacementPageState extends State<TextReplacementPage> {
 
   @override
   Widget build(BuildContext context) {
-    final classic = AppUiScope.isClassic(context);
-    final palette = HomePalette.of(context);
+    final style = AppUiScope.of(context);
+    final classic = style == AppThemeStyle.classic;
+    _anchor.track(style);
     final snapshot = _store.snapshot;
     final full = snapshot.rules.length >= 50;
     final content = <Widget>[
-      SettingsCard(
-        children: [
-          SettingsToggleRow(
-            key: const ValueKey('replacement-enabled'),
-            icon: CupertinoIcons.textformat,
-            title: '启用正文替换',
-            description: '应用于所有小说，原始缓存保持不变',
-            value: snapshot.enabled,
-            onChanged: _saving
-                ? null
-                : (enabled) => _update(snapshot.rules, enabled: enabled),
-          ),
-        ],
+      KeyedSubtree(
+        key: _anchor.keyFor('enabled'),
+        child: SettingsCard(
+          children: [
+            SettingsToggleRow(
+              key: const ValueKey('replacement-enabled'),
+              icon: CupertinoIcons.textformat,
+              title: '启用正文替换',
+              description: '应用于所有小说，原始缓存保持不变',
+              value: snapshot.enabled,
+              onChanged: _saving
+                  ? null
+                  : (enabled) => _update(snapshot.rules, enabled: enabled),
+            ),
+          ],
+        ),
       ),
       const SizedBox(height: 12),
       const SettingsHint(
@@ -143,65 +156,35 @@ class _TextReplacementPageState extends State<TextReplacementPage> {
         SettingsHint(warning, emphasis: true),
       ],
       const SizedBox(height: 12),
-      if (snapshot.rules.isEmpty)
-        const SettingsNotice(
-          icon: CupertinoIcons.doc_text,
-          classicIcon: LucideIcons.file_text,
-          title: '还没有替换规则',
-          message: '点击下方「添加规则」新增一条。',
-        )
-      else
-        SettingsCard(
-          children: [
-            for (var i = 0; i < snapshot.rules.length; i++)
-              _ruleBlock(i, snapshot.rules[i], classic: classic),
-          ],
-        ),
-    ];
-    if (classic) {
-      // The pre-#291 page pins its add button to the bottom edge, which the
-      // classic feature shell (AppBar + body) cannot express.
-      return Scaffold(
-        backgroundColor: palette.canvas,
-        appBar: settingsAppBar(
-          context,
-          title: '正文替换',
-          // A single embedded route (Windows two-pane settings) must
-          // not offer a back affordance that would empty the pane.
-          showBack: Navigator.of(context).canPop(),
-        ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : SafeArea(
-                top: false,
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: ListView(
-                    key: const PageStorageKey('text-replacement-classic'),
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    children: content,
-                  ),
-                ),
+      KeyedSubtree(
+        key: _anchor.keyFor('rules'),
+        child: snapshot.rules.isEmpty
+            ? const SettingsNotice(
+                icon: CupertinoIcons.doc_text,
+                classicIcon: LucideIcons.file_text,
+                title: '还没有替换规则',
+                message: '点击下方「添加规则」新增一条。',
+              )
+            : SettingsCard(
+                children: [
+                  // One anchor per rule: the row the user was reading keeps
+                  // its place even though classic and archive rows differ in
+                  // height.
+                  for (var i = 0; i < snapshot.rules.length; i++)
+                    KeyedSubtree(
+                      key: _anchor.keyFor('rule-${snapshot.rules[i].id}'),
+                      child: _ruleBlock(i, snapshot.rules[i], classic: classic),
+                    ),
+                ],
               ),
-        bottomNavigationBar: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            child: SettingsAction(
-              key: const ValueKey('replacement-add'),
-              label: '添加规则',
-              icon: LucideIcons.plus,
-              style: SettingsActionStyle.filled,
-              expand: true,
-              onPressed: _loading || _saving || full ? null : _edit,
-            ),
-          ),
-        ),
-      );
-    }
+      ),
+    ];
     return SettingsArchivePage(
       title: '正文替换',
       code: 'SYSTEM / TEXT REPLACEMENT',
+      // Classic pins the add button to the bottom edge like the pre-#291 page;
+      // the archive keeps the floating pill inside the body.
+      classicBottomBar: classic ? _classicAddBar(context) : null,
       child: _loading
           ? const Center(child: CircularProgressIndicator())
           : Stack(
@@ -209,36 +192,65 @@ class _TextReplacementPageState extends State<TextReplacementPage> {
                 Align(
                   alignment: Alignment.topCenter,
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 760),
+                    constraints: BoxConstraints(maxWidth: classic ? 640 : 760),
                     child: ListView(
-                      padding: featurePadding(context).copyWith(
-                        bottom: MediaQuery.paddingOf(context).bottom + 120,
-                      ),
+                      key: const ValueKey('text-replacement-list'),
+                      controller: _scroll,
+                      padding: classic
+                          ? featurePadding(context)
+                          : featurePadding(context).copyWith(
+                              bottom:
+                                  MediaQuery.paddingOf(context).bottom + 120,
+                            ),
                       children: content,
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: SafeArea(
-                    top: false,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                      child: Center(
-                        child: GlassPillButton(
-                          key: const ValueKey('replacement-add'),
-                          icon: CupertinoIcons.add,
-                          label: '添加规则',
-                          onPressed: _loading || _saving || full ? null : _edit,
+                if (!classic)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: SafeArea(
+                      top: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                        child: Center(
+                          child: GlassPillButton(
+                            key: const ValueKey('replacement-add'),
+                            icon: CupertinoIcons.add,
+                            label: '添加规则',
+                            onPressed: _loading || _saving || full
+                                ? null
+                                : _edit,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
               ],
             ),
+    );
+  }
+
+  /// Classic fixed action bar (pre-#291 layout). The archive keeps the pill.
+  Widget _classicAddBar(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final full = _store.snapshot.rules.length >= 50;
+    return SafeArea(
+      top: false,
+      child: Container(
+        color: palette.canvas,
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: SettingsAction(
+          key: const ValueKey('replacement-add'),
+          label: '添加规则',
+          icon: LucideIcons.plus,
+          style: SettingsActionStyle.filled,
+          expand: true,
+          onPressed: _loading || _saving || full ? null : _edit,
+        ),
+      ),
     );
   }
 
