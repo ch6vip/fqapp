@@ -52,6 +52,7 @@ import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
+import 'widgets/app_ui/app_ui_scope.dart';
 import 'widgets/shell_dock.dart';
 import 'widgets/unsupported_feature_page.dart';
 import 'widgets/home/home_design.dart';
@@ -290,29 +291,38 @@ class _FqAppState extends State<FqApp> {
                         recentListen: loadRecentListen,
                         child: child ?? const SizedBox.shrink(),
                       );
-                      // Routes without an AppBar need a live fallback above the
-                      // Navigator; the covered root route cannot paint its style.
-                      // Reader/video annotations still override this default.
-                      return AnnotatedRegion<SystemUiOverlayStyle>(
-                        value:
-                            (palette.dark
-                                    ? SystemUiOverlayStyle.light
-                                    : SystemUiOverlayStyle.dark)
-                                .copyWith(
-                                  statusBarColor: palette.canvas,
-                                  systemNavigationBarColor: palette.canvas,
-                                  systemNavigationBarDividerColor:
-                                      palette.canvas,
-                                  systemNavigationBarIconBrightness:
-                                      palette.dark
-                                      ? Brightness.light
-                                      : Brightness.dark,
-                                ),
-                        child: AudioFloatingRouteScope(
-                          routes: _audioRoutes,
-                          child: isWindowsDesktop
-                              ? DesktopAppFrame(child: playback)
-                              : playback,
+                      // One live presentation scope above the root Navigator,
+                      // so pushed routes, nested Navigators and every Overlay
+                      // entry read the same discrete style. It is installed in
+                      // the builder (not in a page) on purpose; see
+                      // [AppUiScope].
+                      return AppUiScope(
+                        store: AppThemeStyleStore.instance,
+                        child: AnnotatedRegion<SystemUiOverlayStyle>(
+                          // Routes without an AppBar need a live fallback above
+                          // the Navigator; the covered root route cannot paint
+                          // its style. Reader/video annotations still override
+                          // this default.
+                          value:
+                              (palette.dark
+                                      ? SystemUiOverlayStyle.light
+                                      : SystemUiOverlayStyle.dark)
+                                  .copyWith(
+                                    statusBarColor: palette.canvas,
+                                    systemNavigationBarColor: palette.canvas,
+                                    systemNavigationBarDividerColor:
+                                        palette.canvas,
+                                    systemNavigationBarIconBrightness:
+                                        palette.dark
+                                        ? Brightness.light
+                                        : Brightness.dark,
+                                  ),
+                          child: AudioFloatingRouteScope(
+                            routes: _audioRoutes,
+                            child: isWindowsDesktop
+                                ? DesktopAppFrame(child: playback)
+                                : playback,
+                          ),
                         ),
                       );
                     },
