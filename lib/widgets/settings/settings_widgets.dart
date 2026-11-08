@@ -56,6 +56,7 @@ class SettingsScaffold extends StatelessWidget {
     required this.body,
     this.actions,
     this.bottom,
+    this.bottomNavigationBar,
     this.resizeToAvoidBottomInset,
     this.showBack = true,
     this.extendBodyBehindAppBar = false,
@@ -65,6 +66,11 @@ class SettingsScaffold extends StatelessWidget {
   final Widget body;
   final List<Widget>? actions;
   final PreferredSizeWidget? bottom;
+
+  /// Fixed action bar under the body (classic feature pages that pin their
+  /// primary action). Archive feature pages keep their in-page actions.
+  final Widget? bottomNavigationBar;
+
   final bool? resizeToAvoidBottomInset;
 
   /// Default keeps the original settings behaviour; the feature-page shell
@@ -90,6 +96,7 @@ class SettingsScaffold extends StatelessWidget {
         showBack: showBack,
       ),
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
+      bottomNavigationBar: bottomNavigationBar,
       body: body,
     );
   }

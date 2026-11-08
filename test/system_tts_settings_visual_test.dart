@@ -5,10 +5,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/system_tts_settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 /// 系统朗读设置页的空态 / 错态走统一的 [ContentNotice]（Wenku8 档案态），
-/// 页面骨架换成 [ArchiveFeaturePage]。
+/// 页面骨架走设置页共享的 [SettingsArchivePage]（档案主题下等价于
+/// `ArchiveFeaturePage`，经典主题下换成经典 AppBar 外壳）。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('fqapp/system_tts');
@@ -49,7 +51,7 @@ void main() {
       return null;
     });
 
-    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(find.byType(SettingsArchivePage), findsOneWidget);
     expect(find.byType(ContentNotice), findsOneWidget);
     expect(find.text('没有找到朗读引擎'), findsOneWidget);
     expect(find.textContaining('请先安装'), findsOneWidget);

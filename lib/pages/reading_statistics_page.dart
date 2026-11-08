@@ -1,23 +1,21 @@
-// Upstream source: Wenku8_Flutter rev ebcd7f1
-//   lib/reading_statistics_page.dart (ArchiveFeaturePage shell, ArchiveSection
-//     section rhythm, featurePadding, _muted, _section spacing)
-// Mechanical substitutions:
-// - `ReadingStatisticsData` (range picker, bookmarks, collection, touch
-//   modules) is not ported wholesale. The page renders the upstream overview
-//   sections fqapp's stores can fill: 阅读总览 (累计/活跃/本周/今日, plus the
-//   「当前文库」 block fed by ShelfStore and the reading-history ranking),
-//   阅读节律, 阅读日历, 读得最多. No upstream-only statistic (bookmarks,
-//   light notes, online-book counts) is invented.
-// - 「当前文库」 reads `ShelfStore.records()` and `ReadingStats.rank` (books
-//   with history or recorded time); the page layer only, no service changes.
-// - The category `GlassDock` is not mounted: fqapp opens statistics as a
-//   standalone route above the app shell, and every remaining section fits a
-//   single scroll. Upstream's module configuration sheet has no fqapp
-//   counterpart and is therefore absent rather than faked.
-// - `appText`/`NovelMotion` substitutions match the rest of the shared layer;
-//   charts come from `lib/widgets/wenku/reading_charts.dart`.
-// - The existing store reload / visibility gating (TickerMode, debounce,
-//   history + read-time listeners) is unchanged.
+// Upstream source: Wenku8_Flutter rev ebcd7f1 `lib/reading_statistics_page.dart`
+// (ArchiveFeaturePage shell, ArchiveSection rhythm, featurePadding).
+//
+// Two presentations, one set of stores. Archive keeps the upstream overview
+// sections (`MineSummary`, `MineLibraryOverview`, `MineHeatmap`,
+// `MineTopBooks`); classic reuses the pre-#291 「我的」 statistics vocabulary
+// from fqapp-backup@f329399 (`ClassicMineSummary`, `ClassicMineHeatmap`,
+// `ClassicMineTopBooks`), so the page reads like the old mine screen while the
+// route, range and store listeners stay current.
+//
+// `ReadingStatisticsData` (range picker, bookmarks, collection, touch modules)
+// is not ported wholesale: every section fqapp's stores can fill is rendered,
+// 「当前文库」 reads `ShelfStore.records()` and `ReadingStats.rank`, and no
+// upstream-only statistic is invented. The category `GlassDock` is not mounted
+// because fqapp opens statistics as a standalone route.
+//
+// The store reload / visibility gating (TickerMode, debounce, history and
+// read-time listeners) is unchanged.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -28,9 +26,17 @@ import '../services/book_open_preferences.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/shelf_store.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/home/home_shelf.dart';
+import '../widgets/mine/classic_mine_heatmap.dart';
+import '../widgets/mine/classic_mine_summary.dart';
+import '../widgets/mine/classic_mine_top_books.dart';
 import '../widgets/mine/mine_heatmap.dart';
 import '../widgets/mine/mine_summary.dart';
 import '../widgets/mine/mine_top_books.dart';
+import '../widgets/settings/settings_adaptive.dart';
+import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/wenku/reading_charts.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'detail_page.dart';
@@ -138,11 +144,14 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
   @override
   Widget build(BuildContext context) {
     final today = DateUtils.dateOnly(DateTime.now());
-    return ArchiveFeaturePage(
+    final classic = AppUiScope.isClassic(context);
+    return SettingsArchivePage(
       title: '统计',
       code: 'PERSONAL / READING RECORDS',
       child: _loading
           ? const Center(child: CircularProgressIndicator())
+          : classic
+          ? _classicBody(context, today)
           : ListView(
               key: const ValueKey('reading-statistics-list'),
               padding: featurePadding(context),
@@ -155,7 +164,7 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
                   readingBooks: _stats.rank.length,
                 ),
                 const SizedBox(height: 34),
-                _rhythm(context, today),
+                _rhythm(context, today, classic: false),
                 const SizedBox(height: 34),
                 MineHeatmap(stats: _stats, today: today),
                 const SizedBox(height: 34),
@@ -165,7 +174,60 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
     );
   }
 
-  Widget _rhythm(BuildContext context, DateTime today) {
+  /// Classic body: the 我的 statistics vocabulary from f329399.
+  ///
+  /// The classic mine widgets own their `homeGutter`, so the list itself only
+  /// reserves the AppBar and bottom safe area. The two blocks that do not come
+  /// from that vocabulary (当前文库 counts and 阅读节律) add the gutter here.
+  Widget _classicBody(BuildContext context, DateTime today) {
+    final palette = HomePalette.of(context);
+    final gutter = MediaQuery.paddingOf(context);
+    return ListView(
+      key: const ValueKey('reading-statistics-list'),
+      padding: EdgeInsets.only(
+        top: gutter.top + kToolbarHeight + 8,
+        bottom: gutter.bottom + 24,
+      ),
+      children: [
+        ClassicMineSummary(stats: _stats, today: today),
+        const SizedBox(height: 18),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '当前文库 · ${today.year}.${today.month}.${today.day}',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: palette.muted,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SettingsStats(
+                values: {'藏书': _shelfBooks, '有阅读记录': _stats.rank.length},
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 26),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+          child: _rhythm(context, today, classic: true),
+        ),
+        const SizedBox(height: 26),
+        ClassicMineHeatmap(stats: _stats, today: today),
+        ClassicMineTopBooks(rank: _stats.rank, onOpen: _openEntry),
+      ],
+    );
+  }
+
+  Widget _rhythm(
+    BuildContext context,
+    DateTime today, {
+    required bool classic,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final dates = [
       for (var back = _rhythmDays - 1; back >= 0; back--)
@@ -184,12 +246,12 @@ class _ReadingStatisticsPageState extends State<ReadingStatisticsPage> {
     final muted = TextStyle(
       fontSize: 12,
       height: 1.4,
-      color: scheme.onSurfaceVariant,
+      color: classic ? HomePalette.of(context).muted : scheme.onSurfaceVariant,
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const ArchiveSection(title: '阅读节律', code: 'READING / RHYTHM'),
+        const SettingsSection(title: '阅读节律', code: 'READING / RHYTHM'),
         const SizedBox(height: 22),
         ReadingRhythmChart(
           dates: dates,

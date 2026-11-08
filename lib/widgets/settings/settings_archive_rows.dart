@@ -22,8 +22,9 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../app_ui/app_ui_scope.dart';
+import '../home/home_design.dart';
 import '../wenku/wenku_ui.dart';
-import '../../services/app_style_tokens.dart';
 import 'classic_settings_icons.dart';
 import 'settings_widgets.dart';
 
@@ -78,7 +79,7 @@ class SettingsToggleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = onChanged;
-    if (AppStyleTokens.of(context).isClassic) {
+    if (AppUiScope.isClassic(context)) {
       void toggle(bool next) {
         if (change != null) unawaited(Future<void>.sync(() => change(next)));
       }
@@ -218,59 +219,94 @@ class SettingsLinkRow extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => JellyTapSurface(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        children: [
-          ArchiveIcon(icon, size: 21),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppText(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 5),
+  Widget build(BuildContext context) {
+    if (AppUiScope.isClassic(context)) {
+      return SettingsRow(
+        icon: classicSettingsIcon(title, icon),
+        iconTile: true,
+        title: title,
+        subtitle: subtitle,
+        trailing: trailing,
+        onTap: onTap,
+      );
+    }
+    return JellyTapSurface(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            ArchiveIcon(icon, size: 21),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   AppText(
-                    subtitle!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.6,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 5),
+                    AppText(
+                      subtitle!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.6,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          trailing ??
-              const ArchiveIcon(CupertinoIcons.chevron_forward, size: 14),
-        ],
+            const SizedBox(width: 8),
+            trailing ??
+                const ArchiveIcon(CupertinoIcons.chevron_forward, size: 14),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
-/// Secondary copy under a settings panel, matching the archive supporting
-/// style used by the upstream settings pages.
+/// Secondary copy under a settings panel.
+///
+/// Classic uses the muted home ink from f329399; archive keeps the archive
+/// supporting style. [emphasis] promotes a warning line to the main ink colour.
 class SettingsHint extends StatelessWidget {
-  const SettingsHint(this.text, {super.key, this.fontSize = 13});
+  const SettingsHint(
+    this.text, {
+    super.key,
+    this.fontSize = 13,
+    this.emphasis = false,
+  });
   final String text;
   final double fontSize;
+  final bool emphasis;
 
   @override
-  Widget build(BuildContext context) => AppText(
-    text,
-    style: TextStyle(
-      fontSize: fontSize,
-      height: 1.6,
-      color: Theme.of(context).colorScheme.onSurfaceVariant,
-    ),
-  );
+  Widget build(BuildContext context) {
+    if (AppUiScope.isClassic(context)) {
+      final palette = HomePalette.of(context);
+      return Text(
+        text,
+        style: TextStyle(
+          fontSize: fontSize,
+          height: 1.6,
+          color: emphasis ? palette.ink : palette.muted,
+        ),
+      );
+    }
+    return AppText(
+      text,
+      style: TextStyle(
+        fontSize: fontSize,
+        height: 1.6,
+        color: emphasis
+            ? Theme.of(context).colorScheme.onSurface
+            : Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
 }
