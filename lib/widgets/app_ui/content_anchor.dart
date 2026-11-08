@@ -21,6 +21,7 @@ class ContentAnchor {
     required this.offset,
     required this.pixels,
     this.index,
+    this.extent = 0,
   });
 
   /// Content id, e.g. `synopsis` or `directory/chapter:chapter-23`.
@@ -41,9 +42,16 @@ class ContentAnchor {
   /// where it lives instead of falling back to the section.
   final int? index;
 
+  /// Height of the anchored row in the layout it was captured from. The other
+  /// layout may use much shorter rows (a grid card vs a list row), so the same
+  /// pixel depth can put the whole row above the viewport; the restore converts
+  /// the depth with this value.
+  final double extent;
+
   @override
   String toString() =>
-      'ContentAnchor($id, offset: $offset, pixels: $pixels, index: $index)';
+      'ContentAnchor($id, offset: $offset, pixels: $pixels, '
+      'index: $index, extent: $extent)';
 }
 
 const String _anchorKeyPrefix = 'content-anchor:';
@@ -135,6 +143,7 @@ ContentAnchor? captureContentAnchor(
     offset: pixels - chosen.reveal,
     pixels: pixels,
     index: indexOf?.call(chosen.id),
+    extent: chosen.extent,
   );
 }
 
@@ -288,8 +297,8 @@ class ContentAnchorKeeper {
     // 1. The very content is mounted: put it back at its old depth.
     final box = findContentAnchorBox(context, anchor.id);
     final reveal = box == null ? null : contentAnchorRevealOffset(box);
-    if (reveal != null) {
-      final target = reveal + anchor.offset;
+    if (box != null && reveal != null) {
+      final target = reveal + _depthFor(anchor, box.size.height);
       if ((position.pixels - target).abs() < 1.5 || _snaps >= 3) {
         _pending = null;
         return;
@@ -337,6 +346,30 @@ class ContentAnchorKeeper {
     //    frames while the new layout builds.
     if (_attempts == 0) _moveTo(position, anchor.pixels);
     _retry(context);
+  }
+
+  /// How far above the viewport's top edge the anchor must sit in the new
+  /// layout.
+  ///
+  /// Negative depths are the gap that preceded the anchor: keeping them leaves
+  /// the same gap between sections. A positive depth means the anchor started
+  /// above the top edge with part of it on screen; row heights differ between
+  /// the layouts (a 231dp grid card becomes a 109dp list row), so the depth is
+  /// scaled by the new row height and clamped to keep the anchored row's box
+  /// intersecting the viewport instead of parking the whole row above it.
+  double _depthFor(ContentAnchor anchor, double newExtent) {
+    final offset = anchor.offset;
+    if (offset <= 0) return offset;
+    // Section anchors (no row kind) keep their absolute depth: their height is
+    // the whole block, and the same text should stay at the top edge.
+    if (contentAnchorKind(anchor.id) == null) return offset;
+    final limit = newExtent > 0 ? newExtent - 1 : offset;
+    final oldExtent = anchor.extent;
+    if (oldExtent <= 0 || newExtent <= 0) {
+      return offset < limit ? offset : limit;
+    }
+    final scaled = offset * (newExtent / oldExtent);
+    return scaled < limit ? scaled : limit;
   }
 
   /// Estimates the scroll offset that puts [anchor]'s row at the viewport top,
