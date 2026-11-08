@@ -7,17 +7,22 @@
 //   episode-level download state has no upstream counterpart and this unit is
 //   scoped to the page shell. The page now supplies the archive shell, section
 //   header and empty state around them.
-// - Bulk actions keep their existing keys and pause/resume/clear behaviour,
-//   grouped in a glass menu so the page title stays readable on phones.
-// - Loading/error retain fqapp's store semantics; the error uses the shared
-//   `FeatureError` treatment.
+// - Bulk actions keep their existing keys and pause/resume/clear behaviour.
+//   Archive groups them in a glass menu; classic restores the original three
+//   AppBar buttons. Both presentations share this page's State and downloader.
+// - Loading/error retain fqapp's store semantics; archive uses the shared
+//   `FeatureError` treatment and classic uses the original CacheErrorState.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/chapter_cache_store.dart' show formatCacheBytes;
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/cache/cache_page_widgets.dart';
 import '../widgets/cache/cached_drama_widgets.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
@@ -48,6 +53,11 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
   bool _loading = true;
   String? _error;
   int _generation = 0;
+
+  /// Owned above the shell branch so switching the presentation style moves
+  /// the same content element (and expanded cards/scroll) between the classic
+  /// AppBar shell and the archive header.
+  final _contentKey = GlobalKey(debugLabel: 'cached-dramas-content');
 
   @override
   void initState() {
@@ -198,8 +208,55 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     }
   }
 
-  Widget _body(List<DramaDownloadTask> tasks, ColorScheme scheme) {
+  Widget _body(
+    List<DramaDownloadTask> tasks,
+    ColorScheme scheme, {
+    required bool classic,
+  }) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    if (classic) {
+      if (_error case final error?) {
+        return CacheErrorState(message: error, onRetry: _reload);
+      }
+      if (_dramas.isEmpty && tasks.isEmpty) {
+        return const CacheEmptyState(
+          icon: LucideIcons.clapperboard,
+          title: '暂无离线缓存',
+          message: '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+        );
+      }
+      final episodeCount = _dramas.fold(
+        0,
+        (sum, item) => sum + item.episodes.length,
+      );
+      final bytes = _dramas.fold(0, (sum, item) => sum + item.bytes);
+      return ListView(
+        key: const ValueKey('cached-dramas-scroll'),
+        padding: featurePadding(context),
+        children: [
+          CacheSummaryCard(
+            icon: LucideIcons.clapperboard,
+            title: '已缓存 ${_dramas.length} 部 · 共 $episodeCount 集',
+            subtitle: '占用空间：${formatCacheBytes(bytes)} · 加密离线播放',
+          ),
+          const SizedBox(height: 12),
+          for (final task in _looseTasks(tasks))
+            DownloadTaskCard(
+              task: task,
+              onRetry: () => _downloader.resume(task.itemId),
+            ),
+          for (final item in _dramas)
+            CachedDramaCard(
+              key: ValueKey('drama-card-${item.drama.id}'),
+              summary: item,
+              tasks: _pendingTasks(item),
+              onDeleteDrama: () => _deleteDrama(item),
+              onDeleteEpisode: _deleteEpisode,
+              onRetry: (task) => _downloader.resume(task.itemId),
+            ),
+        ],
+      );
+    }
     if (_error case final error?) {
       return ListView(
         padding: featurePadding(context),
@@ -282,10 +339,74 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     );
   }
 
+  /// Classic AppBar action: direct pause/resume/clear buttons, disabled with a
+  /// faded icon instead of hiding the action.
+  Widget _actionButton({
+    required Key key,
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    required HomePalette palette,
+  }) => IconButton(
+    key: key,
+    tooltip: tooltip,
+    onPressed: onPressed,
+    icon: Icon(
+      icon,
+      color: onPressed == null
+          ? palette.muted.withValues(alpha: 0.4)
+          : palette.ink,
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
     final scheme = Theme.of(context).colorScheme;
     final tasks = _downloader.value;
+    final body = KeyedSubtree(
+      key: _contentKey,
+      child: _body(tasks, scheme, classic: classic),
+    );
+    if (classic) {
+      final palette = HomePalette.of(context);
+      final hasActiveTasks = tasks.any(
+        (task) =>
+            task.status == DramaDownloadStatus.downloading ||
+            task.status == DramaDownloadStatus.waiting,
+      );
+      final hasPausedTasks = tasks.any(
+        (task) => task.status == DramaDownloadStatus.paused,
+      );
+      return ClassicFeaturePage(
+        key: const ValueKey('dramas-page'),
+        title: '短剧离线缓存',
+        actions: [
+          _actionButton(
+            key: const ValueKey('dramas-pause-all'),
+            tooltip: '暂停全部下载',
+            icon: LucideIcons.circle_pause,
+            onPressed: hasActiveTasks ? _downloader.pauseAll : null,
+            palette: palette,
+          ),
+          _actionButton(
+            key: const ValueKey('dramas-resume-all'),
+            tooltip: '继续全部下载',
+            icon: LucideIcons.circle_play,
+            onPressed: hasPausedTasks ? _downloader.resumeAll : null,
+            palette: palette,
+          ),
+          _actionButton(
+            key: const ValueKey('dramas-clear-all'),
+            tooltip: '清空全部缓存',
+            icon: LucideIcons.trash,
+            onPressed: _dramas.isEmpty ? null : _clearAll,
+            palette: palette,
+          ),
+        ],
+        child: body,
+      );
+    }
     return ArchiveFeaturePage(
       key: const ValueKey('dramas-page'),
       title: '短剧离线缓存',
@@ -302,7 +423,7 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
           ),
         ),
       ],
-      child: _body(tasks, scheme),
+      child: body,
     );
   }
 }
