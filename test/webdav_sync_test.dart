@@ -151,6 +151,26 @@ void main() {
     },
   );
 
+  test('creates missing WebDAV collections before retrying upload', () async {
+    final methods = <String>[];
+    var puts = 0;
+    final client = WebDavClient(
+      config,
+      client: MockClient((request) async {
+        methods.add('${request.method} ${request.url.path}');
+        if (request.method == 'MKCOL') return http.Response('', 201);
+        return http.Response('', ++puts == 1 ? 409 : 201);
+      }),
+    );
+    expect(await client.write(Uint8List(0), null), isTrue);
+    expect(methods, [
+      'PUT /books/fqapp-sync.json',
+      'MKCOL /books/',
+      'PUT /books/fqapp-sync.json',
+    ]);
+    client.close();
+  });
+
   test('rejects unsupported documents and malformed tombstones', () {
     expect(
       () => WebDavSyncDocument.decode(Uint8List.fromList(utf8.encode('{}'))),
