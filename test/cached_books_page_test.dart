@@ -9,11 +9,14 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/cached_books_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+import 'package:fqapp/widgets/cache/cache_page_widgets.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
+import 'support/app_ui_host.dart';
 import 'support/fakes.dart';
 
 void main() {
@@ -245,6 +248,90 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets('经典主题恢复缓存统计、AppBar 与设置卡列表', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final cache = await _oneCachedBook();
+    await pumpCacheBooksWithStyle(tester, cache, classic: true);
+
+    expect(find.byType(ClassicFeaturePage), findsOneWidget);
+    expect(find.byType(ArchiveFeaturePage), findsNothing);
+    expect(find.byType(CacheSummaryCard), findsOneWidget);
+    expect(find.text('已缓存 1 本 · 共 1 章'), findsOneWidget);
+    expect(find.textContaining('占用空间：'), findsOneWidget);
+    expect(find.byType(ArchiveSection), findsNothing);
+    expect(find.byTooltip('清空全部缓存'), findsOneWidget);
+    expect(find.byKey(const Key('cached_book_export_cached')), findsOneWidget);
+    expect(find.byTooltip('删除《离线测试书》缓存'), findsOneWidget);
+  });
+
+  testWidgets('经典主题删除单本后回到经典空态', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final cache = await _oneCachedBook();
+    await pumpCacheBooksWithStyle(tester, cache, classic: true);
+
+    await tester.tap(find.byTooltip('删除《离线测试书》缓存'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    expect(await cache.cachedChapterIds('cached'), isEmpty);
+    expect(find.byType(CacheEmptyState), findsOneWidget);
+    expect(find.textContaining('暂无缓存章节'), findsOneWidget);
+    expect(find.byType(CacheSummaryCard), findsNothing);
+  });
+
+  testWidgets('切换主题保留缓存页 State 并回到档案壳', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final cache = await _oneCachedBook();
+    final store = await pumpCacheBooksWithStyle(tester, cache, classic: true);
+    final state = tester.state(find.byType(CachedBooksPage));
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(find.byType(ClassicFeaturePage), findsNothing);
+    expect(tester.state(find.byType(CachedBooksPage)), same(state));
+  });
+}
+
+Future<_ManagedMemoryCache> _oneCachedBook() async {
+  final cache = _ManagedMemoryCache();
+  await cache.saveBook(
+    CachedBook(
+      id: 'cached',
+      title: '离线测试书',
+      chapters: [Chapter(itemId: '1', title: '缓存章节', volumeName: '')],
+    ),
+  );
+  await cache.write(
+    bookId: 'cached',
+    chapterId: '1',
+    title: '缓存章节',
+    text: '缓存正文',
+  );
+  return cache;
+}
+
+Future<AppThemeStyleStore> pumpCacheBooksWithStyle(
+  WidgetTester tester,
+  ChapterCacheStore cache, {
+  required bool classic,
+}) async {
+  final store = AppThemeStyleStore()
+    ..value = classic ? AppThemeStyle.classic : AppThemeStyle.archive;
+  addTearDown(store.dispose);
+  await tester.pumpWidget(
+    AppUiHost(
+      store: store,
+      home: CachedBooksPage(
+        cacheStore: cache,
+        readerStore: MemoryReaderStore(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return store;
 }
 
 class _UnreadableHistoryStore extends MemoryReaderStore {

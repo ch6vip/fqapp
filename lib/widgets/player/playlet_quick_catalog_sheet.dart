@@ -11,6 +11,7 @@ import '../../services/backend_transport.dart';
 import '../../services/player_history.dart';
 import '../../services/library_store.dart';
 import '../../services/user_facing_error.dart';
+import '../../services/video_catalogue.dart';
 import 'related_series_sheet.dart';
 
 /// 快速选集半屏抽屉：在 Feed 流中无需跳页，快速预览剧集目录并就地选择集数或全屏观看。
@@ -122,20 +123,15 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
 
     try {
       final loader = widget.directoryLoader;
-      final volumes = loader != null
-          ? await loader(contentId, tab)
-          : await ApiClient.instance.directoryChapters(contentId, tab: tab);
-
-      final eps = volumes.expand((volume) => volume).toList(growable: false);
-      if (eps.isEmpty && item.episodeId != null) {
-        eps.add(
-          Chapter(
-            itemId: item.episodeId!,
-            title: item.title,
-            volumeName: '剧集',
-          ),
-        );
-      }
+      // 离线时先看本地已存目录；单集搜索结果退回「当前视频」身份，
+      // 不拿列表位置冒充全集集号。
+      final eps = await loadVideoCatalogue(
+        seriesId: contentId,
+        tab: tab,
+        episodeId: item.episodeId,
+        title: item.title,
+        loader: loader == null ? null : () => loader(contentId, tab),
+      );
 
       int resumeIndex = 0;
       try {
@@ -237,7 +233,9 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
-                                  '共${_episodes.length}集',
+                                  hasCompleteEpisodeCatalogue(_episodes)
+                                      ? '共${_episodes.length}集'
+                                      : '完整目录暂不可用',
                                   style: const TextStyle(
                                     fontSize: 11,
                                     color: Colors.white70,
@@ -253,7 +251,9 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
                           Padding(
                             padding: const EdgeInsets.only(top: 3),
                             child: Text(
-                              '上次看到：第${_currentIndex + 1}集',
+                              _episodes[_currentIndex].hasKnownIndex
+                                  ? '上次看到：第${_currentIndex + 1}集'
+                                  : '上次看到：当前视频',
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Color(0xFFFA6725),
@@ -329,7 +329,6 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
                 ],
               ),
             ),
-
 
             // 官方 `catalogdialog/view/s`：同系列是选集弹层**内的一块**（双列
             // 网格），不是一个会再开弹层的按钮。只在详情表明有关联时出现。
@@ -469,7 +468,7 @@ class _PlayletQuickCatalogSheetState extends State<PlayletQuickCatalogSheet> {
               ),
             ),
             child: Text(
-              '$episodeNum',
+              _episodes[index].hasKnownIndex ? '$episodeNum' : '当前',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
