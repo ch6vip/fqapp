@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../services/webdav_client.dart';
 import '../services/webdav_sync_service.dart';
-import '../widgets/home/home_design.dart';
+import '../services/app_style_tokens.dart';
+import '../widgets/wenku/wenku_ui.dart';
 import '../widgets/settings/settings_widgets.dart';
 
 class WebDavSyncPage extends StatefulWidget {
@@ -70,17 +71,24 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
     }
   }
 
+  Widget _shell(BuildContext context, Widget body) =>
+      AppStyleTokens.of(context).isClassic
+      ? SettingsScaffold(title: 'WebDAV 同步', body: body)
+      : ArchiveFeaturePage(
+          title: 'WebDAV 同步',
+          code: 'SYNC / WEBDAV',
+          child: body,
+        );
+
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
     return AnimatedBuilder(
       animation: Listenable.merge([_service.busy, _service.status]),
       builder: (context, _) {
         final busy = _saving || _service.busy.value;
-        return Scaffold(
-          backgroundColor: palette.canvas,
-          appBar: settingsAppBar(context, title: 'WebDAV 同步'),
-          body: SafeArea(
+        return _shell(
+          context,
+          SafeArea(
             child: Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
@@ -99,7 +107,7 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
                       ),
                       const SizedBox(height: 12),
                       const Text(
-                        '使用已有的 HTTPS WebDAV 目录。应用会创建 fqapp-sync.json；其他设备填写相同目录即可同步。',
+                        '填写 HTTPS WebDAV 目录，目录不存在时自动创建，并保存 fqapp-sync.json。其他设备填写相同目录即可同步。',
                       ),
                       const SizedBox(height: 20),
                       TextFormField(

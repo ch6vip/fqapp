@@ -234,7 +234,9 @@ class SettingsPage extends StatelessWidget {
                     icon: category.icon,
                     iconTile: true,
                     title: category.title,
-                    subtitle: category.subtitle,
+                    subtitle: category.title == '主题'
+                        ? AppThemeStyleStore.instance.value.label
+                        : category.subtitle,
                     onTap: () => _openCategory(context, category),
                   ),
               ],
@@ -259,11 +261,10 @@ class SettingsPage extends StatelessWidget {
                 FeatureEntry(
                   key: ValueKey('settings-entry-${categories[index].title}'),
                   title: categories[index].title,
-                  subtitle: categories[index].subtitle,
+                  subtitle: categories[index].title == '主题'
+                      ? AppThemeStyleStore.instance.value.label
+                      : categories[index].subtitle,
                   icon: categories[index].icon,
-                  trailing: categories[index].title == '主题'
-                      ? Text(AppThemeStyleStore.instance.value.label)
-                      : null,
                   onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
