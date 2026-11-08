@@ -12,6 +12,9 @@
 // - `formatCacheBytes`, `AppText`, `ContentPanel`, `ArchiveFeaturePage`,
 //   `ArchiveSection` and `GlassIconButton` are re-used as-is. E-ink delete
 //   colour still follows `HomePalette.eink`.
+// - The classic style keeps the original SettingsScaffold shell, summary card
+//   and SettingsGroupCard rows; both presentations share this page's State.
+//   Export, open-cached-reader, clear, delete and byte stats are unchanged.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -21,6 +24,9 @@ import '../services/api_client.dart';
 import '../services/book_txt_export.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/cache/cache_list_anchor.dart';
+import '../widgets/cache/cache_page_widgets.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/shelf/shelf_design.dart';
@@ -61,6 +67,14 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   BookTxtExport? _export;
   String? _exportBookId;
 
+  /// Owned above the shell branch so switching the presentation style moves
+  /// the same content element (and its scroll/export state) between the
+  /// classic AppBar shell and the archive header.
+  final _contentKey = GlobalKey(debugLabel: 'cached-books-content');
+  final _anchor = CacheListAnchor(debugLabel: 'cached-books');
+  bool? _layoutClassic;
+  bool? _appliedClassic;
+
   @override
   void initState() {
     super.initState();
@@ -69,8 +83,42 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final classic = AppUiScope.isClassic(context);
+    final previous = _layoutClassic;
+    _layoutClassic = classic;
+    if (previous == null || previous == classic) return;
+    // Capture the old row before this build replaces the list. Restoring waits
+    // for the new layout, when row heights and maxScrollExtent are known.
+    final content = _contentKey.currentContext;
+    if (content != null) {
+      _anchor.capture(content, _books.map((item) => 'book:${item.book.id}'));
+    }
+    _restoreAnchorAfterLayout();
+  }
+
+  /// The scope notifies before the page rebuilds, so the first post-frame
+  /// callback can still see the old list. Wait until this page has actually
+  /// built the target style, then restore into the new ScrollPosition.
+  void _restoreAnchorAfterLayout() {
+    final target = _layoutClassic;
+    if (target == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _layoutClassic != target) return;
+      if (_appliedClassic != target) {
+        _restoreAnchorAfterLayout();
+        return;
+      }
+      final content = _contentKey.currentContext;
+      if (content != null) _anchor.restore(content);
+    });
+  }
+
+  @override
   void dispose() {
     _store.changes.removeListener(_reload);
+    _anchor.dispose();
     // 离开页面就不该再有后台导出：没有界面报告结果的成功等于骗人。
     _export?.removeListener(_onExportChanged);
     _export?.dispose();
@@ -193,17 +241,97 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   Color _deleteColor(BuildContext context) =>
       HomePalette.of(context).eink ? Colors.black : ShelfTokens.deleteRed;
 
-  /// One cached book row: tap opens the reader, the trailing actions export and
-  /// clear. A running export turns its own button into progress and cancel.
-  Widget _bookCard(
+  /// Export/delete actions shared by both presentations. Only colours, not
+  /// behaviour, differ: the export button keeps its key and becomes a progress
+  /// cancel affordance while that book's export runs.
+  Widget _bookActions(
+    CachedBookSummary item, {
+    required Color muted,
+    required Color deleteColor,
+  }) {
+    final bookId = item.book.id;
+    final progress = _exportBookId == bookId ? _export?.value : null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (progress != null)
+          IconButton(
+            key: Key('cached_book_export_$bookId'),
+            tooltip: '取消导出',
+            onPressed: _cancelExport,
+            icon: SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(
+                value: progress.total == 0 ? null : progress.fraction,
+                strokeWidth: 2,
+              ),
+            ),
+          )
+        else
+          IconButton(
+            key: Key('cached_book_export_$bookId'),
+            tooltip: '导出 TXT 到系统「下载」',
+            onPressed: _export == null ? () => _startExport(item.book) : null,
+            icon: Icon(LucideIcons.download, size: 20, color: muted),
+          ),
+        IconButton(
+          tooltip: '删除《${item.book.title}》缓存',
+          onPressed: () => _clear(item.book),
+          icon: Icon(LucideIcons.trash, size: 20, color: deleteColor),
+        ),
+      ],
+    );
+  }
+
+  Widget? _exportProgress(
+    CachedBookSummary item, {
+    required bool classic,
+    required Color color,
+  }) {
+    final bookId = item.book.id;
+    final progress = _exportBookId == bookId ? _export?.value : null;
+    if (progress == null) return null;
+    final key = Key('cached_book_export_progress_$bookId');
+    final label = progress.total == 0
+        ? '导出中…'
+        : '导出 ${progress.completed}/${progress.total} 章';
+    if (classic) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            label,
+            key: key,
+            style: TextStyle(fontSize: 12, color: color),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: AppText(
+          label,
+          key: key,
+          style: TextStyle(fontSize: 12, color: color),
+        ),
+      ),
+    );
+  }
+
+  /// Archive row: ContentPanel with the upstream archive row rhythm.
+  Widget _archiveBookCard(
     CachedBookSummary item,
     ColorScheme scheme,
     Color deleteColor,
   ) {
-    final bookId = item.book.id;
-    // _onExportChanged clears _exportBookId as soon as the export stops, so a
-    // row can only see a state here while that export is still running.
-    final progress = _exportBookId == bookId ? _export?.value : null;
+    final progress = _exportProgress(
+      item,
+      classic: false,
+      color: scheme.primary,
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: ContentPanel(
@@ -240,61 +368,113 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                if (progress != null)
-                  IconButton(
-                    key: Key('cached_book_export_$bookId'),
-                    tooltip: '取消导出',
-                    onPressed: _cancelExport,
-                    icon: SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(
-                        value: progress.total == 0 ? null : progress.fraction,
-                        strokeWidth: 2,
-                      ),
-                    ),
-                  )
-                else
-                  IconButton(
-                    key: Key('cached_book_export_$bookId'),
-                    tooltip: '导出 TXT 到系统「下载」',
-                    onPressed: _export == null
-                        ? () => _startExport(item.book)
-                        : null,
-                    icon: Icon(
-                      LucideIcons.download,
-                      size: 20,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                IconButton(
-                  tooltip: '删除《${item.book.title}》缓存',
-                  onPressed: () => _clear(item.book),
-                  icon: Icon(LucideIcons.trash, size: 20, color: deleteColor),
+                _bookActions(
+                  item,
+                  muted: scheme.onSurfaceVariant,
+                  deleteColor: deleteColor,
                 ),
               ],
             ),
-            if (progress != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: AppText(
-                    progress.total == 0
-                        ? '导出中…'
-                        : '导出 ${progress.completed}/${progress.total} 章',
-                    key: Key('cached_book_export_progress_$bookId'),
-                    style: TextStyle(fontSize: 12, color: scheme.primary),
-                  ),
-                ),
-              ),
+            ?progress,
           ],
         ),
       ),
     );
   }
 
-  Widget _body(ColorScheme scheme) {
+  Widget _anchoredBook(CachedBookSummary item, Widget child) => KeyedSubtree(
+    key: _anchor.itemKey('book:${item.book.id}', title: item.book.title),
+    child: KeyedSubtree(
+      key: ValueKey('cached-book-row-${item.book.id}'),
+      child: child,
+    ),
+  );
+
+  /// Classic row: the original canvas settings card (38dp icon tile, 15sp
+  /// title, 12.5sp subtitle) with the same open/export/delete behaviour.
+  Widget _classicBookCard(CachedBookSummary item, HomePalette palette) {
+    final progress = _exportProgress(
+      item,
+      classic: true,
+      color: palette.accentText,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: SettingsGroupCard(
+        showDividers: false,
+        children: [
+          SettingsRow(
+            icon: LucideIcons.book_open,
+            iconTile: true,
+            title: item.book.title,
+            subtitle:
+                '${item.stats.chapterCount}/'
+                '${item.book.chapters.length} 章'
+                ' · ${formatCacheBytes(item.stats.byteCount)}',
+            onTap: () => _open(item.book),
+            trailing: _bookActions(
+              item,
+              muted: palette.muted,
+              deleteColor: _deleteColor(context),
+            ),
+          ),
+          ?progress,
+        ],
+      ),
+    );
+  }
+
+  /// The list padding follows the discrete style, not the animated theme
+  /// tokens: a style switch must settle the new indent in the same frame as
+  /// the list, or the post-frame anchor restore would land 8dp off once
+  /// `featurePadding` finishes animating between 20 and 12.
+  EdgeInsets _listPadding(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    final tokens = AppUiScope.presentationOf(context).tokens;
+    final media = MediaQuery.of(context);
+    return EdgeInsets.fromLTRB(
+      tokens.pageGutter,
+      media.padding.top + FrostedHeader.toolbarHeight + (classic ? 12 : 20),
+      tokens.pageGutter,
+      media.padding.bottom + 32,
+    );
+  }
+
+  Widget _body(ColorScheme scheme, {required bool classic}) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    if (classic) {
+      if (_error case final error?) {
+        return CacheErrorState(message: error, onRetry: _reload);
+      }
+      if (_books.isEmpty) {
+        return const CacheEmptyState(
+          icon: LucideIcons.hard_drive_download,
+          title: '暂无缓存章节',
+          message: '阅读小说后会自动保存，详情页「下载」会保存整本；下载的章节不会被自动清理。',
+        );
+      }
+      final palette = HomePalette.of(context);
+      final count = _books.fold(
+        0,
+        (sum, item) => sum + item.stats.chapterCount,
+      );
+      final bytes = _books.fold(0, (sum, item) => sum + item.stats.byteCount);
+      return ListView(
+        key: const ValueKey('cached-books-scroll'),
+        controller: _anchor.scroll,
+        padding: _listPadding(context),
+        children: [
+          CacheSummaryCard(
+            icon: LucideIcons.book_open,
+            title: '已缓存 ${_books.length} 本 · 共 $count 章',
+            subtitle: '占用空间：${formatCacheBytes(bytes)} · 点击可离线续读',
+          ),
+          const SizedBox(height: 12),
+          for (final item in _books)
+            _anchoredBook(item, _classicBookCard(item, palette)),
+        ],
+      );
+    }
     if (_error case final error?) {
       return ListView(
         padding: featurePadding(context),
@@ -315,7 +495,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     final deleteColor = _deleteColor(context);
     return ListView(
       key: const ValueKey('cached-books-scroll'),
-      padding: featurePadding(context),
+      controller: _anchor.scroll,
+      padding: _listPadding(context),
       children: [
         ArchiveSection(
           title: '本地存储',
@@ -344,7 +525,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
             ),
           )
         else
-          for (final item in _books) _bookCard(item, scheme, deleteColor),
+          for (final item in _books)
+            _anchoredBook(item, _archiveBookCard(item, scheme, deleteColor)),
         if (_books.isEmpty) ...[
           const SizedBox(height: 10),
           AppText(
@@ -362,7 +544,33 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
 
   @override
   Widget build(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    _appliedClassic = classic;
     final scheme = Theme.of(context).colorScheme;
+    final body = KeyedSubtree(
+      key: _contentKey,
+      child: _body(scheme, classic: classic),
+    );
+    if (classic) {
+      final palette = HomePalette.of(context);
+      final disabled = _books.isEmpty;
+      return ClassicFeaturePage(
+        title: '小说离线缓存',
+        actions: [
+          IconButton(
+            tooltip: '清空全部缓存',
+            onPressed: disabled ? null : () => _clear(),
+            icon: Icon(
+              LucideIcons.trash,
+              color: disabled
+                  ? palette.muted.withValues(alpha: 0.4)
+                  : _deleteColor(context),
+            ),
+          ),
+        ],
+        child: body,
+      );
+    }
     return ArchiveFeaturePage(
       title: '小说离线缓存',
       code: 'ARCHIVE / LOCAL STORAGE',
@@ -373,7 +581,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
           onPressed: _books.isEmpty ? null : () => _clear(),
         ),
       ],
-      child: _body(scheme),
+      child: body,
     );
   }
 }
