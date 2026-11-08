@@ -9,6 +9,7 @@ import '../models/author_profile.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
+import '../services/app_theme_style.dart';
 import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -71,7 +72,16 @@ class _AuthorPageState extends State<AuthorPage> {
   /// 经典 ⇄ 档案 swaps the whole tree: keep the visible work (or the section
   /// header) instead of relying on a recreated ScrollPosition. A work deep in
   /// the list is not built after the swap, so its data index locates it first.
-  late final _anchors = ContentAnchorKeeper(_scroll, indexOf: _anchorIndexOf);
+  late final _anchors = ContentAnchorKeeper(
+    _scroll,
+    indexOf: _anchorIndexOf,
+    visibleTopInset: _anchorTopInset,
+  );
+
+  /// 档案 (WenkuPage) paints the glass header over the scrolling body; 经典 puts
+  /// a Material AppBar above it. The anchor is measured from that visible edge.
+  double _anchorTopInset(BuildContext context, AppThemeStyle style) =>
+      style == AppThemeStyle.classic ? 0 : archiveChromeInset(context);
 
   /// Data index of an anchored work row, or null for section anchors.
   int? _anchorIndexOf(String anchorId) {
@@ -132,7 +142,9 @@ class _AuthorPageState extends State<AuthorPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (AppUiScope.isClassic(context)) {
+    final style = AppUiScope.of(context);
+    _anchors.noteLayoutStyle(style);
+    if (style == AppThemeStyle.classic) {
       return _buildClassicPage(context, HomePalette.of(context));
     }
     return ArchiveFeaturePage(
