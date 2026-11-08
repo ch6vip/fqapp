@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -476,6 +477,182 @@ void main() {
         },
       );
     }
+
+    testWidgets('分组胶囊：文案/激活态/重命名跟随分组，archive 不显示 classic 胶囊', (tester) async {
+      await _size(tester);
+      late String group;
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item());
+        group = await ShelfGroupStore.instance.addGroup('想读');
+        await ShelfGroupStore.instance.addGroup('睡前');
+        await ShelfGroupStore.instance.assignKeys(['book:123'], group);
+      });
+      final style = _style();
+      await tester.pumpWidget(_app(style));
+      await tester.pumpAndSettle();
+
+      final chip = find.byKey(const Key('shelf-group-chip'));
+      expect(chip, findsOneWidget);
+      expect(
+        find.descendant(of: chip, matching: find.text('全部书籍')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('书架分组：全部书籍'), findsOneWidget);
+      expect(
+        tester.getSemantics(chip).flagsCollection.isSelected,
+        Tristate.isFalse,
+      );
+
+      // 胶囊就是分组入口：点开现有的分类弹层。
+      await tester.tap(chip);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('书籍分类'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      // 选择分组由既有的 ShelfViewStore 驱动；测试里在真实异步区写入，
+      // 避免 Hive/偏好写队列落在 fake-async 区里不完成。
+      await tester.runAsync(
+        () => ShelfViewStore.instance.setCategoryOf(ShelfTabScope.shelf, group),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(
+        find.descendant(of: chip, matching: find.text('想读')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('书架分组：想读'), findsOneWidget);
+      expect(
+        tester.getSemantics(chip).flagsCollection.isSelected,
+        Tristate.isTrue,
+      );
+      expect(
+        tester
+            .widget<Text>(find.descendant(of: chip, matching: find.text('想读')))
+            .style!
+            .color,
+        HomePalette.accent,
+      );
+      expect(find.byType(BookshelfGridCard), findsOneWidget);
+
+      // 分组在别处改名：`_groupChanges` 监听让胶囊文案跟着回真。
+      await tester.runAsync(
+        () => ShelfGroupStore.instance.renameGroup(group, '在读'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(
+        find.descendant(of: chip, matching: find.text('在读')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('书架分组：在读'), findsOneWidget);
+
+      // archive 分支不渲染经典胶囊；筛选本身不受版式切换影响。
+      style.value = const AppStyleTokens.archive();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shelf-group-chip')), findsNothing);
+      expect(find.byType(ArchiveFileCarousel), findsOneWidget);
+      expect(ShelfViewStore.instance.categoryOf(ShelfTabScope.shelf), group);
+
+      style.value = const AppStyleTokens.classic();
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: chip, matching: find.text('在读')),
+        findsOneWidget,
+      );
+      expect(
+        tester.getSemantics(chip).flagsCollection.isSelected,
+        Tristate.isTrue,
+      );
+      expect(find.byType(BookshelfGridCard), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('分组筛选后列表过滤，空分组显示组名空态', (tester) async {
+      await _size(tester);
+      late String filled;
+      late String empty;
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item());
+        filled = await ShelfGroupStore.instance.addGroup('想读');
+        empty = await ShelfGroupStore.instance.addGroup('睡前');
+        await ShelfGroupStore.instance.assignKeys(['book:123'], filled);
+      });
+      await tester.pumpWidget(_app(_style()));
+      await tester.pumpAndSettle();
+
+      final chip = find.byKey(const Key('shelf-group-chip'));
+      await tester.runAsync(
+        () => ShelfViewStore.instance.setCategoryOf(ShelfTabScope.shelf, empty),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byType(BookshelfGridCard), findsNothing);
+      expect(find.text('「睡前」暂无书籍'), findsOneWidget);
+      expect(find.text('未找到相关内容'), findsNothing);
+      expect(
+        find.descendant(of: chip, matching: find.text('睡前')),
+        findsOneWidget,
+      );
+
+      await tester.runAsync(
+        () =>
+            ShelfViewStore.instance.setCategoryOf(ShelfTabScope.shelf, filled),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byType(BookshelfGridCard), findsOneWidget);
+      expect(find.text('测试书籍'), findsOneWidget);
+      expect(
+        find.descendant(of: chip, matching: find.text('想读')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('320dp + 2x 字号下工具栏同一行不溢出，长分组名只省略', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      late String group;
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item());
+        group = await ShelfGroupStore.instance.addGroup('分组名称' * 6);
+        await ShelfGroupStore.instance.assignKeys(['book:123'], group);
+      });
+      setSingleChapterPrefs({
+        'shelfLayout': 'shelfGrid',
+        'shelfCategory': group,
+      });
+      await ShelfViewStore.instance.load();
+      await tester.pumpWidget(
+        _app(
+          _style(),
+          size: const Size(320, 800),
+          textScaler: const TextScaler.linear(2),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final chip = find.byKey(const Key('shelf-group-chip'));
+      expect(chip, findsOneWidget);
+      expect(tester.getSize(chip).width, lessThanOrEqualTo(148));
+      final label = tester.widget<Text>(
+        find.descendant(of: chip, matching: find.text('分组名称' * 6)),
+      );
+      expect(label.maxLines, 1);
+      expect(label.overflow, TextOverflow.ellipsis);
+      expect(find.text('今日已读0分钟'), findsOneWidget);
+      for (final name in ['grid', 'double', 'list']) {
+        expect(find.byKey(Key('shelf-layout-$name')), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
   });
 }
 
@@ -495,6 +672,8 @@ Widget _app(
   ValueNotifier<AppStyleTokens> style, {
   LibraryPage? page,
   NavigatorObserver? observer,
+  Size size = const Size(400, 900),
+  TextScaler textScaler = TextScaler.noScaling,
 }) => ValueListenableBuilder<AppStyleTokens>(
   valueListenable: style,
   child: page ?? LibraryPage(cacheStore: MemoryChapterCache()),
@@ -503,7 +682,11 @@ Widget _app(
     theme: ThemeData(extensions: [tokens]),
     navigatorObservers: [?observer],
     home: MediaQuery(
-      data: const MediaQueryData(size: Size(400, 900), disableAnimations: true),
+      data: MediaQueryData(
+        size: size,
+        disableAnimations: true,
+        textScaler: textScaler,
+      ),
       child: child!,
     ),
   ),
