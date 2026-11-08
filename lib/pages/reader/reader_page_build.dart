@@ -80,6 +80,9 @@ extension _ReaderPageBuild on _ReaderPageState {
 
   Widget _buildReaderSurface(BuildContext context) {
     final preset = _effectivePreset;
+    // One decision per build, from the live scope, never from the animated
+    // theme tokens. Archive keeps the Wenku8/glass chrome untouched.
+    final classic = AppUiScope.isClassic(context);
     final windowPadding = MediaQuery.paddingOf(context);
     final overlayStyle = preset.isDark
         ? SystemUiOverlayStyle.light
@@ -201,16 +204,25 @@ extension _ReaderPageBuild on _ReaderPageState {
                     ],
                   ),
                 ),
-                if (!_settingsPreviewActive && !_progressPreviewActive)
-                  ReaderEdgeBlur(animation: _chrome),
-                _menuEdge(top: true, child: _buildToolbar(preset)),
+                if (!classic &&
+                    !_settingsPreviewActive &&
+                    !_progressPreviewActive)
+                  ReaderEdgeBlur(animation: _chrome)
+                // The empty slot keeps the chrome elements in place across a
+                // style switch, so the pager/menu subtree is never recreated.
+                else
+                  const SizedBox.shrink(),
+                _menuEdge(
+                  top: true,
+                  child: _buildToolbar(preset, classic: classic),
+                ),
                 Positioned(
                   bottom: 0,
                   left: 0,
                   right: 0,
                   child: AnimatedBuilder(
                     animation: _chrome,
-                    child: _buildReaderControls(preset),
+                    child: _buildReaderControls(preset, classic: classic),
                     builder: (context, child) => Offstage(
                       offstage: _chrome.value == 0 || _settingsPreviewActive,
                       child: child,
@@ -254,73 +266,103 @@ extension _ReaderPageBuild on _ReaderPageState {
 
   /// Wenku8's transparent header rides above the progressive edge; fqapp-only
   /// actions move to a real overflow menu instead of squeezing the book title.
-  Widget _buildToolbar(ReaderThemePreset preset) => Material(
-    key: const ValueKey('reader-toolbar'),
-    color: preset.isEink || MediaQuery.highContrastOf(context)
-        ? preset.panelColor
-        : Colors.transparent,
-    child: SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 88,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: GlassIconButton(
-                  key: const ValueKey('reader-back-entry'),
-                  icon: CupertinoIcons.back,
-                  label: '返回书籍',
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ),
-            Expanded(
-              child: Text(
-                widget.title,
-                key: const ValueKey('reader-header-book-title'),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: preset.textColor,
-                  fontSize: 16,
-                  height: 1.25,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 44,
-              child: GlassIconButton(
-                key: const ValueKey('reader-header-listen'),
-                icon: CupertinoIcons.headphones,
-                label: '听书',
-                onPressed: _loading || _error != null
-                    ? null
-                    : () => unawaited(_openListening(fromPage: true)),
-              ),
-            ),
-            SizedBox(
-              width: 44,
-              child: GlassMenuAnchor(
-                child: Builder(
-                  builder: (anchor) => GlassIconButton(
-                    key: const ValueKey('reader-header-more'),
-                    icon: CupertinoIcons.ellipsis,
-                    label: '更多阅读操作',
-                    onPressed: () => unawaited(_showReaderActions(anchor)),
+  /// The classic style gets its own solid, two-line header.
+  Widget _buildToolbar(ReaderThemePreset preset, {required bool classic}) =>
+      classic
+      ? _buildClassicToolbar(preset)
+      : Material(
+          key: const ValueKey('reader-toolbar'),
+          color: preset.isEink || MediaQuery.highContrastOf(context)
+              ? preset.panelColor
+              : Colors.transparent,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 88,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: GlassIconButton(
+                        key: const ValueKey('reader-back-entry'),
+                        icon: CupertinoIcons.back,
+                        label: '返回书籍',
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
                   ),
-                ),
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      key: const ValueKey('reader-header-book-title'),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: preset.textColor,
+                        fontSize: 16,
+                        height: 1.25,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 44,
+                    child: GlassIconButton(
+                      key: const ValueKey('reader-header-listen'),
+                      icon: CupertinoIcons.headphones,
+                      label: '听书',
+                      onPressed: _loading || _error != null
+                          ? null
+                          : () => unawaited(_openListening(fromPage: true)),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 44,
+                    child: GlassMenuAnchor(
+                      child: Builder(
+                        builder: (anchor) => GlassIconButton(
+                          key: const ValueKey('reader-header-more'),
+                          icon: CupertinoIcons.ellipsis,
+                          label: '更多阅读操作',
+                          onPressed: () =>
+                              unawaited(_showReaderActions(anchor)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        );
+
+  Widget _buildClassicToolbar(ReaderThemePreset preset) {
+    // The shelf icon must follow shelf writes without rebuilding the page.
+    return ValueListenableBuilder<int>(
+      valueListenable: ShelfStore.instance.listenable,
+      builder: (context, _, _) => ReaderClassicToolbar(
+        preset: preset,
+        title: widget.title,
+        chapterNumber: _index + 1,
+        showCache: !widget.localOnly,
+        showComments:
+            !_loading &&
+            _error == null &&
+            _ideas.total > 0 &&
+            _chapterEndParagraph() != null,
+        inShelf: inShelf(_shelfEntry),
+        onBack: () => Navigator.of(context).pop(),
+        onCache: () => unawaited(_showCache()),
+        onComments: () =>
+            unawaited(_showIdeas(focusParaIndex: _chapterEndParagraph())),
+        onShelf: () => unawaited(toggleShelf(context, _shelfEntry)),
+        onCollapse: _toggleControls,
       ),
-    ),
-  );
+    );
+  }
 
   Future<void> _showReaderActions(BuildContext anchor) async {
     _readerPanelOpen = true;
@@ -387,7 +429,10 @@ extension _ReaderPageBuild on _ReaderPageState {
     }
   }
 
-  Widget _buildReaderControls(ReaderThemePreset preset) => Column(
+  Widget _buildReaderControls(
+    ReaderThemePreset preset, {
+    required bool classic,
+  }) => Column(
     key: _bottomControlsKey,
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -408,36 +453,80 @@ extension _ReaderPageBuild on _ReaderPageState {
       ),
       ListenableBuilder(
         listenable: _scrollController,
-        builder: (context, _) => ReaderControls(
-          key: const ValueKey('reader-controls'),
-          preferences: _displayPreferences,
-          chapterIndex: _index,
-          chapterTitle: _chapter.title,
-          fraction: _chapterLocalFraction,
-          animation: _settingsPreviewActive
-              ? const AlwaysStoppedAnimation(0)
-              : _chrome,
-          previewing: _progressPreviewActive,
-          onPrevious: _index > 0 && !_loading ? _prev : null,
-          onNext: _index < widget.chapters.length - 1 && !_loading
-              ? _next
-              : null,
-          onPreview: _previewChapterFraction,
-          onCommitted: _commitChapterFraction,
-          onPreviewChanged: _setChapterPreview,
-          onDirectory: _showDirectory,
-          onBookmarks: _showBookmarks,
-          onNight: _toggleNightTheme,
-          onAppearance: () => _showAppearanceSettings(
-            section: ReaderSettingsSection.appearance,
-          ),
-          onOperations: () => _showAppearanceSettings(
-            section: ReaderSettingsSection.operations,
-          ),
-          onFind: _loading || !_progressReady ? null : _showFind,
-          onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
-          aiLabel: _currentAiView?.hasCache == true ? 'AI 已校对' : 'AI 校对',
-        ),
+        builder: (context, _) => classic
+            // The archive dock runs its own chrome layers; the classic sheet is
+            // one Material panel, so the same `_chrome` drives it from outside.
+            // `maintainSize` keeps the measured height (and the selection bar's
+            // clearance) identical while it slides, and reduce-motion/e-ink
+            // already jump `_chrome` straight to its end value.
+            ? ReaderChromeLayer(
+                animation: _chrome,
+                interactionThreshold: 0,
+                maintainSize: true,
+                slide: const Offset(0, 1),
+                clip: false,
+                child: ReaderClassicControls(
+                  // Two progress meanings live in this sheet; see the widget.
+                  key: const ValueKey('reader-classic-controls'),
+                  preset: preset,
+                  chapterIndex: _index,
+                  chapterCount: widget.chapters.length,
+                  chapterTitleAt: (index) => widget
+                      .chapters[index.clamp(0, widget.chapters.length - 1)]
+                      .title,
+                  fraction: _chapterLocalFraction,
+                  onPrevious: _index > 0 && !_loading ? _prev : null,
+                  onNext: _index < widget.chapters.length - 1 && !_loading
+                      ? _next
+                      : null,
+                  onSeekEnd: (index) => unawaited(_jumpToChapter(index)),
+                  onPreview: _previewChapterFraction,
+                  onCommitted: _commitChapterFraction,
+                  onPreviewChanged: _setChapterPreview,
+                  onDirectory: _showDirectory,
+                  onBookmarks: _showBookmarks,
+                  onFind: _loading || !_progressReady ? null : _showFind,
+                  onNight: _toggleNightTheme,
+                  onAppearance: _showAppearanceSettings,
+                  onOperations: () => _showAppearanceSettings(
+                    section: ReaderSettingsSection.operations,
+                  ),
+                  onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
+                  aiLabel: _currentAiView?.hasCache == true
+                      ? 'AI 已校对'
+                      : 'AI 校对',
+                ),
+              )
+            : ReaderControls(
+                key: const ValueKey('reader-controls'),
+                preferences: _displayPreferences,
+                chapterIndex: _index,
+                chapterTitle: _chapter.title,
+                fraction: _chapterLocalFraction,
+                animation: _settingsPreviewActive
+                    ? const AlwaysStoppedAnimation(0)
+                    : _chrome,
+                previewing: _progressPreviewActive,
+                onPrevious: _index > 0 && !_loading ? _prev : null,
+                onNext: _index < widget.chapters.length - 1 && !_loading
+                    ? _next
+                    : null,
+                onPreview: _previewChapterFraction,
+                onCommitted: _commitChapterFraction,
+                onPreviewChanged: _setChapterPreview,
+                onDirectory: _showDirectory,
+                onBookmarks: _showBookmarks,
+                onNight: _toggleNightTheme,
+                onAppearance: () => _showAppearanceSettings(
+                  section: ReaderSettingsSection.appearance,
+                ),
+                onOperations: () => _showAppearanceSettings(
+                  section: ReaderSettingsSection.operations,
+                ),
+                onFind: _loading || !_progressReady ? null : _showFind,
+                onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
+                aiLabel: _currentAiView?.hasCache == true ? 'AI 已校对' : 'AI 校对',
+              ),
       ),
     ],
   );
