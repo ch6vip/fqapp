@@ -52,7 +52,8 @@ int? resumeEpisodeIndex(Map<String, dynamic>? saved, List<Chapter> episodes) {
       !index.isFinite ||
       index != index.truncateToDouble() ||
       index < 0 ||
-      index >= episodes.length) {
+      index >= episodes.length ||
+      !episodes[index.toInt()].hasKnownIndex) {
     return null;
   }
   return index.toInt();

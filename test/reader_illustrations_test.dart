@@ -15,6 +15,7 @@ import 'package:fqapp/widgets/reader/reader_illustration.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 
 import 'support/fakes.dart';
+import 'support/reader_settings_nav.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -131,7 +132,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(requests, isEmpty);
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('缓存'));
+        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reader-cache')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('缓存后 1 章'));
       await tester.pumpAndSettle();
@@ -196,7 +200,10 @@ void main() {
         await tester.tap(find.byTooltip('上一章'));
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('缓存'));
+        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reader-cache')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('缓存后 1 章'));
       await tester.pumpAndSettle();
@@ -258,7 +265,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('缓存'));
+        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reader-cache')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('缓存后 1 章'));
       await tester.pumpAndSettle();
@@ -332,7 +342,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('缓存'));
+        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reader-cache')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('缓存后 1 章'));
       await tester.pump();
@@ -483,6 +496,8 @@ void main() {
     await _openMenu(tester);
     await tester.tap(find.byKey(const ValueKey('reader-settings')));
     await tester.pumpAndSettle();
+    // 翻页模式在「翻页」分类里。
+    await openReaderSettingsCategory(tester, 'turn');
     await tester.ensureVisible(
       find.byKey(const ValueKey('reader-mode-scroll')),
     );
@@ -494,8 +509,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reader-mode-paged')));
     await tester.pumpAndSettle();
     expect(store.entry!['textOffset'], anchor);
-    await tester.tap(find.byTooltip('关闭排版设置'));
-    await tester.pumpAndSettle();
+    await closeReaderSettingsSheet(tester);
     await tester.binding.setSurfaceSize(const Size(390, 760));
     await tester.pumpAndSettle();
     expect(store.entry!['textOffset'], anchor);

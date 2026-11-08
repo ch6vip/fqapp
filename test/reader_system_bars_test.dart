@@ -15,6 +15,7 @@ import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'support/fakes.dart';
+import 'support/reader_settings_nav.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -52,11 +53,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-settings')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('reader-more-appearance')),
-      );
-      await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
-      await tester.pumpAndSettle();
+      // 状态栏/导航栏开关在「屏幕」分类里。
+      await openReaderSettingsCategory(tester, 'page');
       final row = find
           .ancestor(of: find.text('系统状态栏'), matching: find.byType(Row))
           .first;
@@ -69,10 +67,7 @@ void main() {
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(tester.widget<AppGlassSwitch>(toggle).value, visible);
-      await tester.tap(find.byTooltip('关闭更多设置'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('关闭排版设置'));
-      await tester.pumpAndSettle();
+      await closeReaderSettingsSheet(tester);
       final request = calls.lastWhere((call) => call.method == 'setImmersive');
       expect(request.arguments['enabled'], isTrue);
       expect(request.arguments['showStatusBar'], visible);
@@ -363,7 +358,8 @@ void main() {
         );
         expect(settings.bottom, lessThanOrEqualTo(800 - bottom));
         expect(tester.getRect(_surface), viewport);
-        await tester.tap(find.byTooltip('收起阅读菜单'));
+        // 新版顶栏没有收起钮：点正文区即可收起菜单。
+        await tester.tapAt(viewport.center);
         await tester.pumpAndSettle();
         expect(tester.getRect(_surface), viewport);
         expect(tester.takeException(), isNull);
