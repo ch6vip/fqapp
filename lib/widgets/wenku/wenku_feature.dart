@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/app_style_tokens.dart';
+
 import 'src/app_text.dart';
 import 'wenku_archive.dart';
 import 'wenku_glass.dart';
@@ -38,9 +40,11 @@ class ArchiveFeaturePage extends StatelessWidget {
 }
 
 EdgeInsets featurePadding(BuildContext context) => EdgeInsets.fromLTRB(
-  24,
-  MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight + 20,
-  24,
+  AppStyleTokens.of(context).pageGutter,
+  MediaQuery.paddingOf(context).top +
+      FrostedHeader.toolbarHeight +
+      (AppStyleTokens.of(context).isClassic ? 12 : 20),
+  AppStyleTokens.of(context).pageGutter,
   MediaQuery.paddingOf(context).bottom + 32,
 );
 
@@ -51,10 +55,12 @@ class FeatureEntry extends StatelessWidget {
     required this.icon,
     required this.onTap,
     this.subtitle,
+    this.trailing,
   });
 
   final String title;
   final String? subtitle;
+  final Widget? trailing;
   final IconData icon;
   final VoidCallback? onTap;
 
@@ -90,6 +96,10 @@ class FeatureEntry extends StatelessWidget {
               ],
             ),
           ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            Flexible(child: trailing!),
+          ],
           const SizedBox(width: 8),
           const ArchiveIcon(CupertinoIcons.chevron_right, size: 14),
         ],

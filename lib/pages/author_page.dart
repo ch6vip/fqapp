@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../models/author_profile.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
+import '../services/app_style_tokens.dart';
 import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/detail/detail_archive.dart';
@@ -309,7 +310,9 @@ class _AuthorPageState extends State<AuthorPage> {
         child: Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+              borderRadius: BorderRadius.circular(
+                AppStyleTokens.of(context).coverRadius,
+              ),
               child: SizedBox(
                 width: 56,
                 height: 76,
@@ -323,8 +326,10 @@ class _AuthorPageState extends State<AuthorPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ArchiveCode(detailArchiveFileCode(work.id)),
-                  const SizedBox(height: 4),
+                  if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+                    ArchiveCode(detailArchiveFileCode(work.id)),
+                    const SizedBox(height: 4),
+                  ],
                   AppText(
                     work.title,
                     maxLines: 2,

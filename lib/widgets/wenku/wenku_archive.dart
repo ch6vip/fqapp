@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../services/app_style_tokens.dart';
+
 import 'src/app_text.dart';
 import 'src/archive_motion.dart';
 
@@ -98,16 +100,18 @@ class ArchiveMasthead extends StatelessWidget {
                 AppText(
                   title,
                   maxLines: 1,
-                  style: const TextStyle(
-                    fontSize: 23,
+                  style: TextStyle(
+                    fontSize: AppStyleTokens.of(context).isClassic ? 21 : 23,
                     height: 1.18,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -.7,
                     shadows: [],
                   ),
                 ),
-                const SizedBox(height: 3),
-                ArchivePart(start: .16, end: .88, child: ArchiveCode(code)),
+                if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+                  const SizedBox(height: 3),
+                  ArchivePart(start: .16, end: .88, child: ArchiveCode(code)),
+                ],
               ],
             ),
           ),
@@ -118,13 +122,23 @@ class ArchiveMasthead extends StatelessWidget {
 }
 
 class ArchiveCode extends StatelessWidget {
-  const ArchiveCode(this.text, {super.key, this.inverse = false, this.color});
+  const ArchiveCode(
+    this.text, {
+    super.key,
+    this.inverse = false,
+    this.color,
+    this.decorative = true,
+  });
   final String text;
   final bool inverse;
   final Color? color;
+  final bool decorative;
 
   @override
   Widget build(BuildContext context) {
+    if (decorative && !AppStyleTokens.of(context).showDecorativeCodes) {
+      return const SizedBox.shrink();
+    }
     final scheme = Theme.of(context).colorScheme;
     final label = AppText(
       text,
@@ -166,39 +180,45 @@ class ArchiveSection extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: [
-      LayoutBuilder(
-        builder: (context, constraints) => Row(
-          children: [
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: math.max(0, constraints.maxWidth - 17),
-              ),
-              child: ArchivePart(start: .1, end: .68, child: ArchiveCode(code)),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: const ArchivePart(
-                start: 0,
-                end: .46,
-                child: ExcludeSemantics(
-                  child: Divider(height: 1, thickness: .6),
+      if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+        LayoutBuilder(
+          builder: (context, constraints) => Row(
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: math.max(0, constraints.maxWidth - 17),
+                ),
+                child: ArchivePart(
+                  start: .1,
+                  end: .68,
+                  child: ArchiveCode(code),
                 ),
               ),
-            ),
-            const SizedBox(width: 5),
-            ExcludeSemantics(
-              child: SizedBox(
-                width: 3,
-                height: 3,
-                child: ColoredBox(
-                  color: Theme.of(context).colorScheme.onSurface,
+              const SizedBox(width: 9),
+              Expanded(
+                child: const ArchivePart(
+                  start: 0,
+                  end: .46,
+                  child: ExcludeSemantics(
+                    child: Divider(height: 1, thickness: .6),
+                  ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 5),
+              ExcludeSemantics(
+                child: SizedBox(
+                  width: 3,
+                  height: 3,
+                  child: ColoredBox(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      const SizedBox(height: 7),
+        const SizedBox(height: 7),
+      ],
       ArchivePart(
         start: .16,
         end: .82,
@@ -249,8 +269,10 @@ class ArchiveRouteTitle extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
             ),
-            const SizedBox(height: 3),
-            ArchiveCode(code),
+            if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+              const SizedBox(height: 3),
+              ArchiveCode(code),
+            ],
           ],
         ),
       ),
@@ -265,10 +287,14 @@ class ArchiveRegistration extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => CustomPaint(
-    foregroundPainter: _RegistrationPainter(
-      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: .5),
-      inset: inset,
-    ),
+    foregroundPainter: AppStyleTokens.of(context).showDecorativeCodes
+        ? _RegistrationPainter(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: .5),
+            inset: inset,
+          )
+        : null,
     child: child,
   );
 }
@@ -315,29 +341,32 @@ class ArchiveBackdrop extends StatelessWidget {
   final Color filmColor;
 
   @override
-  Widget build(BuildContext context) => IgnorePointer(
-    child: ExcludeSemantics(
-      child: Align(
-        alignment: Alignment.topCenter,
-        // Bound the raster-cache candidate to the diagram itself, rather than
-        // allocating a full-screen layer for an almost empty static painter.
-        child: SizedBox(
-          width: double.infinity,
-          height: MediaQuery.viewPaddingOf(context).top + 240,
-          child: RepaintBoundary(
-            child: CustomPaint(
-              painter: _ArchiveBackdropPainter(
-                color: Theme.of(context).colorScheme.onSurface,
-                filmColor: filmColor,
-                top: MediaQuery.viewPaddingOf(context).top,
+  Widget build(BuildContext context) =>
+      !AppStyleTokens.of(context).showDecorativeCodes
+      ? const SizedBox.shrink()
+      : IgnorePointer(
+          child: ExcludeSemantics(
+            child: Align(
+              alignment: Alignment.topCenter,
+              // Bound the raster-cache candidate to the diagram itself, rather than
+              // allocating a full-screen layer for an almost empty static painter.
+              child: SizedBox(
+                width: double.infinity,
+                height: MediaQuery.viewPaddingOf(context).top + 240,
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _ArchiveBackdropPainter(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      filmColor: filmColor,
+                      top: MediaQuery.viewPaddingOf(context).top,
+                    ),
+                    child: const SizedBox.expand(),
+                  ),
+                ),
               ),
-              child: const SizedBox.expand(),
             ),
           ),
-        ),
-      ),
-    ),
-  );
+        );
 }
 
 class _ArchiveBackdropPainter extends CustomPainter {

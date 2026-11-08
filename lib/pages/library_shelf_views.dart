@@ -7,6 +7,9 @@ mixin _LibraryShelfViews on _LibraryShelfChrome {
       _tab == 1 ? BookCollectionMode.list : ShelfViewStore.instance.mode;
 
   Widget _content(BuildContext context) {
+    // Register a theme dependency on the page even when collection slivers
+    // reuse their cached row delegates; style changes must refresh padding.
+    final style = AppStyleTokens.of(context);
     final entries = _visibleEntries;
     final mode = _effectiveMode;
     final view = ShelfViewStore.instance.state;
@@ -26,9 +29,9 @@ mixin _LibraryShelfViews on _LibraryShelfChrome {
         itemBuilder: (context, index) => _tile(entries[index], mode, index),
         emptyBuilder: (context) => _emptyState(context),
         padding: EdgeInsets.fromLTRB(
-          24,
+          style.pageGutter,
           0,
-          24,
+          style.pageGutter,
           DockLayout.scrollPaddingOf(context),
         ),
         storageKey: PageStorageKey('shelf-$_tab'),

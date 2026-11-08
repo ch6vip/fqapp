@@ -1,19 +1,157 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../models/media_item.dart';
+import '../models/reading_stats.dart';
+import '../services/app_style_tokens.dart';
+import '../services/book_open_preferences.dart';
+import '../services/library_store.dart';
+import '../services/media_history_store.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/home/home_shelf.dart';
+import '../widgets/mine/classic_mine_entries.dart';
+import '../widgets/mine/classic_mine_heatmap.dart';
+import '../widgets/mine/classic_mine_summary.dart';
+import '../widgets/mine/classic_mine_top_books.dart';
 import '../widgets/mine/mine_entries.dart';
 import '../widgets/wenku/wenku_ui.dart';
+import 'detail_page.dart';
 import 'reading_statistics_page.dart';
+import 'settings_page.dart';
 
-/// 我的：沿用 Wenku8 Flutter 的档案页骨架，数据与路由接 fqapp 本地能力。
-///
-/// 本页不连接文库账号，也不展示云端同步或伪造书签数量。身份卡只说明这是
-/// 本机阅读档案；统计仍是 fqapp 原有本地统计视图，单独放在独立路由中。
-class MinePage extends StatelessWidget {
+/// Both presentations keep one page state. Classic restores the statistics-first
+/// page from issue #288 (f329399), while archive keeps its separate stats route.
+class MinePage extends StatefulWidget {
   const MinePage({super.key});
 
   @override
+  State<MinePage> createState() => _MinePageState();
+}
+
+class _MinePageState extends State<MinePage> {
+  ReadingStats _stats = ReadingStats.empty;
+  Listenable? _historyChanges;
+  Listenable? _readTimeChanges;
+  Timer? _reloadTimer;
+  bool _visible = false;
+  bool _storeDirty = true;
+
+  void _bindStore() {
+    final store = LibraryStore.instance;
+    if (_historyChanges != null || !store.isInitialized) return;
+    _historyChanges = store.historyListenable..addListener(_scheduleReload);
+    _readTimeChanges = store.readTimeListenable..addListener(_scheduleReload);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bindStore();
+    final visible =
+        TickerMode.valuesOf(context).enabled &&
+        AppStyleTokens.of(context).isClassic;
+    final becameVisible = visible && !_visible;
+    _visible = visible;
+    if (!visible) {
+      _reloadTimer?.cancel();
+    } else if (becameVisible || _storeDirty) {
+      _reload();
+    }
+  }
+
+  void _scheduleReload() {
+    _storeDirty = true;
+    _reloadTimer?.cancel();
+    if (_visible) {
+      _reloadTimer = Timer(const Duration(milliseconds: 250), _reload);
+    }
+  }
+
+  void _reload() {
+    if (!mounted || !_visible) return;
+    _reloadTimer?.cancel();
+    final store = LibraryStore.instance;
+    // 装配降级时 store 可能还没就绪：保留 dirty，等下一次依赖变化再算，
+    // 否则经典「我的」会一直停在空统计。
+    if (!store.isInitialized) return;
+    _storeDirty = false;
+    setState(
+      () => _stats = ReadingStats.from(
+        history: store.historySnapshot(),
+        readTime: store.readTimeSnapshot(),
+        readTimeKinds: store.readTimeKindSnapshot(),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _reloadTimer?.cancel();
+    _historyChanges?.removeListener(_scheduleReload);
+    _readTimeChanges?.removeListener(_scheduleReload);
+    super.dispose();
+  }
+
+  // 刷新节奏（250ms 防抖 + TickerMode 可见性门）与 reading_statistics_page
+  // 同构；两处抽取见后续 issue。
+  void _openEntry(Map<String, dynamic> entry) => openBookDetail(
+    context,
+    MediaItem(
+      id: historyContentId(entry),
+      title: '${entry['title'] ?? ''}',
+      cover: '${entry['cover'] ?? ''}',
+      author: '${entry['author'] ?? ''}',
+      badge: '',
+      ep: '',
+      kind: '${entry['kind'] ?? 'book'}',
+      seriesId: entry['seriesId']?.toString(),
+      episodeId: entry['episodeId']?.toString(),
+    ),
+    entry: BookOpenEntry.shelf,
+  );
+
+  @override
   Widget build(BuildContext context) {
+    final style = AppStyleTokens.of(context);
+    if (style.isClassic) {
+      final palette = HomePalette.of(context);
+      final today = DateUtils.dateOnly(DateTime.now());
+      return Scaffold(
+        backgroundColor: palette.canvas,
+        appBar: AppBar(
+          title: const Text('我的'),
+          centerTitle: false,
+          backgroundColor: palette.canvas,
+          surfaceTintColor: Colors.transparent,
+          scrolledUnderElevation: 0,
+          actions: [
+            IconButton(
+              key: const ValueKey('classic-mine-settings'),
+              tooltip: '应用设置',
+              icon: const Icon(LucideIcons.settings, size: 21),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+        ),
+        body: ListView(
+          key: const PageStorageKey('my-page-classic'),
+          padding: EdgeInsets.only(bottom: homeBottomClearance(context)),
+          children: [
+            ClassicMineSummary(stats: _stats, today: today),
+            ClassicMineHeatmap(stats: _stats, today: today),
+            ClassicMineTopBooks(rank: _stats.rank, onOpen: _openEntry),
+            const ClassicMineEntries(),
+          ],
+        ),
+      );
+    }
     return WenkuPage(
       header: const Align(
         alignment: Alignment.centerLeft,
@@ -30,7 +168,7 @@ class MinePage extends StatelessWidget {
             ).copyWith(bottom: DockLayout.scrollPaddingOf(context)),
             children: [
               const _LocalIdentityPanel(),
-              const SizedBox(height: 24),
+              SizedBox(height: style.sectionGap),
               FeatureEntry(
                 key: const ValueKey('mine-statistics'),
                 title: '统计',
@@ -43,7 +181,7 @@ class MinePage extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 14),
+              SizedBox(height: style.entryGap),
               const MineEntries(),
             ],
           ),
@@ -63,7 +201,6 @@ class _LocalIdentityPanel extends StatelessWidget {
       key: const ValueKey('mine-local-identity'),
       child: Row(
         children: [
-          // 上游此处为 56×56 账号头像/品牌图；fqapp 没有账号模块，统一使用本地品牌图。
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
             child: Image.asset(
@@ -97,7 +234,6 @@ class _LocalIdentityPanel extends StatelessWidget {
               ],
             ),
           ),
-          // 上游卡片可进入账号页并带 8/14 右箭头；本卡无跳转，故不画箭头。
         ],
       ),
     );

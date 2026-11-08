@@ -6,6 +6,7 @@ import '../../pages/cached_books_page.dart';
 import '../../pages/cached_dramas_page.dart';
 import '../../pages/library_backup_page.dart';
 import '../../pages/settings_page.dart';
+import '../../services/app_style_tokens.dart';
 import '../home/home_sheet.dart';
 import '../wenku/wenku_ui.dart';
 
@@ -15,6 +16,7 @@ class MineEntries extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final style = AppStyleTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -25,7 +27,7 @@ class MineEntries extends StatelessWidget {
           icon: CupertinoIcons.settings,
           onTap: () => _push(context, const SettingsPage()),
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: style.entryGap),
         FeatureEntry(
           key: const ValueKey('mine-cache'),
           title: '离线缓存',
@@ -33,7 +35,7 @@ class MineEntries extends StatelessWidget {
           icon: CupertinoIcons.tray_arrow_down,
           onTap: () => _showCacheChoices(context),
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: style.entryGap),
         FeatureEntry(
           key: const ValueKey('mine-backup'),
           title: '备份与导入',
@@ -41,7 +43,7 @@ class MineEntries extends StatelessWidget {
           icon: CupertinoIcons.archivebox,
           onTap: () => _push(context, const LibraryBackupPage()),
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: style.entryGap),
         // 上游“关于”副标题显示版本与更新状态；fqapp 没有 AppUpdates 模块，
         // 这里用静态说明替代。
         FeatureEntry(
@@ -61,10 +63,16 @@ void _push(BuildContext context, Widget page) =>
 
 /// 小说与短剧使用两套缓存存储，入口仍先让用户选择要管理的类型。
 Future<void> _showCacheChoices(BuildContext context) async {
+  final style = AppStyleTokens.of(context);
   await showHomeSheet<void>(
     context: context,
     title: '离线缓存',
-    contentPadding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+    contentPadding: EdgeInsets.fromLTRB(
+      style.pageGutter,
+      4,
+      style.pageGutter,
+      style.panelPadding,
+    ),
     children: [
       FeatureEntry(
         title: '小说离线缓存',
@@ -75,7 +83,7 @@ Future<void> _showCacheChoices(BuildContext context) async {
           _push(context, const CachedBooksPage());
         },
       ),
-      const SizedBox(height: 14),
+      SizedBox(height: style.entryGap),
       FeatureEntry(
         title: '短剧离线缓存',
         subtitle: '短剧下载、离线播放和清理缓存',
