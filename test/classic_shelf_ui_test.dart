@@ -615,6 +615,51 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
+    testWidgets('空书架选中分组时优先显示组名空态', (tester) async {
+      await _size(tester);
+      late String group;
+      await tester.runAsync(() async {
+        group = await ShelfGroupStore.instance.addGroup('睡前');
+      });
+      await tester.pumpWidget(_app(_style()));
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+        () => ShelfViewStore.instance.setCategoryOf(ShelfTabScope.shelf, group),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.text('「睡前」暂无书籍'), findsOneWidget);
+      expect(find.text('书架暂无书籍'), findsNothing);
+      expect(find.text('未找到相关内容'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('分组有书但来源筛选隐藏时保留筛选空态', (tester) async {
+      await _size(tester);
+      late String group;
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item());
+        group = await ShelfGroupStore.instance.addGroup('想读');
+        await ShelfGroupStore.instance.assignKeys(['book:123'], group);
+      });
+      await tester.pumpWidget(_app(_style()));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await ShelfViewStore.instance.setCategoryOf(ShelfTabScope.shelf, group);
+        await ShelfViewStore.instance.setSource(ShelfSourceFilter.local);
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.text('没有符合筛选的书籍'), findsOneWidget);
+      expect(find.text('「想读」暂无书籍'), findsNothing);
+      expect(find.text('未找到相关内容'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
     testWidgets('320dp + 2x 字号下工具栏同一行不溢出，长分组名只省略', (tester) async {
       await tester.binding.setSurfaceSize(const Size(320, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
