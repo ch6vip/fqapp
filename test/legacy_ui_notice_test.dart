@@ -49,6 +49,17 @@ void main() {
     expect(afterAddingData, isFalse);
   });
 
+  test('an unavailable store neither shows nor marks the notice', () async {
+    SharedPreferences.setMockInitialValues({});
+    final shown = await LegacyUiNotice.shouldShow(
+      preferences: SharedPreferences.getInstance,
+      style: AppThemeStyle.archive,
+    );
+    expect(shown, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(LegacyUiNotice.seenKey), isNull);
+  });
+
   test('markSeen persists the one-time flag', () async {
     SharedPreferences.setMockInitialValues({});
     await LegacyUiNotice.markSeen(preferences: SharedPreferences.getInstance);
