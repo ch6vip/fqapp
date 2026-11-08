@@ -26,7 +26,9 @@ import 'package:fqapp/widgets/reader/reader_bookmarks_panel.dart';
 import 'package:fqapp/widgets/reader/reader_directory_sheet.dart';
 import 'package:fqapp/widgets/reader/reader_find_panel.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
+import 'package:fqapp/widgets/reader/reader_theme.dart';
 import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
 import 'support/app_ui_host.dart';
@@ -136,6 +138,48 @@ void main() {
       expect(find.text('晨光'), findsOneWidget);
     });
 
+    for (final scale in const [1.5, 2.0]) {
+      testWidgets('directory AI/cache markers fit 320dp at ${scale}x', (
+        tester,
+      ) async {
+        final store = await _style(AppThemeStyle.classic);
+        final launched = await _launch<int>(
+          tester,
+          store,
+          _directory(
+            chapters: [
+              Chapter(itemId: 'm0', title: '第一章', volumeName: ''),
+              Chapter(itemId: 'm1', title: '第二章', volumeName: ''),
+              Chapter(itemId: 'm2', title: '第三章', volumeName: ''),
+            ],
+            cachedIds: const {'m0', 'm2'},
+            aiStatuses: [
+              _aiStatus('m0', AiChapterCheckState.checked),
+              _aiStatus('m1', AiChapterCheckState.failed),
+            ],
+          ),
+          size: const Size(320, 700),
+          textScale: scale,
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        // m0 carries both markers at once; m1 AI only; m2 cache only.
+        expect(find.text('已校验'), findsOneWidget);
+        expect(find.text('失败'), findsOneWidget);
+        // m0 shows both markers, m2 shows cache only.
+        expect(find.text('已缓存'), findsNWidgets(2));
+
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('reader-directory-row-2')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('reader-directory-row-2')));
+        await tester.pumpAndSettle();
+        expect(launched.value, 2);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
     testWidgets('open directory keeps query and scroll across styles', (
       tester,
     ) async {
@@ -165,8 +209,9 @@ void main() {
         const Offset(0, -400),
       );
       await tester.pumpAndSettle();
-      final before = _listOffset(tester);
-      expect(before, greaterThan(0));
+      final before = _firstVisibleDirectoryRow(tester);
+      expect(before, isNotNull);
+      expect(before!.$1, greaterThan(0));
 
       await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
@@ -175,8 +220,12 @@ void main() {
         find.byKey(const ValueKey('reader-chapter-search')),
         findsOneWidget,
       );
-      final after = _listOffset(tester);
-      expect(after, closeTo(before, 1));
+      final after = _firstVisibleDirectoryRow(tester);
+      expect(after, isNotNull);
+      expect(after!.$1, before.$1, reason: '切风格后首个可见章节必须不变');
+      // The classic row wraps its ListTile in 2dp padding and uses a taller
+      // list padding; the chapter and its scroll position are what anchor.
+      expect(after.$2, closeTo(before.$2, 8));
 
       await store.select(AppThemeStyle.archive);
       await tester.pumpAndSettle();
@@ -185,6 +234,9 @@ void main() {
         find.byKey(const ValueKey('reader-chapter-search')),
         findsOneWidget,
       );
+      final back = _firstVisibleDirectoryRow(tester);
+      expect(back!.$1, before.$1);
+      expect(back.$2, closeTo(before.$2, 8));
       expect(tester.takeException(), isNull);
     });
   });
@@ -348,6 +400,99 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('find keeps the top visible match across styles', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final text = List.generate(
+        40,
+        (index) =>
+            '第 $index 段 山中 有风，'
+            '${'继续阅读的内容' * (index % 3 + 1)}',
+      ).join();
+      await _launch<ReaderFindMatch>(
+        tester,
+        store,
+        ReaderFindPanel(
+          paragraphs: [ReaderFindParagraph(start: 0, text: text)],
+          preset: ReaderThemePreset.light,
+        ),
+        size: const Size(390, 600),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('reader-find-field')),
+        '山中',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(find.text('40 处匹配'), findsOneWidget);
+
+      await tester.drag(
+        find.byKey(const ValueKey('reader-find-results')),
+        const Offset(0, -260),
+      );
+      await tester.pumpAndSettle();
+      final before = _firstVisibleFindResult(tester, 40);
+      expect(before, isNotNull);
+      expect(before!.$1, greaterThan(0), reason: '标题区已滚出视口');
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      final after = _firstVisibleFindResult(tester, 40);
+      expect(after, isNotNull);
+      expect(after!.$1, before.$1, reason: '切风格后顶部匹配必须不变');
+      expect(after.$2, closeTo(before.$2, 2));
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      final back = _firstVisibleFindResult(tester, 40);
+      expect(back!.$1, before.$1);
+      expect(back.$2, closeTo(before.$2, 2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('classic re-runs the query when the body updates', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final paragraphs = ValueNotifier<List<ReaderFindParagraph>>([
+        const ReaderFindParagraph(start: 0, text: '原文 山中 内容'),
+      ]);
+      addTearDown(paragraphs.dispose);
+      await _launch<ReaderFindMatch>(
+        tester,
+        store,
+        ValueListenableBuilder<List<ReaderFindParagraph>>(
+          valueListenable: paragraphs,
+          builder: (_, value, _) => ReaderFindPanel(
+            // A new list identity is what the page hands over after AI or a
+            // text replacement rewrote the body.
+            paragraphs: value,
+            preset: ReaderThemePreset.light,
+          ),
+        ),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('reader-find-field')),
+        '山中',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(find.text('1 处匹配'), findsOneWidget);
+
+      paragraphs.value = const [
+        ReaderFindParagraph(start: 0, text: '更新后的正文 山中 又一处 山中'),
+      ];
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+      expect(find.text('2 处匹配'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('reader-find-result-1')));
+      await tester.pumpAndSettle();
+      expect((tester.takeException()), isNull);
+      expect(find.text('3 处匹配'), findsNothing);
+    });
+
     testWidgets('open find keeps the query when the style changes', (
       tester,
     ) async {
@@ -476,11 +621,22 @@ void main() {
       );
     });
 
-    testWidgets('open bookmarks keep records and scroll across styles', (
+    testWidgets('open bookmarks keep the visible record across styles', (
       tester,
     ) async {
       final store = await _style(AppThemeStyle.classic);
-      final marks = _PanelStore([for (var i = 0; i < 12; i++) _mark(i)]);
+      // Short, medium and long excerpts make row heights deliberately uneven.
+      final marks = _PanelStore([
+        for (var i = 0; i < 14; i++)
+          _mark(
+            i,
+            text: switch (i % 3) {
+              0 => '短摘录 $i',
+              1 => '中等长度摘录 $i ${'内容' * 6}',
+              _ => '很长很长的摘录 $i ${'翻页前的那句话还在耳边。' * 12}',
+            },
+          ),
+      ]);
       addTearDown(marks.changes.dispose);
       await _launch<ReaderBookmark>(
         tester,
@@ -496,20 +652,20 @@ void main() {
 
       await tester.drag(
         find.byKey(const ValueKey('reader-bookmarks-list')),
-        const Offset(0, -260),
+        const Offset(0, -300),
       );
       await tester.pumpAndSettle();
-      final before = _panelOffset(tester);
-      expect(before, greaterThan(0));
+      final before = _firstVisibleBookmark(tester, marks.records);
+      expect(before, isNotNull);
 
       await store.select(AppThemeStyle.archive);
       await tester.pumpAndSettle();
-      final after = _panelOffset(tester);
-      expect(after, closeTo(before, 1));
-      expect(
-        find.byKey(const ValueKey('reader-bookmarks-scroll')),
-        findsOneWidget,
-      );
+      final after = _firstVisibleBookmark(tester, marks.records);
+      expect(after, isNotNull);
+      expect(after!.$1, before!.$1, reason: '切风格后顶部书签必须不变');
+      expect(after.$2, closeTo(before.$2, 2));
+      // The archive header is a sliver: at this offset it left the viewport.
+      expect(find.text('本书 14 条记录'), findsNothing);
 
       await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
@@ -517,7 +673,104 @@ void main() {
         find.byKey(const ValueKey('reader-bookmarks-list')),
         findsOneWidget,
       );
-      expect(find.text('本书 12 条记录'), findsOneWidget);
+      final back = _firstVisibleBookmark(tester, marks.records);
+      expect(back!.$1, before.$1);
+      expect(back.$2, closeTo(before.$2, 2));
+      expect(find.text('本书 14 条记录'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('bookmark error row height keeps the content anchor', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final marks = _PanelStore([for (var i = 0; i < 10; i++) _mark(i)]);
+      addTearDown(marks.changes.dispose);
+      await _launch<ReaderBookmark>(
+        tester,
+        store,
+        ReaderBookmarksPanel(
+          bookId: 'book',
+          preset: ReaderThemePreset.light,
+          store: marks,
+          onAdd: () async => null,
+        ),
+        size: const Size(390, 600),
+      );
+      await tester.drag(
+        find.byKey(const ValueKey('reader-bookmarks-list')),
+        const Offset(0, -220),
+      );
+      await tester.pumpAndSettle();
+
+      // A failed reload keeps the last successful list and grows the header.
+      marks.failRead = true;
+      marks.changes.value++;
+      await tester.pumpAndSettle();
+      expect(find.text('书签读取失败，请重试'), findsOneWidget);
+      final before = _firstVisibleBookmark(tester, marks.records);
+      expect(before, isNotNull);
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      final after = _firstVisibleBookmark(tester, marks.records);
+      expect(after, isNotNull);
+      expect(after!.$1, before!.$1);
+      expect(after.$2, closeTo(before.$2, 2));
+
+      // Back in classic the fixed header is on screen again, with the same
+      // record still anchored.
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(find.text('书签读取失败，请重试'), findsOneWidget);
+      final back = _firstVisibleBookmark(tester, marks.records);
+      expect(back!.$1, before.$1);
+      expect(back.$2, closeTo(before.$2, 2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('classic delete failure keeps the record and retries', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final marks = _PanelStore([_mark(1)]);
+      addTearDown(marks.changes.dispose);
+      await _launch<ReaderBookmark>(
+        tester,
+        store,
+        ReaderBookmarksPanel(
+          bookId: 'book',
+          preset: ReaderThemePreset.light,
+          store: marks,
+          onAdd: () async => null,
+        ),
+      );
+      marks.failDelete = true;
+      await tester.tap(
+        find.byKey(ValueKey('reader-bookmark-delete-${_mark(1).key}')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('reader-bookmark-confirm-delete')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('书签删除失败，请重试'), findsOneWidget);
+      expect(marks.records, hasLength(1));
+
+      // Retry re-opens the shared confirm before deleting again.
+      marks.failDelete = false;
+      await tester.tap(
+        find.byKey(const ValueKey('reader-bookmarks-retry-action')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('archive-confirm')), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('reader-bookmark-confirm-delete')),
+      );
+      await tester.pumpAndSettle();
+      expect(marks.records, isEmpty);
+      expect(marks.deletes, 2);
+      expect(find.text('本书 0 条记录'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
@@ -530,12 +783,14 @@ void main() {
       final changes = <ReaderPreferences>[];
       final brightnesses = <double>[];
       var brightnessEnded = 0;
+      var textReplacements = 0;
       await _openSettings(
         tester,
         store,
         changes: changes,
         brightnesses: brightnesses,
         onBrightnessEnd: () => brightnessEnded++,
+        onTextReplacement: () => textReplacements++,
       );
 
       expect(
@@ -585,21 +840,30 @@ void main() {
       expect(brightnessEnded, greaterThan(0));
 
       // 更多设置 is the current full sheet: every option stays reachable.
+      // Scroll to the deep 正文替换 entry and exercise it, instead of only
+      // finding eagerly-built text.
       await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
       await tester.pumpAndSettle();
       // The action row below the new sheet still says 更多设置 too.
       expect(find.text('更多设置'), findsWidgets);
-      expect(find.text('正文替换'), findsOneWidget);
-      expect(find.text('点击区域'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('reader-more-settings-scroll')),
-        findsOneWidget,
+      final moreScroll = find.descendant(
+        of: find.byKey(const ValueKey('reader-more-settings-scroll')),
+        matching: find.byType(Scrollable),
       );
-      await tester.tap(find.byTooltip('关闭更多设置'));
+      expect(moreScroll, findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('正文替换'),
+        240,
+        scrollable: moreScroll,
+      );
       await tester.pumpAndSettle();
+      expect(find.text('正文替换').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('正文替换'));
+      await tester.pumpAndSettle();
+      expect(textReplacements, 1);
       expect(
         find.byKey(const ValueKey('reader-appearance-scroll')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(tester.takeException(), isNull);
     });
@@ -615,6 +879,94 @@ void main() {
         find.byKey(const ValueKey('reader-appearance-scroll')),
         findsNothing,
       );
+    });
+
+    for (final style in const [AppThemeStyle.classic, AppThemeStyle.archive]) {
+      testWidgets('${style.name} 跟随系统真的切换、回调并带到最终值', (tester) async {
+        final store = await _style(style);
+        final changes = <ReaderPreferences>[];
+        var followCalls = 0;
+        await _openSettings(
+          tester,
+          store,
+          initial: const ReaderPreferences(followSystemBrightness: false),
+          changes: changes,
+          onFollowSystem: () => followCalls++,
+        );
+        if (style == AppThemeStyle.archive) {
+          await tester.tap(
+            find.byKey(const ValueKey('reader-settings-category-page')),
+          );
+          await tester.pumpAndSettle();
+        }
+
+        await tester.tap(find.byKey(const ValueKey('reader-follow-system')));
+        await tester.pump();
+        expect(followCalls, 1, reason: '跟随系统必须调用设备回调');
+        final follow = find.byKey(const ValueKey('reader-follow-system'));
+        if (style == AppThemeStyle.classic) {
+          expect(
+            tester
+                .widget<TextButton>(follow)
+                .style
+                ?.foregroundColor
+                ?.resolve({}),
+            ReaderThemePreset.light.accentColor,
+          );
+        } else {
+          expect(tester.widget<GlassTextButton>(follow).selected, isTrue);
+        }
+
+        // A second edit carries the toggled flag into the merged final write.
+        if (style == AppThemeStyle.classic) {
+          await tester.tap(
+            find.byKey(const ValueKey('reader-font-size-increase')),
+          );
+        } else {
+          await tester.tap(find.byKey(const ValueKey('reader-info-compact')));
+        }
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(changes.last.followSystemBrightness, isTrue);
+        await _closeSettings(tester);
+        expect(followCalls, 1);
+        expect(changes.last.followSystemBrightness, isTrue);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('classic slider keeps state through a mid-drag style switch', (
+      tester,
+    ) async {
+      final store = await _style(AppThemeStyle.classic);
+      final brightnesses = <double>[];
+      await _openSettings(tester, store, brightnesses: brightnesses);
+      final rect = tester.getRect(
+        find.byKey(const ValueKey('reader-brightness')),
+      );
+      final gesture = await tester.startGesture(rect.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      expect(brightnesses, isNotEmpty);
+
+      // The classic Material slider disappears under the pointer.
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('reader-settings-category-grid')),
+        findsOneWidget,
+      );
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('reader-appearance-scroll')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('style switch under an open panel keeps the edited value', (
@@ -759,6 +1111,68 @@ void main() {
     });
   });
 
+  testWidgets(
+    'classic bar honours the caller maxWidth and scrolls to the last action',
+    (tester) async {
+      final store = await _style(AppThemeStyle.classic);
+      final fired = <ReaderParagraphAction>[];
+      tester.view.physicalSize = const Size(400, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        AppUiHost(
+          store: store,
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 160,
+                child: ReaderParagraphMenu(
+                  maxWidth: 160,
+                  showListening: true,
+                  showBookmark: true,
+                  showAi: true,
+                  onAction: fired.add,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final bar = find.byKey(const ValueKey('reader-selection-classic-bar'));
+      // MediaQuery is 400 wide, the local overlay slot only 160: the renderer
+      // must clamp to the caller's width, not the window.
+      expect(tester.getSize(bar).width, lessThanOrEqualTo(160));
+      final row = find.descendant(
+        of: bar,
+        matching: find.byType(SingleChildScrollView),
+      );
+      await tester.drag(row, const Offset(-260, 0));
+      await tester.pumpAndSettle();
+      final last = find.byKey(const ValueKey('reader-action-missed'));
+      expect(last.hitTestable(), findsOneWidget);
+      await tester.tap(last);
+      expect(fired, [ReaderParagraphAction.missedChange]);
+
+      // resolvePosition keeps the same clamped width for the local view.
+      final (position, _) = ReaderParagraphMenu.resolvePosition(
+        anchor: const Offset(80, 300),
+        paragraphScoped: true,
+        view: const Size(180, 600),
+        safeArea: EdgeInsets.zero,
+        underlined: false,
+        showListening: true,
+        showBookmark: true,
+        showAi: true,
+        classic: true,
+      );
+      expect(position.dx, 10);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('经典主题长按段落：窄屏大字号下用 classic 工具条复制', (tester) async {
     final store = await _style(AppThemeStyle.classic);
     final marks = _PanelStore([]);
@@ -882,28 +1296,35 @@ final _manyChapters = [
 Widget _directory({
   required List<Chapter> chapters,
   Set<String> cachedIds = const {},
+  List<AiChapterCheckStatus>? aiStatuses,
 }) => ReaderDirectorySheet(
   chapters: chapters,
   currentIndex: 0,
   cachedIds: cachedIds,
   bookId: 'directory-book',
-  aiStatuses: [
-    AiChapterCheckStatus(
-      bookId: 'directory-book',
-      chapterId: 'c1',
-      chapterVersion: 'v1',
-      state: AiChapterCheckState.checked,
-      updatedAt: DateTime(2026),
-    ),
-  ],
+  aiStatuses:
+      aiStatuses ??
+      [_aiStatus('c1', AiChapterCheckState.checked, version: 'v1')],
   aiController: AiReadingController.instance,
 );
 
-ReaderBookmark _mark(int offset) => ReaderBookmark(
+AiChapterCheckStatus _aiStatus(
+  String chapterId,
+  AiChapterCheckState state, {
+  String version = '',
+}) => AiChapterCheckStatus(
+  bookId: 'directory-book',
+  chapterId: chapterId,
+  chapterVersion: version,
+  state: state,
+  updatedAt: DateTime(2026),
+);
+
+ReaderBookmark _mark(int offset, {String? text}) => ReaderBookmark(
   bookId: 'book',
   chapterId: 'chapter',
   title: '第一章',
-  text: '摘录 $offset',
+  text: text ?? '摘录 $offset',
   sourceOffset: offset,
   createdAt: offset,
 );
@@ -927,6 +1348,7 @@ Future<_Launched<T>> _launch<T>(
   AppThemeStyleStore store,
   Widget panel, {
   Size size = const Size(390, 844),
+  double textScale = 1,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -937,16 +1359,21 @@ Future<_Launched<T>> _launch<T>(
     AppUiHost(
       store: store,
       home: Builder(
-        builder: (context) => Scaffold(
-          body: Center(
-            child: TextButton(
-              onPressed: () async {
-                launched.value = await Navigator.of(
-                  context,
-                ).push<T>(MaterialPageRoute(builder: (_) => panel));
-                launched.closed = true;
-              },
-              child: const Text('open'),
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () async {
+                  launched.value = await Navigator.of(
+                    context,
+                  ).push<T>(MaterialPageRoute(builder: (_) => panel));
+                  launched.closed = true;
+                },
+                child: const Text('open'),
+              ),
             ),
           ),
         ),
@@ -964,12 +1391,16 @@ class _SettingsHost extends StatefulWidget {
     required this.changes,
     required this.brightnesses,
     required this.onBrightnessEnd,
+    required this.onFollowSystem,
+    required this.onTextReplacement,
   });
 
   final ReaderPreferences initial;
   final List<ReaderPreferences> changes;
   final List<double> brightnesses;
   final VoidCallback onBrightnessEnd;
+  final VoidCallback onFollowSystem;
+  final VoidCallback onTextReplacement;
 
   @override
   State<_SettingsHost> createState() => _SettingsHostState();
@@ -994,9 +1425,10 @@ class _SettingsHostState extends State<_SettingsHost> {
           systemBrightness: 0.45,
           onBrightness: widget.brightnesses.add,
           onBrightnessEnd: widget.onBrightnessEnd,
-          onFollowSystem: () {},
+          onFollowSystem: widget.onFollowSystem,
           autoTurnActive: false,
           onAutoTurn: () {},
+          onTextReplacement: widget.onTextReplacement,
           onMarks: () {},
         ),
         child: const Text('open'),
@@ -1008,9 +1440,12 @@ class _SettingsHostState extends State<_SettingsHost> {
 Future<void> _openSettings(
   WidgetTester tester,
   AppThemeStyleStore store, {
+  ReaderPreferences initial = const ReaderPreferences(),
   List<ReaderPreferences>? changes,
   List<double>? brightnesses,
   VoidCallback? onBrightnessEnd,
+  VoidCallback? onFollowSystem,
+  VoidCallback? onTextReplacement,
 }) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
@@ -1020,10 +1455,12 @@ Future<void> _openSettings(
     AppUiHost(
       store: store,
       home: _SettingsHost(
-        initial: const ReaderPreferences(),
+        initial: initial,
         changes: changes ?? <ReaderPreferences>[],
         brightnesses: brightnesses ?? <double>[],
         onBrightnessEnd: onBrightnessEnd ?? () {},
+        onFollowSystem: onFollowSystem ?? () {},
+        onTextReplacement: onTextReplacement ?? () {},
       ),
     ),
   );
@@ -1031,32 +1468,75 @@ Future<void> _openSettings(
   await tester.pumpAndSettle();
 }
 
-double _listOffset(WidgetTester tester) => tester
-    .state<ScrollableState>(
-      find
-          .descendant(
-            of: find.byKey(const ValueKey('reader-directory-scroll')),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    )
-    .position
-    .pixels;
+/// First chapter row that intersects the directory list viewport, with its
+/// top offset relative to the viewport. Row ids are the real chapter indices.
+(int, double)? _firstVisibleDirectoryRow(WidgetTester tester) {
+  final list = find.byKey(const ValueKey('reader-directory-scroll'));
+  if (list.evaluate().isEmpty) return null;
+  final bounds = tester.getRect(list);
+  (int, double)? best;
+  for (var index = 0; index < 200; index++) {
+    final row = find.byKey(ValueKey('reader-directory-row-$index'));
+    if (row.evaluate().isEmpty) continue;
+    final rect = tester.getRect(row);
+    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue;
+    final delta = rect.top - bounds.top;
+    if (best == null || delta < best.$2) best = (index, delta);
+  }
+  return best;
+}
 
-double _panelOffset(WidgetTester tester) => tester
-    .state<ScrollableState>(
-      find
-          .descendant(
-            of: find.byType(ReaderBookmarksPanel),
-            matching: find.byType(Scrollable),
-          )
-          .last,
-    )
-    .position
-    .pixels;
+/// First bookmark record that intersects the panel viewport, with its top
+/// offset relative to the scrollable.
+(String, double)? _firstVisibleBookmark(
+  WidgetTester tester,
+  List<ReaderBookmark> records,
+) {
+  final scrollables = find.descendant(
+    of: find.byType(ReaderBookmarksPanel),
+    matching: find.byType(Scrollable),
+  );
+  if (scrollables.evaluate().isEmpty) return null;
+  final bounds = tester.getRect(scrollables.last);
+  (String, double)? best;
+  for (final record in records) {
+    final row = find.byKey(ValueKey('reader-bookmark-${record.key}'));
+    if (row.evaluate().isEmpty) continue;
+    final rect = tester.getRect(row);
+    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue;
+    final delta = rect.top - bounds.top;
+    if (best == null || delta < best.$2) best = (record.key, delta);
+  }
+  return best;
+}
+
+/// First find result that intersects the panel's result viewport.
+(int, double)? _firstVisibleFindResult(WidgetTester tester, int count) {
+  final list =
+      find.byKey(const ValueKey('reader-find-results')).evaluate().isNotEmpty
+      ? find.byKey(const ValueKey('reader-find-results'))
+      : find.byKey(const ValueKey('reader-find-scroll'));
+  if (list.evaluate().isEmpty) return null;
+  final bounds = tester.getRect(list);
+  (int, double)? best;
+  for (var index = 0; index < count; index++) {
+    final row = find.byKey(ValueKey('reader-find-result-$index'));
+    if (row.evaluate().isEmpty) continue;
+    final rect = tester.getRect(row);
+    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue;
+    final delta = rect.top - bounds.top;
+    if (best == null || delta < best.$2) best = (index, delta);
+  }
+  return best;
+}
 
 Future<void> _closeSettings(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('关闭排版设置'));
+  final archiveClose = find.byKey(const ValueKey('reader-settings-close'));
+  await tester.tap(
+    archiveClose.evaluate().isNotEmpty
+        ? archiveClose
+        : find.byTooltip('关闭排版设置'),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -1132,10 +1612,15 @@ Future<http.Response> _api(http.Request request) async {
 class _PanelStore extends ReaderBookmarkStore {
   _PanelStore(List<ReaderBookmark> records) : records = List.of(records);
   final List<ReaderBookmark> records;
+  bool failRead = false;
+  bool failDelete = false;
+  int deletes = 0;
 
   @override
-  Future<List<ReaderBookmark>> loadBook(String bookId) async =>
-      records.where((mark) => mark.bookId == bookId).toList();
+  Future<List<ReaderBookmark>> loadBook(String bookId) async {
+    if (failRead) throw StateError('read failed');
+    return records.where((mark) => mark.bookId == bookId).toList();
+  }
 
   @override
   Future<void> add(ReaderBookmark record) async {
@@ -1146,6 +1631,8 @@ class _PanelStore extends ReaderBookmarkStore {
 
   @override
   Future<void> remove(String key) async {
+    deletes++;
+    if (failDelete) throw StateError('delete failed');
     records.removeWhere((entry) => entry.key == key);
     changes.value++;
   }

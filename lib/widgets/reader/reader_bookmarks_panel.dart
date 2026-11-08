@@ -11,6 +11,7 @@ import '../app_ui/app_ui_scope.dart';
 import '../wenku/src/app_text.dart';
 import '../wenku/wenku_glass.dart';
 import '../wenku/wenku_overlay.dart';
+import 'reader_panel_scroll_anchor.dart';
 import 'reader_theme.dart';
 import 'settings/reader_settings_widgets.dart';
 
@@ -49,14 +50,25 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
   int _generation = 0;
   int _epoch = 0;
   final _scroll = ScrollController();
+  late final _anchor = ReaderPanelScrollAnchor(_scroll);
   bool? _wasClassic;
-  double? _restoreOffset;
+  bool _captureScheduled = false;
 
   @override
   void initState() {
     super.initState();
     widget.store.changes.addListener(_changed);
+    _scroll.addListener(_scheduleAnchorCapture);
     unawaited(_load());
+  }
+
+  void _scheduleAnchorCapture() {
+    if (_captureScheduled) return;
+    _captureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _captureScheduled = false;
+      if (mounted) _anchor.capture();
+    });
   }
 
   @override
@@ -163,18 +175,15 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Classic and archive mount different scrollables. Keep the reader's
-    // place when the style changes under an open panel; the record list,
-    // errors and in-flight operations stay in this State either way.
+    // Classic and archive mount different scrollables, and bookmark excerpts
+    // make rows variable height. Keep the top visible record (id + in-row
+    // offset) rather than a pixel offset; records, errors and in-flight
+    // operations stay in this State either way.
     final classic = AppUiScope.isClassic(context);
     if (_wasClassic != null && _wasClassic != classic) {
-      _restoreOffset = _scroll.hasClients ? _scroll.offset : null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final offset = _restoreOffset;
-        _restoreOffset = null;
-        if (!mounted || offset == null || !_scroll.hasClients) return;
-        _scroll.jumpTo(offset.clamp(0.0, _scroll.position.maxScrollExtent));
-      });
+      _anchor.restore(
+        fallbackOffset: _scroll.hasClients ? _scroll.offset : null,
+      );
     }
     _wasClassic = classic;
   }
@@ -183,20 +192,25 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
   void dispose() {
     _generation++;
     _epoch++;
+    _anchor.cancel();
+    _scroll.removeListener(_scheduleAnchorCapture);
     _scroll.dispose();
     widget.store.changes.removeListener(_changed);
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Theme(
-    data: widget.preset.theme(Theme.of(context)),
-    child: Builder(
-      builder: (context) => AppUiScope.isClassic(context)
-          ? _buildClassic(context)
-          : _buildArchive(context),
-    ),
-  );
+  Widget build(BuildContext context) {
+    _scheduleAnchorCapture();
+    return Theme(
+      data: widget.preset.theme(Theme.of(context)),
+      child: Builder(
+        builder: (context) => AppUiScope.isClassic(context)
+            ? _buildClassic(context)
+            : _buildArchive(context),
+      ),
+    );
+  }
 
   /// Classic: the pre-#291 Material bookmark list — shared frame, add action
   /// in the header, excerpt rows and a plain delete icon. Store, concurrency
@@ -248,11 +262,17 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
                 ),
               ),
             if (_readError != null)
-              _classicErrorRow(preset, _readError!, () => unawaited(_load())),
+              _classicErrorRow(
+                preset,
+                _readError!,
+                const ValueKey('reader-bookmarks-retry-read'),
+                () => unawaited(_load()),
+              ),
             if (_actionError != null)
               _classicErrorRow(
                 preset,
                 _actionError!,
+                const ValueKey('reader-bookmarks-retry-action'),
                 busy ? null : _retryAction,
               ),
             Divider(height: 1, color: preset.borderColor),
@@ -272,8 +292,13 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       itemCount: records.length,
-                      itemBuilder: (context, index) =>
-                          _classicRow(preset, records[index], index, busy),
+                      itemBuilder: (context, index) {
+                        final record = records[index];
+                        return KeyedSubtree(
+                          key: _anchor.keyFor(record.key),
+                          child: _classicRow(preset, record, index, busy),
+                        );
+                      },
                     ),
             ),
           ],
@@ -294,6 +319,7 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
   Widget _classicErrorRow(
     ReaderThemePreset preset,
     String message,
+    Key key,
     VoidCallback? onRetry,
   ) => Padding(
     padding: const EdgeInsets.fromLTRB(20, 2, 12, 6),
@@ -307,6 +333,7 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
         ),
         if (onRetry != null)
           TextButton(
+            key: key,
             onPressed: onRetry,
             style: TextButton.styleFrom(foregroundColor: preset.accentColor),
             child: const Text('重试'),
@@ -499,68 +526,71 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
                       itemCount: records.length,
                       itemBuilder: (context, index) {
                         final record = records[index];
-                        return JellyTapSurface(
-                          key: ValueKey('reader-bookmark-${record.key}'),
-                          onTap: busy
-                              ? null
-                              : () => Navigator.pop(context, record),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Row(
-                                  key: ValueKey(
-                                    'reader-bookmark-heading-${record.key}',
+                        return KeyedSubtree(
+                          key: _anchor.keyFor(record.key),
+                          child: JellyTapSurface(
+                            key: ValueKey('reader-bookmark-${record.key}'),
+                            onTap: busy
+                                ? null
+                                : () => Navigator.pop(context, record),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    key: ValueKey(
+                                      'reader-bookmark-heading-${record.key}',
+                                    ),
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            AppText(
+                                              record.title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            AppText(
+                                              '本地书签',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      GlassIconButton(
+                                        key: ValueKey(
+                                          'reader-bookmark-delete-${record.key}',
+                                        ),
+                                        icon: CupertinoIcons.trash,
+                                        label: '删除书签 ${record.title}',
+                                        liveGlass: false,
+                                        transparent: true,
+                                        onPressed: busy
+                                            ? null
+                                            : () => _delete(context, record),
+                                      ),
+                                    ],
                                   ),
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          AppText(
-                                            record.title,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          AppText(
-                                            '本地书签',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurfaceVariant,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    GlassIconButton(
-                                      key: ValueKey(
-                                        'reader-bookmark-delete-${record.key}',
-                                      ),
-                                      icon: CupertinoIcons.trash,
-                                      label: '删除书签 ${record.title}',
-                                      liveGlass: false,
-                                      transparent: true,
-                                      onPressed: busy
-                                          ? null
-                                          : () => _delete(context, record),
-                                    ),
-                                  ],
-                                ),
-                                if (record.text.isNotEmpty)
-                                  _excerpt(context, record),
-                              ],
+                                  if (record.text.isNotEmpty)
+                                    _excerpt(context, record),
+                                ],
+                              ),
                             ),
                           ),
                         );

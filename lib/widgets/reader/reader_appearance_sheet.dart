@@ -399,7 +399,7 @@ class _ReaderAppearanceSheetState
                   ? _displayPreset.accentColor
                   : _displayPreset.mutedTextColor,
             ),
-            onPressed: _followSystem,
+            onPressed: _toggleFollowSystem,
             child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
           );
           if (constraints.maxWidth < 220) {
@@ -1000,22 +1000,28 @@ class _ReaderAppearanceSheetState
     );
   }
 
+  /// One shared action for both renderers: settle pending edits, flip the
+  /// local display flag, then let the reader page apply/receive the device
+  /// brightness. Classic used to bind the Align-returning builder itself as
+  /// `onPressed`, so a tap only built a discarded widget.
+  void _toggleFollowSystem() {
+    if (!_alive) return;
+    _flushAll();
+    setState(
+      () => value = value.copyWith(
+        followSystemBrightness: !value.followSystemBrightness,
+      ),
+    );
+    widget.onFollowSystem();
+  }
+
   Widget _followSystem() => Align(
     alignment: Alignment.centerRight,
     child: GlassTextButton(
       key: const ValueKey('reader-follow-system'),
       compact: true,
       selected: value.followSystemBrightness,
-      onPressed: () {
-        if (!_alive) return;
-        _flushAll();
-        setState(
-          () => value = value.copyWith(
-            followSystemBrightness: !value.followSystemBrightness,
-          ),
-        );
-        widget.onFollowSystem();
-      },
+      onPressed: _toggleFollowSystem,
       child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
     ),
   );

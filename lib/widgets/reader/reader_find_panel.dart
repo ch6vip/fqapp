@@ -11,6 +11,7 @@ import '../app_ui/app_ui_scope.dart';
 import '../wenku/app_search_field.dart';
 import '../wenku/wenku_archive.dart';
 import '../wenku/wenku_glass.dart';
+import 'reader_panel_scroll_anchor.dart';
 import 'reader_theme.dart';
 import 'settings/reader_settings_widgets.dart';
 
@@ -120,35 +121,45 @@ class ReaderFindPanel extends StatefulWidget {
 class _ReaderFindPanelState extends State<ReaderFindPanel> {
   final _query = TextEditingController();
   final _scroll = ScrollController();
+  late final _anchor = ReaderPanelScrollAnchor(_scroll);
   Timer? _debounce;
   int _generation = 0;
   bool _searching = false;
   bool _failed = false;
   ReaderFindResult _result = const ReaderFindResult.empty();
   bool? _wasClassic;
-  double? _restoreOffset;
+  bool _captureScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _query.addListener(_edited);
+    // Row geometry is only safe to read after layout. Capturing on scroll and
+    // after builds keeps the anchor fresh for a style switch.
+    _scroll.addListener(_scheduleAnchorCapture);
+  }
+
+  void _scheduleAnchorCapture() {
+    if (_captureScheduled) return;
+    _captureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _captureScheduled = false;
+      if (mounted) _anchor.capture();
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // The classic and archive shells are different widget trees, so the
-    // result scrollable is remounted on a style switch. Carry the reader's
-    // place (and the query, held by `_query`) across instead of jumping home.
+    // result scrollable is remounted on a style switch. Carry the top visible
+    // match (and the query, held by `_query`) instead of a raw pixel offset:
+    // the header and preview heights differ between the two renderers.
     final classic = AppUiScope.isClassic(context);
     if (_wasClassic != null && _wasClassic != classic) {
-      _restoreOffset = _scroll.hasClients ? _scroll.offset : null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final offset = _restoreOffset;
-        _restoreOffset = null;
-        if (!mounted || offset == null || !_scroll.hasClients) return;
-        _scroll.jumpTo(offset.clamp(0.0, _scroll.position.maxScrollExtent));
-      });
+      _anchor.restore(
+        fallbackOffset: _scroll.hasClients ? _scroll.offset : null,
+      );
     }
     _wasClassic = classic;
   }
@@ -217,20 +228,25 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
   void dispose() {
     _generation++;
     _debounce?.cancel();
+    _anchor.cancel();
+    _scroll.removeListener(_scheduleAnchorCapture);
     _query.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Theme(
-    data: widget.preset.theme(Theme.of(context)),
-    child: Builder(
-      builder: (context) => AppUiScope.isClassic(context)
-          ? _buildClassic(context)
-          : _buildArchive(context),
-    ),
-  );
+  Widget build(BuildContext context) {
+    _scheduleAnchorCapture();
+    return Theme(
+      data: widget.preset.theme(Theme.of(context)),
+      child: Builder(
+        builder: (context) => AppUiScope.isClassic(context)
+            ? _buildClassic(context)
+            : _buildArchive(context),
+      ),
+    );
+  }
 
   /// Classic: the pre-#291 Material panel — search field, status/retry row,
   /// divider and a plain result list inside the shared reader sheet frame.
@@ -299,8 +315,13 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.symmetric(vertical: 6),
       itemCount: _result.matches.length,
-      itemBuilder: (context, index) =>
-          _classicResultRow(context, preset, index),
+      itemBuilder: (context, index) {
+        final match = _result.matches[index];
+        return KeyedSubtree(
+          key: _anchor.keyFor('${match.start}:${match.end}'),
+          child: _classicResultRow(context, preset, index),
+        );
+      },
     );
   }
 
@@ -491,55 +512,58 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
                     _isLowSurrogate(text.codeUnitAt(end))) {
                   end++;
                 }
-                return JellyTapSurface(
-                  key: ValueKey('reader-find-result-$index'),
-                  onTap: () {
-                    FocusScope.of(context).unfocus();
-                    Navigator.pop(context, match);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 14,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '第 ${match.paragraph + 1} 段 · ${index + 1}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                return KeyedSubtree(
+                  key: _anchor.keyFor('${match.start}:${match.end}'),
+                  child: JellyTapSurface(
+                    key: ValueKey('reader-find-result-$index'),
+                    onTap: () {
+                      FocusScope.of(context).unfocus();
+                      Navigator.pop(context, match);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 14,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '第 ${match.paragraph + 1} 段 · ${index + 1}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text:
-                                    '${start > 0 ? '…' : ''}'
-                                    '${text.substring(start, localStart)}',
-                              ),
-                              TextSpan(
-                                text: text.substring(localStart, localEnd),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
+                          const SizedBox(height: 5),
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(
+                                  text:
+                                      '${start > 0 ? '…' : ''}'
+                                      '${text.substring(start, localStart)}',
                                 ),
-                              ),
-                              TextSpan(
-                                text:
-                                    '${text.substring(localEnd, end)}'
-                                    '${end < text.length ? '…' : ''}',
-                              ),
-                            ],
+                                TextSpan(
+                                  text: text.substring(localStart, localEnd),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text:
+                                      '${text.substring(localEnd, end)}'
+                                      '${end < text.length ? '…' : ''}',
+                                ),
+                              ],
+                            ),
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 );
