@@ -73,8 +73,9 @@ class WebDavClient {
     String method, {
     Uint8List? bytes,
     Map<String, String> headers = const {},
+    Uri? uri,
   }) async {
-    final request = http.Request(method, config.fileUri)
+    final request = http.Request(method, uri ?? config.fileUri)
       ..followRedirects = false
       ..headers.addAll({
         'authorization':
@@ -133,7 +134,7 @@ class WebDavClient {
   /// False means another device won this write; re-read and merge before retry.
   Future<bool> write(Uint8List bytes, String? etag) async {
     if (bytes.length > maxBytes) throw const WebDavException('同步文件超过 20 MB');
-    final response = await _request(
+    var response = await _request(
       'PUT',
       bytes: bytes,
       headers: {
@@ -141,6 +142,28 @@ class WebDavClient {
         if (etag == null) 'if-none-match': '*' else 'if-match': etag,
       },
     );
+    if (response.statusCode == 409 || response.statusCode == 404) {
+      final directory = config.fileUri.resolve('.');
+      var path = '';
+      for (final segment in directory.pathSegments.where((s) => s.isNotEmpty)) {
+        path += '/${Uri.encodeComponent(segment)}';
+        final created = await _request(
+          'MKCOL',
+          uri: directory.replace(path: '$path/'),
+        );
+        if (![200, 201, 204, 405].contains(created.statusCode)) {
+          _fail(created.statusCode);
+        }
+      }
+      response = await _request(
+        'PUT',
+        bytes: bytes,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          if (etag == null) 'if-none-match': '*' else 'if-match': etag,
+        },
+      );
+    }
     if (response.statusCode == 412) return false;
     if (![200, 201, 204].contains(response.statusCode)) {
       _fail(response.statusCode);
