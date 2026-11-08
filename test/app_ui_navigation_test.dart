@@ -147,7 +147,7 @@ void main() {
     final loadsBeforeSwitch = List<String>.of(chapterLoads);
     expect(loadsBeforeSwitch, isNotEmpty);
 
-    void expectOwnersKept(String label) {
+    void expectOwnersKept(AppThemeStyle expected, String label) {
       // The reader route is opaque, so the shell below it is offstage.
       expect(
         tester.state(find.byType(RootShell, skipOffstage: false)),
@@ -207,15 +207,39 @@ void main() {
       );
       expect(chapterLoads, loadsBeforeSwitch, reason: label);
       expect(find.byType(AppUiScope), findsOneWidget, reason: label);
+
+      // Real contexts: the shell, both visited tabs, the home tab and the
+      // reader route all see the same injected scope and discrete style.
+      final contexts = <String, BuildContext>{
+        'RootShell': tester.element(
+          find.byType(RootShell, skipOffstage: false),
+        ),
+        'LazyIndexedStack': tester.element(
+          find.byType(LazyIndexedStack, skipOffstage: false),
+        ),
+        'HomePage tab': tester.element(
+          find.byType(HomePage, skipOffstage: false),
+        ),
+        'LibraryPage tab': tester.element(
+          find.byType(LibraryPage, skipOffstage: false),
+        ),
+        'MinePage tab': tester.element(
+          find.byType(MinePage, skipOffstage: false),
+        ),
+        'ReaderPage': tester.element(find.byType(ReaderPage)),
+      };
+      for (final entry in contexts.entries) {
+        _expectLiveScope(entry.value, expected, store, '$label ${entry.key}');
+      }
     }
 
-    expectOwnersKept('archive before switching');
+    expectOwnersKept(AppThemeStyle.archive, 'archive before switching');
     await _switchStyle(tester, store, AppThemeStyle.classic);
     expect(find.byType(ClassicShellDock, skipOffstage: false), findsOneWidget);
-    expectOwnersKept('classic');
+    expectOwnersKept(AppThemeStyle.classic, 'classic');
 
     await _switchStyle(tester, store, AppThemeStyle.archive);
-    expectOwnersKept('archive again');
+    expectOwnersKept(AppThemeStyle.archive, 'archive again');
 
     rootNavigator.pop();
     await tester.pumpAndSettle();
@@ -230,6 +254,12 @@ void main() {
       same(rootNavigator),
     );
     expect(tester.state(find.byType(MinePage)), same(mineState));
+    _expectLiveScope(
+      tester.element(find.byType(MinePage)),
+      AppThemeStyle.archive,
+      store,
+      'tabs after returning',
+    );
     // Every live-style read in this scenario went through the scope.
     expect(AppUiScope.debugFallbackReads, 0);
     expect(tester.takeException(), isNull);
@@ -312,7 +342,7 @@ void main() {
         matching: find.byIcon(LucideIcons.check),
       );
 
-      void expectDesktopKeepers(String label) {
+      void expectDesktopKeepers(AppThemeStyle expected, String label) {
         expect(
           tester.state(find.byType(DesktopSettingsBody)),
           same(settingsBodyState),
@@ -340,13 +370,38 @@ void main() {
           same(rootNavigator),
           reason: label,
         );
+
+        // Real desktop contexts: the frame, the two-pane settings body, its
+        // nested Navigator, the pushed subpage and the selected category row.
+        final contexts = <String, BuildContext>{
+          'DesktopAppFrame': tester.element(find.byType(DesktopAppFrame)),
+          'SettingsPage': tester.element(find.byType(SettingsPage)),
+          'DesktopSettingsBody': tester.element(
+            find.byType(DesktopSettingsBody),
+          ),
+          'nested Navigator': tester.element(nestedFinder),
+          'TextReplacementPage': tester.element(
+            find.byType(TextReplacementPage),
+          ),
+          '主题 row': tester.element(
+            find.widgetWithText(SettingsRow, '主题'),
+          ),
+        };
+        for (final entry in contexts.entries) {
+          _expectLiveScope(
+            entry.value,
+            expected,
+            store,
+            '$label ${entry.key}',
+          );
+        }
       }
 
-      expectDesktopKeepers('archive before switching');
+      expectDesktopKeepers(AppThemeStyle.archive, 'archive before switching');
       await _switchStyle(tester, store, AppThemeStyle.classic);
-      expectDesktopKeepers('classic');
+      expectDesktopKeepers(AppThemeStyle.classic, 'classic');
       await _switchStyle(tester, store, AppThemeStyle.archive);
-      expectDesktopKeepers('archive again');
+      expectDesktopKeepers(AppThemeStyle.archive, 'archive again');
 
       // Back out of the subpage: the category route and its State remain.
       nestedNavigator.pop();
@@ -363,6 +418,12 @@ void main() {
       expect(find.byType(SettingsPage), findsNothing);
       expect(find.byType(DesktopAppFrame), findsOneWidget);
       expect(DesktopPlatform.navigatorKey.currentState, same(rootNavigator));
+      _expectLiveScope(
+        tester.element(find.byType(DesktopAppFrame)),
+        AppThemeStyle.archive,
+        store,
+        'frame after returning',
+      );
       expect(AppUiScope.debugFallbackReads, 0);
       expect(tester.takeException(), isNull);
 
@@ -371,6 +432,23 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     }
   });
+}
+
+void _expectLiveScope(
+  BuildContext context,
+  AppThemeStyle expected,
+  AppThemeStyleStore store,
+  String label,
+) {
+  final scope = AppUiScope.maybeOf(context);
+  expect(scope, isNotNull, reason: '$label: scope present');
+  expect(scope!.notifier, same(store), reason: '$label: injected store');
+  expect(AppUiScope.of(context), expected, reason: '$label: discrete style');
+  expect(
+    AppUiScope.presentationOf(context).isClassic,
+    expected == AppThemeStyle.classic,
+    reason: '$label: presentation',
+  );
 }
 
 Future<void> _isolatedStartup() async {
