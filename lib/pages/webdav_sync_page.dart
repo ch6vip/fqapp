@@ -103,7 +103,7 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       const Text(
-                        '自动同步书架与阅读进度',
+                        '云端优先覆盖书架与阅读进度',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w600,
@@ -171,9 +171,7 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
                       SwitchListTile.adaptive(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('自动同步'),
-                        subtitle: const Text(
-                          '启动、返回应用、数据变更后及前台每 2 分钟同步；离线后自动重试',
-                        ),
+                        subtitle: const Text('启动、返回应用、数据变更后及前台每 2 分钟按云端覆盖本机'),
                         value: _enabled,
                         onChanged: busy
                             ? null
@@ -206,7 +204,7 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
                       ),
                       const SizedBox(height: 24),
                       const Text(
-                        '进度冲突保留时间较新的记录，请确保各设备时间准确。书架移除也会同步；历史与已看剧集取并集，本机删除的历史可能从云端恢复。\n\n'
+                        '云端已有同步文件时，强制覆盖本机在线书架、阅读进度与已看剧集。本机独有收藏会移除，本机新增收藏和阅读进度不会自动上传。只有云端文件不存在时，才用本机数据建立初始备份。AI 资产沿用备份恢复的合并规则。\n\n'
                         '不上传本地书籍、下载缓存或账号密码。密码保存在设备安全存储中；云端同步文件包含书架与进度，请使用私人目录。服务器需支持 ETag 和条件写入。',
                       ),
                     ],
