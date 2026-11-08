@@ -341,9 +341,19 @@ class DetailArchiveTags extends StatelessWidget {
 /// Upstream `_synopsis`: `01 / SYNOPSIS`, three clamped lines and the
 /// `展开全部` toggle. Keeps fqapp's `detail_description_*` keys.
 class DetailArchiveSynopsis extends StatefulWidget {
-  const DetailArchiveSynopsis({super.key, required this.text});
+  const DetailArchiveSynopsis({
+    super.key,
+    required this.text,
+    this.expanded,
+    this.onExpandedChanged,
+  });
 
   final String text;
+
+  /// Controlled expansion when non-null: the detail page owns the value so a
+  /// layout swap (经典 ⇄ 档案) cannot fold the synopsis back to three lines.
+  final bool? expanded;
+  final ValueChanged<bool>? onExpandedChanged;
 
   @override
   State<DetailArchiveSynopsis> createState() => _DetailArchiveSynopsisState();
@@ -352,10 +362,21 @@ class DetailArchiveSynopsis extends StatefulWidget {
 class _DetailArchiveSynopsisState extends State<DetailArchiveSynopsis> {
   bool _expanded = false;
 
+  bool get _isExpanded => widget.expanded ?? _expanded;
+
   @override
   void didUpdateWidget(DetailArchiveSynopsis oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) _expanded = false;
+    // Uncontrolled callers keep the original reset-on-new-text behaviour.
+    if (widget.expanded == null && oldWidget.text != widget.text) {
+      _expanded = false;
+    }
+  }
+
+  void _toggle() {
+    final next = !_isExpanded;
+    if (widget.expanded == null) setState(() => _expanded = next);
+    widget.onExpandedChanged?.call(next);
   }
 
   @override
@@ -389,8 +410,8 @@ class _DetailArchiveSynopsisState extends State<DetailArchiveSynopsis> {
               child: AppText(
                 widget.text,
                 key: const Key('detail_description_text'),
-                maxLines: _expanded ? null : 3,
-                overflow: _expanded
+                maxLines: _isExpanded ? null : 3,
+                overflow: _isExpanded
                     ? TextOverflow.visible
                     : TextOverflow.ellipsis,
                 style: style,
@@ -401,14 +422,14 @@ class _DetailArchiveSynopsisState extends State<DetailArchiveSynopsis> {
                 padding: const EdgeInsets.only(top: 8),
                 child: JellyTapSurface(
                   key: const Key('detail_description_toggle'),
-                  onTap: () => setState(() => _expanded = !_expanded),
+                  onTap: _toggle,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         AppText(
-                          _expanded ? '收起' : '展开全部',
+                          _isExpanded ? '收起' : '展开全部',
                           style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -416,7 +437,7 @@ class _DetailArchiveSynopsisState extends State<DetailArchiveSynopsis> {
                         ),
                         const SizedBox(width: 7),
                         AnimatedRotation(
-                          turns: _expanded ? .5 : 0,
+                          turns: _isExpanded ? .5 : 0,
                           duration: reduceMotion
                               ? Duration.zero
                               : WenkuMotion.enter,

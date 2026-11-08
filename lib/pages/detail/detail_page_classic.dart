@@ -131,11 +131,14 @@ extension _DetailPageClassic on _DetailPageState {
             ),
             slivers: [
               SliverToBoxAdapter(
-                child: DetailHero(
-                  item: widget.item,
-                  detail: _bookDetail,
-                  onOpenAuthor: _openAuthorAction,
-                  lastChapterTitle: _latestChapterTitle,
+                child: KeyedSubtree(
+                  key: contentAnchorKey('hero'),
+                  child: DetailHero(
+                    item: widget.item,
+                    detail: _bookDetail,
+                    onOpenAuthor: _openAuthorAction,
+                    lastChapterTitle: _latestChapterTitle,
+                  ),
                 ),
               ),
               SliverToBoxAdapter(
@@ -167,23 +170,37 @@ extension _DetailPageClassic on _DetailPageState {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _classicIntroSection(),
-        _classicDirectorySection(),
-        _reviewsSection(palette, hasReviews: hasReviews, showEmpty: false),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-          child: DetailIdRow(id: _contentId),
+        KeyedSubtree(
+          key: contentAnchorKey('synopsis'),
+          child: _classicIntroSection(),
+        ),
+        KeyedSubtree(
+          key: contentAnchorKey('directory'),
+          child: _classicDirectorySection(),
+        ),
+        KeyedSubtree(
+          key: contentAnchorKey('reviews'),
+          child: _reviewsSection(
+            palette,
+            hasReviews: hasReviews,
+            showEmpty: false,
+          ),
+        ),
+        KeyedSubtree(
+          key: contentAnchorKey('id'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+            child: DetailIdRow(id: _contentId),
+          ),
         ),
       ],
     );
   }
 
-  /// 简介: the same summary the 档案 body resolves (payload abstract first,
-  /// description fallback) plus the cast row when the series payload has one.
+  /// 简介: the summary the 档案 body resolves plus the cast row when the series
+  /// payload has one. The expansion flag lives in the page state, so folding or
+  /// unfolding survives the classic ⇄ archive swap.
   Widget _classicIntroSection() {
-    final summary = _bookDetail?.abstract.isNotEmpty == true
-        ? _bookDetail!.abstract
-        : extractMediaDescription(_detail);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -194,7 +211,11 @@ extension _DetailPageClassic on _DetailPageState {
             child: DetailInlineError(message: _detailError!, onRetry: _load),
           ),
         ] else
-          DetailDescription(text: summary),
+          DetailDescription(
+            text: _synopsisText,
+            expanded: _synopsisExpanded,
+            onExpandedChanged: _setSynopsisExpanded,
+          ),
         if (_series.cast.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(homeGutter, 18, homeGutter, 0),
@@ -216,6 +237,13 @@ extension _DetailPageClassic on _DetailPageState {
     return '${status.isEmpty ? '' : '$status '}$count · 全部';
   }
 
+  /// The old 目录 preview: the reader's own slice (current ±1, or the first
+  /// three) in catalogue order, with `全部 ›` opening the searchable sheet.
+  ///
+  /// Catalogue order is deliberately not shared here: 档案's inline catalogue
+  /// reads/writes `CatalogueOrderPreferences`, while this preview always keeps
+  /// the order the reader stores, and the sheet's own 正序/倒序 only applies to
+  /// that visit (reopening it starts at 正序 in both styles).
   Widget _classicDirectorySection() {
     // 全局集号未知时，「已读 N%」的 N 没有意义，不展示进度行。
     final complete = !_isVideo || hasCompleteEpisodeCatalogue(_allChapters);

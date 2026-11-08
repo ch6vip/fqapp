@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/media_item.dart';
+import '../app_ui/content_anchor.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import 'detail_chapter_row.dart';
@@ -101,13 +102,23 @@ class ClassicDetailDirectorySection extends StatelessWidget {
             key: const Key('detail_preview_chapters'),
             children: [
               for (var i = 0; i < preview.length; i++)
-                DetailChapterRow(
-                  key: ValueKey('detail_preview_chapter_${preview[i].itemId}'),
-                  chapter: preview[i],
-                  current: i == currentIndex,
-                  read: currentIndex != null && i < currentIndex!,
-                  divider: i < preview.length - 1,
-                  onTap: () => onOpenChapter(preview[i]),
+                // The anchor id matches the inline catalogue row, so a layout
+                // swap can return to the same chapter (or fall back to the
+                // whole 目录 section when this preview does not show it).
+                KeyedSubtree(
+                  key: contentAnchorKey(
+                    'directory/chapter:${preview[i].itemId}',
+                  ),
+                  child: DetailChapterRow(
+                    key: ValueKey(
+                      'detail_preview_chapter_${preview[i].itemId}',
+                    ),
+                    chapter: preview[i],
+                    current: i == currentIndex,
+                    read: currentIndex != null && i < currentIndex!,
+                    divider: i < preview.length - 1,
+                    onTap: () => onOpenChapter(preview[i]),
+                  ),
                 ),
             ],
           );

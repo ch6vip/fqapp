@@ -7,10 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/pages/ai_reading/settings/ai_book_settings_page.dart';
+import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/app_theme_style.dart';
+import 'package:fqapp/services/catalogue_order_preferences.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
 import 'package:fqapp/widgets/detail/classic_detail_read_bar.dart';
@@ -18,6 +22,7 @@ import 'package:fqapp/widgets/detail/detail_chapter_row.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/detail/detail_archive.dart';
 import 'package:fqapp/widgets/detail/detail_hero.dart';
+import 'package:fqapp/widgets/detail/detail_states.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
@@ -131,7 +136,9 @@ void main() {
       expect(find.byKey(const Key('detail_directory_scroll')), findsOneWidget);
 
       // A row in the sheet still runs the page's own `_openChapter`.
-      final row = find.byKey(const ValueKey('detail_directory_chapter_chapter-1'));
+      final row = find.byKey(
+        const ValueKey('detail_directory_chapter_chapter-1'),
+      );
       expect(row, findsOneWidget);
       await tester.tap(row);
       // The reader shows a loading indicator while its chapter request runs, so
@@ -195,9 +202,7 @@ void main() {
         tester,
         extras: const DetailExtras(
           comments: BookCommentPage(
-            comments: [
-              BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲'),
-            ],
+            comments: [BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲')],
             totalCount: 1,
           ),
         ),
@@ -211,22 +216,32 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('入架 writes through the shared ShelfStore', (tester) async {
+    testWidgets('a real tap on 入架 writes through the shared ShelfStore', (
+      tester,
+    ) async {
       final store = await _pumpClassic(tester);
       addTearDown(store.dispose);
 
       final pill = find.byKey(const Key('detail_shelf_button'));
       expect(pill, findsOneWidget);
       expect(find.text('＋ 书架'), findsOneWidget);
-      // The Hive write only completes in a real-I/O zone; invoke the same
-      // callback the pill would run on tap and let the box settle.
+      // Tap the real hit target, then let the Hive write (real file I/O) land.
       await tester.runAsync(() async {
-        tester.widget<HomePressable>(pill).onTap();
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await tester.tap(pill);
+        await Future<void>.delayed(const Duration(milliseconds: 80));
       });
+      await tester.pump();
+      expect(ShelfStore.instance.containsItem(_book), isTrue);
       await tester.pumpAndSettle();
       expect(find.text('✓ 书架'), findsOneWidget);
-      expect(ShelfStore.instance.containsItem(_book), isTrue);
+
+      // Tapping again removes it.
+      await tester.runAsync(() async {
+        await tester.tap(pill);
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      });
+      await tester.pump();
+      expect(ShelfStore.instance.containsItem(_book), isFalse);
     });
 
     testWidgets('目录 failure keeps the preview retryable', (tester) async {
@@ -290,9 +305,11 @@ void main() {
           media.download ? findsOneWidget : findsNothing,
         );
         // 漫画/听书/短剧 must not fake a 目录 preview progress bar.
-        expect(find.byKey(const Key('detail_preview_chapters')), findsOneWidget);
+        expect(
+          find.byKey(const Key('detail_preview_chapters')),
+          findsOneWidget,
+        );
       });
-
     }
   });
 
@@ -318,18 +335,247 @@ void main() {
       final store = await _pumpClassic(
         tester,
         size: const Size(320, 560),
-        item: _book.copyWith(
-          title: '开局废弃宗门，我召唤了大帝长老，然后在诸天万界开了一家书店',
-        ),
+        item: _book.copyWith(title: '开局废弃宗门，我召唤了大帝长老，然后在诸天万界开了一家书店'),
       );
       addTearDown(store.dispose);
 
       expect(tester.takeException(), isNull);
       // The AppBar title ellipsizes instead of pushing the entries off screen.
-      final title = tester.widget<Text>(find.byKey(const Key('detail_page_title')));
+      final title = tester.widget<Text>(
+        find.byKey(const Key('detail_page_title')),
+      );
       expect(title.overflow, TextOverflow.ellipsis);
       expect(find.byKey(const Key('detail_shelf_button')), findsOneWidget);
-      expect(find.byKey(const Key('detail_read_button')).hitTestable(), findsOneWidget);
+      expect(
+        find.byKey(const Key('detail_read_button')).hitTestable(),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('classic detail entries', () {
+    testWidgets('书评 uses the old header and 全部 entry, no archive glass', (
+      tester,
+    ) async {
+      final store = await _pumpClassic(
+        tester,
+        extras: const DetailExtras(
+          comments: BookCommentPage(
+            comments: [BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲')],
+            totalCount: 1,
+          ),
+        ),
+      );
+      addTearDown(store.dispose);
+
+      final header = find.byKey(const Key('detail_reviews_header'));
+      expect(header, findsOneWidget);
+      expect(tester.widget(header), isA<DetailSectionHeader>());
+      expect(
+        find.descendant(of: header, matching: find.byType(ArchiveSection)),
+        findsNothing,
+      );
+      // No archive glass and no separate count subtitle in classic.
+      expect(find.byType(GlassTextButton), findsNothing);
+      expect(find.text('03 / REVIEWS'), findsNothing);
+      final entry = find.byKey(const Key('detail_reviews_more'));
+      expect(tester.widget(entry), isA<HomePressable>());
+      expect(find.text('1 条 · 全部 ›'), findsOneWidget);
+
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('全部书评'), findsOneWidget);
+      expect(find.text('很好看的一本书'), findsWidgets);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('档案 书评 keeps the archive header and glass entry', (
+      tester,
+    ) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.archive);
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: DetailPage(
+            item: _book,
+            readerStore: MemoryReaderStore(),
+            chapterCache: MemoryChapterCache(),
+            extrasLoader: (_) async => const DetailExtras(
+              comments: BookCommentPage(
+                comments: [
+                  BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲'),
+                ],
+                totalCount: 1,
+              ),
+            ),
+            detailLoader: (id, {String tab = '小说'}) async => {
+              'data': {'abstract': '一段故事。'},
+            },
+            directoryLoader: (id, {String tab = '小说'}) async => [_chapters],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final header = find.byKey(const Key('detail_reviews_header'));
+      expect(
+        find.descendant(of: header, matching: find.byType(ArchiveSection)),
+        findsOneWidget,
+      );
+      expect(find.byType(GlassTextButton), findsWidgets);
+      expect(find.text('03 / REVIEWS'), findsOneWidget);
+    });
+
+    testWidgets('the 目录 preview keeps the original order when 倒序 is saved', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({
+        CatalogueOrderPreferences.key: true,
+      });
+      CatalogueOrderPreferences.instance.resetForTest();
+      addTearDown(CatalogueOrderPreferences.instance.resetForTest);
+
+      final store = await _pumpClassic(tester, chapters: 20);
+      addTearDown(store.dispose);
+
+      // The persisted order belongs to the 档案 inline catalogue; the classic
+      // preview is always the reader's own slice in catalogue order.
+      final rows = tester
+          .widgetList<DetailChapterRow>(find.byType(DetailChapterRow))
+          .toList();
+      expect(rows.map((row) => row.chapter.itemId), [
+        'chapter-1',
+        'chapter-2',
+        'chapter-3',
+      ]);
+      expect(find.byKey(const Key('detail-catalogue-order')), findsNothing);
+    });
+
+    testWidgets('the directory sheet sorts this visit and resets on reopen', (
+      tester,
+    ) async {
+      final store = await _pumpClassic(tester, chapters: 20);
+      addTearDown(store.dispose);
+
+      Future<void> openSheet() async {
+        await tester.tap(find.byKey(const Key('detail_directory_button')));
+        await tester.pumpAndSettle();
+      }
+
+      await openSheet();
+      expect(find.text('正序'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('detail_directory_sort')));
+      await tester.pumpAndSettle();
+      expect(find.text('倒序'), findsOneWidget);
+      expect(
+        find
+            .byKey(const ValueKey('detail_directory_chapter_chapter-20'))
+            .hitTestable(),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('detail_directory_close')));
+      await tester.pumpAndSettle();
+
+      // The sheet's order is per visit: reopening starts from 正序 again.
+      await openSheet();
+      expect(find.text('正序'), findsOneWidget);
+      expect(find.text('倒序'), findsNothing);
+      expect(
+        find
+            .byKey(const ValueKey('detail_directory_chapter_chapter-1'))
+            .hitTestable(),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('整本下载 starts from the classic bar and shows progress', (
+      tester,
+    ) async {
+      final cache = MemoryChapterCache();
+      final fetched = <String>[];
+      final store = await _pumpClassic(
+        tester,
+        cache: cache,
+        chapters: 4,
+        chapterLoader: (chapter) async {
+          fetched.add(chapter.itemId);
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return ChapterContent.fromPlainText(
+            '正文${chapter.itemId}',
+            illustrationsChecked: true,
+          ).toCacheText();
+        },
+      );
+      addTearDown(store.dispose);
+
+      await tester.tap(find.byKey(const Key('detail_action_下载')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('detail_download_all')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+
+      // The bar itself carries the determinate progress of the running batch.
+      final progress = find.descendant(
+        of: find.byKey(const Key('detail_action_下载')),
+        matching: find.byType(CircularProgressIndicator),
+      );
+      expect(progress, findsOneWidget);
+      expect(
+        tester.widget<CircularProgressIndicator>(progress).value,
+        isNotNull,
+      );
+
+      await tester.pumpAndSettle();
+      expect(fetched, ['chapter-1', 'chapter-2', 'chapter-3', 'chapter-4']);
+      expect(await cache.cachedChapterIds('book'), {
+        'chapter-1',
+        'chapter-2',
+        'chapter-3',
+        'chapter-4',
+      });
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('听书 opens the audio page from the read bar', (tester) async {
+      final observer = _RouteObserver();
+      final store = await _pumpClassic(tester, observer: observer);
+      addTearDown(store.dispose);
+      final context = tester.element(find.byType(DetailPage));
+
+      await tester.tap(find.byKey(const Key('detail_action_听书')));
+      // Flush the pending open (audio history) without building the player,
+      // whose retry timers would outlive the teardown.
+      await tester.idle();
+      final route = observer.lastRoute;
+      expect(route, isA<MaterialPageRoute>());
+      final page = (route! as MaterialPageRoute).builder(context);
+      expect(page, isA<AudioPage>());
+      expect((page as AudioPage).bookId, 'book');
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('本书 AI opens the book settings page from the app bar', (
+      tester,
+    ) async {
+      final observer = _RouteObserver();
+      final store = await _pumpClassic(tester, observer: observer);
+      addTearDown(store.dispose);
+      final context = tester.element(find.byType(DetailPage));
+
+      await tester.tap(find.byKey(const Key('detail_action_ai')));
+      await tester.idle();
+      final route = observer.lastRoute;
+      expect(route, isA<MaterialPageRoute>());
+      final page = (route! as MaterialPageRoute).builder(context);
+      expect(page, isA<AiBookSettingsPage>());
+      final settings = page as AiBookSettingsPage;
+      expect(settings.bookId, 'book');
+      expect(settings.chapters, hasLength(30));
+      await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 
@@ -421,6 +667,8 @@ Future<AppThemeStyleStore> _pumpClassic(
   bool directoryFails = false,
   MemoryChapterCache? cache,
   DetailExtras? extras,
+  Future<String> Function(Chapter chapter)? chapterLoader,
+  int chapters = 30,
 }) async {
   final store = AppThemeStyleStore();
   await store.select(AppThemeStyle.classic);
@@ -437,10 +685,16 @@ Future<AppThemeStyleStore> _pumpClassic(
         item: book,
         readerStore: MemoryReaderStore(
           entry: withProgress
-              ? {'id': book.id, 'kind': 'book', 'chapterId': 'chapter-23', 'episode': 22}
+              ? {
+                  'id': book.id,
+                  'kind': 'book',
+                  'chapterId': 'chapter-23',
+                  'episode': 22,
+                }
               : null,
         ),
         chapterCache: cache ?? MemoryChapterCache(),
+        chapterLoader: chapterLoader,
         extrasLoader: extras == null ? null : (_) async => extras,
         detailLoader: (id, {String tab = '小说'}) async {
           requests?.add('$tab:$id');
@@ -453,7 +707,7 @@ Future<AppThemeStyleStore> _pumpClassic(
           if (directoryFails) throw StateError('directory down');
           return [
             List.generate(
-              30,
+              chapters,
               (index) => Chapter(
                 itemId: 'chapter-${index + 1}',
                 title: '第${index + 1}章 故事的另一种可能',

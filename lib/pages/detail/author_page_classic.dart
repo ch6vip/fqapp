@@ -99,9 +99,15 @@ extension _AuthorPageClassic on _AuthorPageState {
         final works = _profile.works;
         return CustomScrollView(
           key: const Key('author_scroll'),
+          controller: _scroll,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            SliverToBoxAdapter(child: _classicHeader(palette)),
+            SliverToBoxAdapter(
+              child: KeyedSubtree(
+                key: contentAnchorKey('header'),
+                child: _classicHeader(palette),
+              ),
+            ),
             if (works.isEmpty)
               SliverToBoxAdapter(
                 child: HomeStateView(
@@ -112,11 +118,14 @@ extension _AuthorPageClassic on _AuthorPageState {
               )
             else ...[
               SliverToBoxAdapter(
-                child: HomeSectionHeader(
-                  title: '全部作品',
-                  action: Text(
-                    '${works.length}',
-                    style: TextStyle(color: palette.muted, fontSize: 12),
+                child: KeyedSubtree(
+                  key: contentAnchorKey('works'),
+                  child: HomeSectionHeader(
+                    title: '全部作品',
+                    action: Text(
+                      '${works.length}',
+                      style: TextStyle(color: palette.muted, fontSize: 12),
+                    ),
                   ),
                 ),
               ),
@@ -131,12 +140,15 @@ extension _AuthorPageClassic on _AuthorPageState {
                   gridDelegate: homeShelfDelegate(context, width),
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final work = works[index];
-                    return HomeMediaCard(
-                      key: ValueKey('author_work_${work.id}'),
-                      item: _asItem(work),
-                      coverWidth: cardWidth,
-                      showLength: true,
-                      onTap: () => _openWork(work),
+                    return KeyedSubtree(
+                      key: contentAnchorKey('works/work:${work.id}'),
+                      child: HomeMediaCard(
+                        key: ValueKey('author_work_${work.id}'),
+                        item: _asItem(work),
+                        coverWidth: cardWidth,
+                        showLength: true,
+                        onTap: () => _openWork(work),
+                      ),
                     );
                   }, childCount: works.length),
                 ),
@@ -237,11 +249,7 @@ extension _AuthorPageClassic on _AuthorPageState {
             Text(
               profile.description,
               key: const Key('author_description'),
-              style: TextStyle(
-                color: palette.ink,
-                fontSize: 13.5,
-                height: 1.7,
-              ),
+              style: TextStyle(color: palette.ink, fontSize: 13.5, height: 1.7),
             ),
           ],
         ],
