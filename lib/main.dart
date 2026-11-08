@@ -590,6 +590,10 @@ class _RootShellState extends State<RootShell> {
   Future<void> _maybeShowLegacyUiNotice() async {
     if (!mounted || !await LegacyUiNotice.shouldShow()) return;
     if (!mounted) return;
+    // Mark before showing: if the process is killed while the dialog is on
+    // screen, the next launch must not show it again.
+    await LegacyUiNotice.markSeen();
+    if (!mounted) return;
     final goToTheme = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -607,7 +611,6 @@ class _RootShellState extends State<RootShell> {
         ],
       ),
     );
-    await LegacyUiNotice.markSeen();
     if (!mounted || goToTheme != true) return;
     await Navigator.of(
       context,

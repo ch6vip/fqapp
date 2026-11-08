@@ -26,7 +26,13 @@ class LegacyUiNotice {
         hasLocalData ??
         (ShelfStore.instance.records().isNotEmpty ||
             LibraryStore.instance.historySnapshot().isNotEmpty);
-    if (!data) return false;
+    if (!data) {
+      // A fresh install is checked before it has any library data. Mark it as
+      // skipped now; otherwise the first book added later would make the next
+      // launch look like an upgrade and show this notice to a new user.
+      await prefs.setBool(seenKey, true);
+      return false;
+    }
     final current = style ?? AppThemeStyleStore.instance.value;
     return current == AppThemeStyle.archive;
   }

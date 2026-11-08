@@ -31,6 +31,24 @@ void main() {
     },
   );
 
+  test('a fresh install is marked skipped before it adds data', () async {
+    SharedPreferences.setMockInitialValues({});
+    final first = await LegacyUiNotice.shouldShow(
+      preferences: SharedPreferences.getInstance,
+      hasLocalData: false,
+      style: AppThemeStyle.archive,
+    );
+    expect(first, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(LegacyUiNotice.seenKey), isTrue);
+    final afterAddingData = await LegacyUiNotice.shouldShow(
+      preferences: SharedPreferences.getInstance,
+      hasLocalData: true,
+      style: AppThemeStyle.archive,
+    );
+    expect(afterAddingData, isFalse);
+  });
+
   test('markSeen persists the one-time flag', () async {
     SharedPreferences.setMockInitialValues({});
     await LegacyUiNotice.markSeen(preferences: SharedPreferences.getInstance);
