@@ -12,6 +12,7 @@ import 'package:fqapp/services/book_open_preferences.dart';
 import 'package:fqapp/widgets/home/home_media_card.dart';
 import 'package:fqapp/widgets/search/classic_search_result_row.dart';
 import 'package:fqapp/widgets/search/search_media_tile.dart';
+import 'package:fqapp/widgets/wenku/wenku_glass.dart';
 
 import 'support/app_ui_host.dart';
 import 'support/search_finders.dart';
@@ -96,6 +97,72 @@ void main() {
         reason: '同一作品回到列表中的合理行内位置',
       );
     });
+
+    testWidgets(
+      'archive startup anchor ignores rows hidden behind the header',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(420, 700));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final store = _store(AppThemeStyle.archive);
+        var calls = 0;
+        await tester.pumpWidget(
+          _host(
+            store,
+            SearchPage(
+              initialQuery: '档案锚点',
+              searchLoader:
+                  (query, {required int tabType, required int offset}) {
+                    calls++;
+                    return Future.value([
+                      SearchTab(
+                        title: '综合',
+                        items: [for (var i = 0; i < 80; i++) _item(i)],
+                        hasMore: false,
+                      ),
+                    ]);
+                  },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final scroll = _scroll(tester);
+
+        // 1985 是复审复现点：上一条结果与滚动视口相交，但整条藏在玻璃
+        // 页头后面。邻近位置一起回归，避免只修一个魔法偏移。
+        for (final point in <double>[1900, 1985, 2050]) {
+          if (store.value != AppThemeStyle.archive) {
+            await store.select(AppThemeStyle.archive);
+            await tester.pumpAndSettle();
+          }
+          scroll.jumpTo(point);
+          await tester.pumpAndSettle();
+          final before = _topVisibleArchiveRow(tester);
+          expect(before, isNotNull, reason: 'archive offset $point');
+          expect(
+            before!.distance,
+            isNot(0),
+            reason: 'archive offset $point 首条行应真的跨过有效可见顶',
+          );
+
+          await store.select(AppThemeStyle.classic);
+          await tester.pumpAndSettle();
+          final after = _topVisibleClassicAnchor(tester);
+          expect(calls, 1, reason: 'offset $point 切换不重发请求');
+          expect(after?.id, before.id, reason: 'offset $point 保留第一条实际可见作品');
+          expect(
+            after?.title,
+            before.title,
+            reason: 'offset $point 保留第一条实际可见作品',
+          );
+          expect(
+            (after!.distance - before.distance).abs(),
+            lessThan(1),
+            reason: 'offset $point 保留相对有效可见顶的行内偏移',
+          );
+          expect(find.text(before.title), findsOneWidget);
+        }
+      },
+    );
 
     testWidgets('list/grid toggle keeps the work and its row position', (
       tester,
@@ -471,19 +538,67 @@ ScrollController _scroll(WidgetTester tester) => tester
     .widget<CustomScrollView>(find.byType(CustomScrollView).first)
     .controller!;
 
-String? _topVisibleClassicRow(WidgetTester tester) {
-  final scrollRect = tester.getRect(find.byType(CustomScrollView).first);
-  String? best;
+String? _topVisibleClassicRow(WidgetTester tester) =>
+    _topVisibleClassicAnchor(tester)?.title;
+
+typedef _VisibleRow = ({String title, String id, double distance});
+
+({String title, String id, double distance})? _topVisibleClassicAnchor(
+  WidgetTester tester,
+) {
+  final viewport = tester.getRect(find.byType(CustomScrollView).first);
+  return _firstVisibleRow(
+    tester,
+    find.byType(ClassicSearchResultRow),
+    viewport.top,
+    viewport.bottom,
+    (widget) {
+      final row = widget as ClassicSearchResultRow;
+      return (title: row.item.title, id: row.item.id);
+    },
+  );
+}
+
+/// 档案搜索的有效可见顶是玻璃页头的实际底边，而不是滚动视口顶。
+({String title, String id, double distance})? _topVisibleArchiveRow(
+  WidgetTester tester,
+) {
+  final plane = tester.getRect(
+    find.byKey(const ValueKey('frosted-navigation-plane')),
+  );
+  final visibleTop = plane.bottom - FrostedHeader.featherHeight;
+  final viewport = tester.getRect(find.byType(CustomScrollView).first);
+  return _firstVisibleRow(
+    tester,
+    find.byType(SearchNovelRow),
+    visibleTop,
+    viewport.bottom,
+    (widget) {
+      final row = widget as SearchNovelRow;
+      return (title: row.item.title, id: row.item.id);
+    },
+  );
+}
+
+_VisibleRow? _firstVisibleRow(
+  WidgetTester tester,
+  Finder finder,
+  double visibleTop,
+  double visibleBottom,
+  ({String title, String id}) Function(Widget widget) describe,
+) {
+  _VisibleRow? best;
   var bestTop = double.infinity;
-  for (final element in find.byType(ClassicSearchResultRow).evaluate()) {
-    final widget = element.widget as ClassicSearchResultRow;
-    final box = element.renderObject! as RenderBox;
-    final top = box.localToGlobal(Offset.zero).dy;
-    if (top + box.size.height <= scrollRect.top) continue;
-    if (top >= scrollRect.bottom) continue;
+  for (final element in finder.evaluate()) {
+    final object = element.renderObject;
+    if (object is! RenderBox || !object.hasSize) continue;
+    final top = object.localToGlobal(Offset.zero).dy;
+    final bottom = top + object.size.height;
+    if (bottom <= visibleTop || top >= visibleBottom) continue;
     if (top < bestTop) {
       bestTop = top;
-      best = widget.item.title;
+      final row = describe(element.widget);
+      best = (title: row.title, id: row.id, distance: visibleTop - top);
     }
   }
   return best;
