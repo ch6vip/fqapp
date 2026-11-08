@@ -9,6 +9,11 @@
     <string name="listen_pause">暂停</string>
     <string name="listen_next">下一章</string>
     <string name="listen_stop">关闭</string>
+    <!-- AI 校对请求前台服务（不包含书名/章节名，避免锁屏泄露）。 -->
+    <string name="ai_request_channel_name">AI 校对请求</string>
+    <string name="ai_request_notification_title">AI 校对中</string>
+    <string name="ai_request_notification_text">正在连接模型…</string>
+    <string name="ai_request_stop">停止</string>
     <!-- 短剧 / 漫剧悬浮窗播放（#24）前台服务的通知文案。 -->
     <string name="floating_channel_name">视频悬浮窗播放</string>
     <string name="floating_notification_title">悬浮窗播放中</string>

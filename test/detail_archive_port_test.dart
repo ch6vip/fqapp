@@ -19,7 +19,8 @@ void main() {
     tester,
   ) async {
     await _pumpDetail(tester);
-    expect(find.text('图书详情'), findsOneWidget);
+    expect(find.text('小说详情'), findsOneWidget);
+    expect(find.text('图书详情'), findsNothing);
     expect(find.text('简介'), findsOneWidget);
     expect(find.text('01 / SYNOPSIS'), findsOneWidget);
     expect(find.text('02 / CONTENTS'), findsOneWidget);
@@ -158,6 +159,7 @@ void main() {
   ) async {
     await _pumpDetail(tester, item: _drama);
     expect(find.text('短剧详情'), findsOneWidget);
+    expect(find.text('小说详情'), findsNothing);
     expect(find.text('图书详情'), findsNothing);
     // The identity meta carries the matching 番茄 source, not 番茄小说.
     expect(find.textContaining('番茄短剧'), findsOneWidget);

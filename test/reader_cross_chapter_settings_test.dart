@@ -8,6 +8,8 @@ import 'package:fqapp/widgets/reader/reader_scroll_mode_setting.dart';
 import 'package:fqapp/widgets/reader/settings/reader_more_settings_sheet.dart';
 import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
+import 'support/reader_settings_nav.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -30,6 +32,7 @@ void main() {
     'scrolling reveals the cross-chapter row directly below page turning',
     (tester) async {
       final changes = await _openSheet(tester);
+      await openReaderSettingsCategory(tester, 'turn');
       expect(find.byType(ReaderScrollModeSetting), findsNothing);
       await tester.tap(find.byKey(const ValueKey('reader-mode-scroll')));
       await tester.pump(const Duration(milliseconds: 150));
@@ -37,13 +40,16 @@ void main() {
       final row = find.byKey(const ValueKey('reader-scroll-chapter-mode'));
       expect(row, findsOneWidget);
       expect(find.text('跨章'), findsOneWidget);
+      // 跨章设置紧跟转页 chips，位于自动翻页之前。
       expect(
         tester.getRect(row).top,
-        greaterThan(tester.getRect(find.text('翻页')).bottom),
+        greaterThan(tester.getRect(find.text('仿真')).bottom),
       );
       expect(
         tester.getRect(row).bottom,
-        lessThan(tester.getRect(find.text('间距')).top),
+        lessThanOrEqualTo(
+          tester.getRect(find.byKey(const ValueKey('reader-auto-turn'))).top,
+        ),
       );
       final joined = tester.widget<ReaderSettingsChip>(
         find.byKey(const ValueKey('reader-cross-chapter-joined')),
@@ -60,6 +66,7 @@ void main() {
         tester,
         initial: const ReaderPreferences(pageMode: ReaderPageMode.scroll),
       );
+      await openReaderSettingsCategory(tester, 'turn');
       await tester.tap(
         find.byKey(const ValueKey('reader-cross-chapter-replace')),
       );
@@ -96,6 +103,7 @@ void main() {
         instantSwipeTurn: true,
       ),
     );
+    await openReaderSettingsCategory(tester, 'turn');
     expect(find.byType(ReaderScrollModeSetting), findsNothing);
   });
 
@@ -106,10 +114,9 @@ void main() {
       tester,
       initial: const ReaderPreferences(pageMode: ReaderPageMode.scroll),
     );
-    final more = find.byKey(const ValueKey('reader-more-appearance'));
-    await tester.ensureVisible(more);
-    await tester.tap(more);
-    await tester.pumpAndSettle();
+    // 「翻页」分类里的行为面板就是原来的更多设置。
+    await openReaderSettingsCategory(tester, 'turn');
+    expect(find.byType(ReaderMoreSettingsSheet), findsOneWidget);
     expect(
       find.descendant(
         of: find.byType(ReaderMoreSettingsSheet),

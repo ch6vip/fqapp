@@ -137,21 +137,25 @@ class CachedDramaCard extends StatefulWidget {
 class _CachedDramaCardState extends State<CachedDramaCard> {
   bool _expanded = false;
 
-  /// 这一集在本剧里的位置（0 起）。目录顺序才是权威的；记录里的 index
-  /// 只在目录里找不到条目时兜底（理论上不会发生）。
-  int _position(CachedEpisode episode) {
+  /// Only the full catalogue proves the global ordinal. Legacy download
+  /// indexes may be batch-relative and must not be presented as episode one.
+  int? _position(CachedEpisode episode) {
     final position = widget.summary.drama.episodes.indexWhere(
       (entry) => entry.itemId == episode.itemId,
     );
-    return position >= 0 ? position : episode.index;
+    return position >= 0 &&
+            widget.summary.drama.episodes[position].hasKnownIndex
+        ? position
+        : null;
   }
 
   Widget _episodeRow(CachedEpisode episode, HomePalette palette) {
+    final position = _position(episode);
     return SettingsRow(
       key: ValueKey('drama-episode-${episode.itemId}'),
       icon: LucideIcons.play,
       title:
-          '第 ${_position(episode) + 1} 集'
+          '${position == null ? '集号未知' : '第 ${position + 1} 集'}'
           '${episode.title.isEmpty ? '' : ' · ${episode.title}'}',
       subtitle:
           '${formatCacheBytes(episode.bytes)} · '
