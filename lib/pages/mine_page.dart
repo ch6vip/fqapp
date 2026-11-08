@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../services/app_style_tokens.dart';
 import '../widgets/mine/mine_entries.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'reading_statistics_page.dart';
@@ -14,6 +15,7 @@ class MinePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final style = AppStyleTokens.of(context);
     return WenkuPage(
       header: const Align(
         alignment: Alignment.centerLeft,
@@ -30,7 +32,7 @@ class MinePage extends StatelessWidget {
             ).copyWith(bottom: DockLayout.scrollPaddingOf(context)),
             children: [
               const _LocalIdentityPanel(),
-              const SizedBox(height: 24),
+              SizedBox(height: style.sectionGap),
               FeatureEntry(
                 key: const ValueKey('mine-statistics'),
                 title: '统计',
@@ -43,7 +45,7 @@ class MinePage extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 14),
+              SizedBox(height: style.entryGap),
               const MineEntries(),
             ],
           ),
@@ -87,7 +89,9 @@ class _LocalIdentityPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 7),
                 Text(
-                  '本地阅读档案 · 小说、短剧、漫画与听书',
+                  AppStyleTokens.of(context).isClassic
+                      ? '本地阅读 · 小说、短剧、漫画与听书'
+                      : '本地阅读档案 · 小说、短剧、漫画与听书',
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.6,
