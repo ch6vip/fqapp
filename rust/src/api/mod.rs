@@ -161,6 +161,7 @@ pub(crate) async fn init_core(
     }
 
     let cfg = Arc::new(Config::load(&config_path)?);
+    crate::network::apply(&cfg.network_proxy)?;
     let root = resolve_runtime_dir(&config_path, &runtime_dir);
     let src_dir = root.join("src");
     let _ = std::fs::create_dir_all(&src_dir);

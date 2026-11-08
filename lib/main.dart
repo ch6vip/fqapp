@@ -30,6 +30,7 @@ import 'services/audio_preferences.dart';
 import 'services/player_preferences.dart';
 import 'services/player_layout_preferences.dart';
 import 'services/backend_service.dart';
+import 'services/network_proxy_preferences.dart';
 import 'services/digg_store.dart';
 import 'services/drama_channel_preferences.dart';
 import 'services/drama_download_store.dart';
@@ -516,6 +517,16 @@ class _RootShellState extends State<RootShell> {
     }
   }
 
+  Future<void> _retryWithDirectConnection() async {
+    setState(() => _backendError = null);
+    try {
+      await NetworkProxyPreferences.instance.save(const NetworkProxyConfig());
+      if (mounted) await _startBackend();
+    } catch (_) {
+      if (mounted) setState(() => _backendError = '代理配置保存失败，请重试。');
+    }
+  }
+
   @override
   void dispose() {
     dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
@@ -568,6 +579,11 @@ class _RootShellState extends State<RootShell> {
                       onPressed: _startBackend,
                       child: const Text('重试'),
                     ),
+                    if (isWindowsDesktop)
+                      TextButton(
+                        onPressed: _retryWithDirectConnection,
+                        child: const Text('重置代理为直连并重试'),
+                      ),
                   ],
                 ],
               ),

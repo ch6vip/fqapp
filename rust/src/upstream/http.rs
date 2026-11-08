@@ -7,8 +7,9 @@
 
 use std::time::{Duration, Instant};
 
+use crate::network::{ClientCache, Policy};
 use futures::StreamExt;
-use once_cell::sync::OnceCell;
+use std::sync::Arc;
 
 use crate::crypto::{gunzip_capped, GunzipError, MAX_GUNZIP_BYTES};
 
@@ -111,9 +112,18 @@ impl HttpTransport {
     }
 
     fn build(timeout_secs: u64, no_redirects: bool) -> Result<Self, String> {
+        Self::build_with_policy(timeout_secs, no_redirects, &crate::network::policy())
+    }
+
+    fn build_with_policy(
+        timeout_secs: u64,
+        no_redirects: bool,
+        policy: &Policy,
+    ) -> Result<Self, String> {
         ensure_crypto_provider();
         let tls = build_tls_config()?;
-        let mut builder = reqwest::Client::builder().tls_backend_preconfigured(tls);
+        let mut builder =
+            policy.configure(reqwest::Client::builder().tls_backend_preconfigured(tls));
         if no_redirects {
             builder = builder.redirect(reqwest::redirect::Policy::none());
         }
@@ -260,12 +270,10 @@ impl HttpTransport {
 ///
 /// Account reads must not follow redirects with a cookie attached, and every
 /// collection request used to build a fresh `reqwest::Client` (TLS roots and
-/// all) just for that. The transport is stateless, so one shared instance is
-/// safe and keeps client construction off the per-request path. A failed
-/// first build is retried on the next call.
-pub fn account_transport() -> Result<&'static HttpTransport, String> {
-    static ACCOUNT_TRANSPORT: OnceCell<HttpTransport> = OnceCell::new();
-    ACCOUNT_TRANSPORT.get_or_try_init(|| HttpTransport::without_redirects(20))
+/// all) just for that. Reuse one pool per core generation, and retry failed builds.
+pub fn account_transport() -> Result<Arc<HttpTransport>, String> {
+    static ACCOUNT_TRANSPORT: ClientCache<Arc<HttpTransport>> = ClientCache::new();
+    ACCOUNT_TRANSPORT.get(|policy| HttpTransport::build_with_policy(20, true, policy).map(Arc::new))
 }
 
 /// reqwest is built with `rustls-no-provider` so exactly one TLS backend is
@@ -359,7 +367,7 @@ mod account_transport_tests {
         let first = account_transport().expect("account transport");
         let second = account_transport().expect("account transport");
         assert!(
-            std::ptr::eq(first, second),
+            std::sync::Arc::ptr_eq(&first, &second),
             "account requests must reuse the cached no-redirect transport"
         );
     }
