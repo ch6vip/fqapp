@@ -240,7 +240,7 @@ void main() {
     expect(find.byType(SettingsScaffold), findsOneWidget);
     expect(find.byType(WenkuPage), findsNothing);
     expect(find.byType(SettingsGroupCard), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+    expect(find.byType(DropdownButton<String>), findsOneWidget);
     expect(find.byType(Slider), findsOneWidget);
     expect(find.byType(GlassSettingMenu<String>), findsNothing);
     expect(find.byType(AppGlassSlider), findsNothing);
@@ -252,7 +252,7 @@ void main() {
     expect(find.byType(WenkuPage), findsOneWidget);
     expect(find.byType(GlassSettingMenu<String>), findsOneWidget);
     expect(find.byType(AppGlassSlider), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    expect(find.byType(DropdownButton<String>), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

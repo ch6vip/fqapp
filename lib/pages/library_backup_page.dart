@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/library_backup.dart';
+import '../services/app_theme_style.dart';
 import '../services/library_backup_service.dart';
 import '../services/shelf_group_store.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -23,7 +24,7 @@ import '../widgets/data_transfer_widgets.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_adaptive.dart';
 import '../widgets/settings/settings_archive_page.dart';
-import '../widgets/settings/settings_widgets.dart';
+import '../widgets/settings/settings_scroll_anchor.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'ai_reading/settings/ai_settings_widgets.dart';
 import 'fanqie_history_import_page.dart';
@@ -41,8 +42,25 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
   String? _busy;
   String? _message;
   bool _error = false;
+
+  /// Expanded state of the "备份包含哪些内容？" block. Owned by the page, not the
+  /// card: the card's shell changes with the presentation and the list item is
+  /// disposed once it scrolls out of view.
+  bool _helpExpanded = false;
   final _previewKey = GlobalKey();
   final _messageKey = GlobalKey();
+
+  /// One list for both presentations, so the scroll position survives the
+  /// shell switch and the visible section can be re-anchored.
+  final _scroll = ScrollController();
+  late final _anchor = SettingsScrollAnchor(_scroll);
+
+  @override
+  void dispose() {
+    _anchor.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
 
   Future<void> _run(
     String label,
@@ -212,7 +230,9 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
 
   @override
   Widget build(BuildContext context) {
-    final classic = AppUiScope.isClassic(context);
+    final style = AppUiScope.of(context);
+    final classic = style == AppThemeStyle.classic;
+    _anchor.track(style);
     final scheme = Theme.of(context).colorScheme;
     final palette = HomePalette.of(context);
     final preview = _preview;
@@ -224,14 +244,24 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       color: classic ? palette.ink : scheme.onSurfaceVariant,
     );
     final content = <Widget>[
-      const SettingsHeading(
-        title: '书架随你走',
-        subtitle:
-            '备份本机收藏与进度，或从番茄带回书架。只补充缺失的收藏与进度，'
-            '保留本机已有记录。',
+      KeyedSubtree(
+        key: _anchor.keyFor('heading'),
+        child: const SettingsHeading(
+          title: '书架随你走',
+          subtitle:
+              '备份本机收藏与进度，或从番茄带回书架。只补充缺失的收藏与进度，'
+              '保留本机已有记录。',
+        ),
       ),
       const SizedBox(height: 24),
-      const SettingsSection(title: '本机数据', code: 'BACKUP / LOCAL'),
+      KeyedSubtree(
+        key: _anchor.keyFor('local'),
+        child: const SettingsSection(
+          key: ValueKey('backup-local-section'),
+          title: '本机数据',
+          code: 'BACKUP / LOCAL',
+        ),
+      ),
       const SizedBox(height: 14),
       SettingsCard(
         archiveDividers: false,
@@ -268,7 +298,13 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
         ],
       ),
       const SizedBox(height: 24),
-      const SettingsSection(title: '其他来源', code: 'BACKUP / OTHER SOURCES'),
+      KeyedSubtree(
+        key: _anchor.keyFor('sources'),
+        child: const SettingsSection(
+          title: '其他来源',
+          code: 'BACKUP / OTHER SOURCES',
+        ),
+      ),
       const SizedBox(height: 14),
       SettingsEntryCard(
         key: const ValueKey('backup-fanqie'),
@@ -285,10 +321,13 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
       ),
       if (preview != null) ...[
         const SizedBox(height: 28),
-        SettingsSection(
-          key: _previewKey,
-          title: '恢复预览',
-          code: 'BACKUP / MERGED PREVIEW',
+        KeyedSubtree(
+          key: _anchor.keyFor('preview'),
+          child: SettingsSection(
+            key: _previewKey,
+            title: '恢复预览',
+            code: 'BACKUP / MERGED PREVIEW',
+          ),
         ),
         const SizedBox(height: 14),
         SettingsCard(
@@ -369,96 +408,82 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
         ),
       ],
       const SizedBox(height: 24),
-      SettingsCard(
-        classicDividers: false,
-        children: [
-          SettingsDisclosure(
-            title: '备份包含哪些内容？',
-            children: [
-              Text(
-                '包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存进度、'
-                '已看剧集与书架分组。\n\n'
-                '本地 TXT / EPUB 原文件、下载缓存、阅读时长、划线和应用设置需另行保留。\n\n'
-                '导出前请退出阅读或暂停播放，让当前进度保存；换手机时传输备份文件，再在这里恢复。',
-                style: muted.copyWith(fontSize: 13),
-              ),
-            ],
-          ),
-        ],
+      KeyedSubtree(
+        key: _anchor.keyFor('help'),
+        child: SettingsCard(
+          classicDividers: false,
+          children: [
+            SettingsDisclosure(
+              key: const ValueKey('backup-help'),
+              title: '备份包含哪些内容？',
+              expanded: _helpExpanded,
+              onExpandedChanged: (value) =>
+                  setState(() => _helpExpanded = value),
+              children: [
+                Text(
+                  '包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存进度、'
+                  '已看剧集与书架分组。\n\n'
+                  '本地 TXT / EPUB 原文件、下载缓存、阅读时长、划线和应用设置需另行保留。\n\n'
+                  '导出前请退出阅读或暂停播放，让当前进度保存；换手机时传输备份文件，再在这里恢复。',
+                  style: muted.copyWith(fontSize: 13),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     ];
-    if (classic) {
-      // The pre-#291 page keeps its primary action in a fixed bottom bar,
-      // which `ClassicFeaturePage` (an AppBar + body shell) cannot express.
-      return PopScope(
-        canPop: enabled,
-        child: Scaffold(
-          backgroundColor: palette.canvas,
-          appBar: settingsAppBar(
-            context,
-            title: '备份与导入',
-            // A single embedded route (Windows two-pane settings) must
-            // not offer a back affordance that would empty the pane.
-            showBack: Navigator.of(context).canPop(),
-          ),
-          body: SafeArea(
-            top: false,
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: ListView(
-                  key: const ValueKey('backup-scroll'),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  children: content,
-                ),
-              ),
-            ),
-          ),
-          bottomNavigationBar: _busy == null && preview == null
-              ? null
-              : SafeArea(
-                  top: false,
-                  child: Container(
-                    color: palette.canvas,
-                    padding: const EdgeInsets.all(16),
-                    child: _busy == null
-                        ? DataTransferAction(
-                            label: '确认恢复到本机',
-                            onPressed: _restore,
-                          )
-                        : Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const LinearProgressIndicator(),
-                              const SizedBox(height: 10),
-                              Semantics(
-                                liveRegion: true,
-                                child: Text(
-                                  _busy!,
-                                  style: TextStyle(
-                                    color: palette.ink,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                  ),
-                ),
-        ),
-      );
-    }
     return PopScope(
       canPop: enabled,
       child: SettingsArchivePage(
         title: '备份与导入',
         code: 'SYSTEM / DATA TRANSFER',
-        child: ListView(
-          key: const ValueKey('backup-scroll'),
-          padding: featurePadding(context),
-          children: content,
+        classicBottomBar: classic && (_busy != null || _preview != null)
+            ? _classicBottomBar(context)
+            : null,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: classic ? 640 : 760),
+            child: ListView(
+              key: const ValueKey('backup-scroll'),
+              controller: _scroll,
+              padding: featurePadding(context),
+              children: content,
+            ),
+          ),
         ),
+      ),
+    );
+  }
+
+  /// Classic fixed action bar: busy progress or the restore confirmation.
+  Widget _classicBottomBar(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return SafeArea(
+      top: false,
+      child: Container(
+        color: palette.canvas,
+        padding: const EdgeInsets.all(16),
+        child: _busy == null
+            ? DataTransferAction(
+                label: '确认恢复到本机',
+                onPressed: _preview == null ? null : _restore,
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 10),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _busy!,
+                      style: TextStyle(color: palette.ink, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }

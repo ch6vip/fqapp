@@ -37,12 +37,20 @@ class SettingsArchivePage extends StatefulWidget {
     required this.code,
     required this.child,
     this.actions = const [],
+    this.classicBottomBar,
   });
 
   final String title;
   final String code;
   final Widget child;
   final List<Widget> actions;
+
+  /// Fixed action bar for the classic shell only. Pages that used to pin their
+  /// primary action (text replacement, backup, 番茄 import) pass it here so both
+  /// presentations can keep **one** body tree; otherwise switching the shell
+  /// would dispose the list and its scroll position. The archive shell ignores
+  /// it because those pages render their actions inside the page.
+  final Widget? classicBottomBar;
 
   @override
   State<SettingsArchivePage> createState() => _SettingsArchivePageState();
@@ -58,6 +66,7 @@ class _SettingsArchivePageState extends State<SettingsArchivePage> {
       return ClassicFeaturePage(
         title: widget.title,
         actions: widget.actions,
+        bottomNavigationBar: widget.classicBottomBar,
         child: content,
       );
     }

@@ -11,6 +11,8 @@
 // `SystemTts` / `SystemTtsPreferences` and the generation-guarded load are
 // unchanged.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -91,18 +93,22 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
     }
   }
 
-  Future<void> _save(SystemTtsPreferences prefs) async {
-    if (_saving) return;
+  /// Persists [prefs]. Returns whether the write landed: a failed write must
+  /// leave `_prefs` (and the controlled dropdown) on the committed value.
+  Future<bool> _save(SystemTtsPreferences prefs) async {
+    if (_saving) return false;
     setState(() => _saving = true);
     try {
       await prefs.save();
       if (mounted) setState(() => _prefs = prefs);
+      return true;
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('设置保存失败，请重试')));
       }
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -214,31 +220,43 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
     };
     if (AppUiScope.isClassic(context)) {
       // The pre-#291 page used a Material dropdown inside the settings card.
+      // It is controlled by `_prefs.engine`, so a failed write shows the
+      // committed engine again instead of the unsubmitted choice (the old
+      // `DropdownButtonFormField` kept the failed value in its own state).
+      final selected = options.containsKey(_prefs.engine ?? '')
+          ? _prefs.engine ?? ''
+          : '';
       return SettingsCardRow(
         classicPadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-        child: DropdownButtonFormField<String>(
-          key: ValueKey(_prefs.engine ?? ''),
-          initialValue: selectedMissing ? null : (_prefs.engine ?? ''),
+        child: InputDecorator(
           decoration: const InputDecoration(labelText: '朗读引擎'),
-          items: [
-            for (final option in options.entries)
-              DropdownMenuItem(
-                value: option.key,
-                child: Text(option.value, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          isExpanded: true,
-          onChanged: _saving
-              ? null
-              : (value) {
-                  if (value == null) return;
-                  _save(
-                    SystemTtsPreferences(
-                      engine: value.isEmpty ? null : value,
-                      rate: _prefs.rate,
-                    ),
-                  );
-                },
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              key: const ValueKey('tts-engine-classic'),
+              value: selected,
+              isExpanded: true,
+              items: [
+                for (final option in options.entries)
+                  DropdownMenuItem(
+                    value: option.key,
+                    child: Text(option.value, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null || value == selected) return;
+                      unawaited(
+                        _save(
+                          SystemTtsPreferences(
+                            engine: value.isEmpty ? null : value,
+                            rate: _prefs.rate,
+                          ),
+                        ),
+                      );
+                    },
+            ),
+          ),
         ),
       );
     }

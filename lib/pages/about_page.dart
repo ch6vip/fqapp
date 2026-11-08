@@ -155,78 +155,117 @@ class AboutPage extends StatelessWidget {
 class _AboutInfoCard extends StatelessWidget {
   const _AboutInfoCard();
 
+  /// Fixed chrome around the version row: card gutters, the 38dp icon tile (or
+  /// the 21dp archive glyph), the gaps and the trailing copy glyph/chevron.
+  static const _classicChrome = 16 + 16 + 38 + 12 + 12 + 6 + 15;
+  static const _archiveChrome = 16 + 16 + 21 + 12 + 8 + 8 + 14 + 6 + 15;
+
+  static double _textWidth(BuildContext context, String text, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
   @override
   Widget build(BuildContext context) {
     final classic = AppUiScope.isClassic(context);
     final scheme = Theme.of(context).colorScheme;
     final palette = HomePalette.of(context);
-    final valueStyle = TextStyle(
-      fontSize: 13,
-      color: classic ? palette.muted : scheme.onSurfaceVariant,
+    final versionStyle = const TextStyle(fontSize: 13);
+    final titleStyle = const TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
     );
-    final rows = <Widget>[
-      _InfoRow(
-        icon: LucideIcons.badge_check,
-        title: '当前版本',
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(AboutPage.versionText, style: valueStyle),
-            const SizedBox(width: 6),
-            Icon(
-              LucideIcons.copy,
-              size: 15,
-              color: classic ? palette.muted : scheme.onSurfaceVariant,
+    final muted = classic ? palette.muted : scheme.onSurfaceVariant;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Keep the version inline while it and the row title fit; otherwise
+        // move it to the subtitle so 320dp / 2× text cannot overflow the row
+        // (the trailing row has natural width and cannot shrink).
+        final chrome = classic ? _classicChrome : _archiveChrome;
+        final needed =
+            chrome +
+            _textWidth(context, '当前版本', titleStyle) +
+            _textWidth(context, AboutPage.versionText, versionStyle);
+        final inline = constraints.maxWidth >= needed;
+        final copyIcon = Icon(
+          LucideIcons.copy,
+          size: 15,
+          color: classic ? palette.muted : scheme.onSurfaceVariant,
+        );
+        final rows = <Widget>[
+          _InfoRow(
+            icon: LucideIcons.badge_check,
+            title: '当前版本',
+            subtitle: inline ? null : AboutPage.versionText,
+            trailing: inline
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        AboutPage.versionText,
+                        style: TextStyle(fontSize: 13, color: muted),
+                      ),
+                      const SizedBox(width: 6),
+                      copyIcon,
+                    ],
+                  )
+                : copyIcon,
+            onTap: () => AboutPage._copyVersion(context),
+          ),
+          _InfoRow(
+            icon: LucideIcons.square_arrow_out_up_right,
+            title: '检查更新',
+            subtitle: '前往 GitHub 发布页查看新版本',
+            onTap: () => _launchExternalUrl(
+              context,
+              'https://github.com/ch6vip/fqapp/releases',
             ),
-          ],
-        ),
-        onTap: () => AboutPage._copyVersion(context),
-      ),
-      _InfoRow(
-        icon: LucideIcons.square_arrow_out_up_right,
-        title: '检查更新',
-        subtitle: '前往 GitHub 发布页查看新版本',
-        onTap: () => _launchExternalUrl(
-          context,
-          'https://github.com/ch6vip/fqapp/releases',
-        ),
-      ),
-      _InfoRow(
-        icon: LucideIcons.scale,
-        title: '开源许可',
-        subtitle: 'GPL-3.0 与第三方组件许可',
-        onTap: () => showLicensePage(
-          context: context,
-          applicationName: '什锦铺',
-          applicationVersion: AboutPage.versionText,
-          applicationLegalese:
-              '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。'
-              'Wenku8 Flutter 界面来源与许可文本见 assets/licenses/wenku8。',
-        ),
-      ),
-      _InfoRow(
-        icon: LucideIcons.code_xml,
-        title: '源代码',
-        subtitle: 'github.com/ch6vip/fqapp',
-        onTap: () =>
-            _launchExternalUrl(context, 'https://github.com/ch6vip/fqapp'),
-      ),
-      _InfoRow(
-        icon: LucideIcons.message_square,
-        title: '问题反馈',
-        subtitle: '前往 GitHub Issues 提交',
-        onTap: () => _launchExternalUrl(
-          context,
-          'https://github.com/ch6vip/fqapp/issues',
-        ),
-      ),
-    ];
-    if (classic) return SettingsGroupCard(children: rows);
-    return ContentPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: rows,
-      ),
+          ),
+          _InfoRow(
+            icon: LucideIcons.scale,
+            title: '开源许可',
+            subtitle: 'GPL-3.0 与第三方组件许可',
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: '什锦铺',
+              applicationVersion: AboutPage.versionText,
+              applicationLegalese:
+                  '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。'
+                  'Wenku8 Flutter 界面来源与许可文本见 assets/licenses/wenku8。',
+            ),
+          ),
+          _InfoRow(
+            icon: LucideIcons.code_xml,
+            title: '源代码',
+            subtitle: 'github.com/ch6vip/fqapp',
+            onTap: () =>
+                _launchExternalUrl(context, 'https://github.com/ch6vip/fqapp'),
+          ),
+          _InfoRow(
+            icon: LucideIcons.message_square,
+            title: '问题反馈',
+            subtitle: '前往 GitHub Issues 提交',
+            onTap: () => _launchExternalUrl(
+              context,
+              'https://github.com/ch6vip/fqapp/issues',
+            ),
+          ),
+        ];
+        if (classic) return SettingsGroupCard(children: rows);
+        return ContentPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: rows,
+          ),
+        );
+      },
     );
   }
 }
