@@ -27,6 +27,9 @@ import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../services/user_facing_error.dart';
 import '../services/video_catalogue.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/detail/classic_detail_directory_section.dart';
+import '../widgets/detail/classic_detail_read_bar.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_description.dart';
 import '../widgets/detail/detail_directory_sheet.dart';
@@ -50,6 +53,11 @@ import 'player_page.dart';
 import 'reader_page.dart';
 import 'shuqi_detail_page.dart';
 import 'ai_reading/settings/ai_book_settings_page.dart';
+
+part 'detail/detail_page_classic.dart';
+
+/// How many chapter rows the classic 目录 preview lists (current ±1).
+const _classicPreviewChapterCount = 3;
 
 /// Optional decorations for the detail page (currently the review block).
 /// Kept as one injected bundle so callers that already stub the detail and
@@ -550,6 +558,7 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final classic = AppUiScope.isClassic(context);
     final desktop = isWindowsDesktop && MediaQuery.sizeOf(context).width >= 700;
     final overlay =
         (palette.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
@@ -557,8 +566,9 @@ class _DetailPageState extends State<DetailPage> {
               statusBarColor: Colors.transparent,
               systemNavigationBarColor: palette.canvas,
             );
-    // Desktop keeps fqapp's two/three-column workspace; the phone layout is the
-    // ported upstream DetailPage (frosted header + archive sections + dock).
+    // Desktop keeps fqapp's two/three-column workspace for both styles; only
+    // the phone layout has a 经典/档案 split (frosted header + archive sections +
+    // dock vs the old AppBar + hero + 目录 preview + fixed read bar).
     if (desktop) {
       return AnnotatedRegion<SystemUiOverlayStyle>(
         value: overlay,
@@ -566,6 +576,12 @@ class _DetailPageState extends State<DetailPage> {
           backgroundColor: palette.canvas,
           body: _desktopBody(palette),
         ),
+      );
+    }
+    if (classic) {
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlay,
+        child: _buildClassicPage(context, palette),
       );
     }
     return AnnotatedRegion<SystemUiOverlayStyle>(
