@@ -401,6 +401,46 @@ class LibraryStore implements ReaderStore {
     };
   }
 
+  /// Sync differs from backup import: a newer remote reading position replaces
+  /// an older local one. Re-check inside the write queue so reading while a
+  /// WebDAV request is in flight cannot be overwritten by that response.
+  Future<void> mergeSyncedHistory(List<Map<String, dynamic>> records) =>
+      _serialize(() async {
+        final byIdentity = {
+          for (final entry in historySnapshot()) _historyIdentity(entry): entry,
+        };
+        for (final incoming in records) {
+          final kind = incoming['kind'] as String;
+          final id = incoming['id'] as String;
+          final existing = byIdentity[(kind, id)];
+          if (existing != null) {
+            final localTime = (existing['time'] as num?) ?? 0;
+            final remoteTime = (incoming['time'] as num?) ?? 0;
+            final same = incoming.entries.every(
+              (entry) =>
+                  entry.key == 'id' || existing[entry.key] == entry.value,
+            );
+            if (localTime > remoteTime || (localTime == remoteTime && same)) {
+              continue;
+            }
+          }
+          final scoped = kind == 'audio' || kind == 'manga';
+          final key = scoped ? '$kind:$id' : id;
+          final occupied = _historyRecord(_histBox.get(key), id: key);
+          if (occupied != null && _historyIdentity(occupied) != (kind, id)) {
+            continue;
+          }
+          await _histBox.put(key, {
+            ...incoming,
+            'id': key,
+            if (scoped) 'contentId': id,
+          });
+          byIdentity[(kind, id)] = incoming;
+        }
+        _localHistoryCount = null;
+        await _histBox.flush();
+      });
+
   /// Import only novels. Older history-only imports receive missing metadata
   /// and chapter IDs; a newer local reading position always wins.
   Future<int> mergeFanqie(List<Map<String, dynamic>> records) {

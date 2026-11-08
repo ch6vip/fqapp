@@ -178,6 +178,44 @@ class ShelfStore {
     return missing.length;
   }
 
+  /// Apply a remote shelf only where it still matches the snapshot taken
+  /// before networking. A tap made during the request keeps its local result.
+  Future<void> applySyncedShelf({
+    required List<ShelfRecord> before,
+    required List<ShelfRecord> incoming,
+  }) async {
+    final box = _openBox;
+    if (box == null) throw StateError('书架尚未初始化');
+    final expected = {for (final entry in before) keyOf(entry.item): entry};
+    final target = {for (final entry in incoming) keyOf(entry.item): entry};
+    bool unchanged(String key) {
+      final raw = box.get(key);
+      final old = expected[key];
+      return old == null
+          ? raw == null
+          : raw is Map && _addedAt(raw) == old.addedAt;
+    }
+
+    final deleted = expected.keys
+        .where((key) => !target.containsKey(key) && unchanged(key))
+        .toList();
+    final writes = {
+      for (final entry in target.entries)
+        if (unchanged(entry.key))
+          entry.key: _recordOf(entry.value.item, entry.value.addedAt),
+    };
+    // Both Hive mutations enter memory before yielding; UI edits afterwards
+    // are later writes and will be picked up by the next sync.
+    final deleting = box.deleteAll(deleted);
+    final writing = box.putAll(writes);
+    try {
+      await Future.wait([deleting, writing]);
+      await box.flush();
+    } finally {
+      _revision.value++;
+    }
+  }
+
   /// Reuses the same shelf keys and card model. Enrich existing cards while
   /// preserving the user's local shelf ordering and collection membership.
   Future<int> mergeFanqie(Iterable<ShelfRecord> records) async {

@@ -29,6 +29,7 @@ extension ReaderThemeColors on ReaderThemePreset {
     ReaderThemePreset.parchment => '纸张',
     ReaderThemePreset.dark => '夜间',
     ReaderThemePreset.eink => '墨水屏',
+    ReaderThemePreset.mistBlue => '雾蓝',
   };
 
   Color get backgroundColor => switch (this) {
@@ -37,6 +38,7 @@ extension ReaderThemeColors on ReaderThemePreset {
     ReaderThemePreset.parchment => const Color(0xFFF3E4C2),
     ReaderThemePreset.dark => isOled ? Colors.black : const Color(0xFF171717),
     ReaderThemePreset.eink => Colors.white,
+    ReaderThemePreset.mistBlue => const Color(0xFFD8E4F0),
   };
 
   Color get textColor => switch (this) {
@@ -45,9 +47,11 @@ extension ReaderThemeColors on ReaderThemePreset {
     ReaderThemePreset.parchment => const Color(0xFF493D2B),
     ReaderThemePreset.dark => const Color(0xFFD2D2D2),
     ReaderThemePreset.eink => Colors.black,
+    ReaderThemePreset.mistBlue => const Color(0xFF243447),
   };
 
   Color get accentColor => switch (this) {
+    ReaderThemePreset.mistBlue => const Color(0xFF3D668C),
     ReaderThemePreset.eyeCare => const Color(0xFF4F6F52),
     ReaderThemePreset.dark => const Color(0xFFE9AD82),
     ReaderThemePreset.eink => Colors.black,
@@ -65,6 +69,7 @@ extension ReaderThemeColors on ReaderThemePreset {
   /// 的 b4e-b4i 资源表):light #FA6725、parchment(纸) #CC8114、eyeCare(绿)
   /// #65992E;官方另有蓝色主题 #3D85CC,我们暂无对应预设。夜间走同一橙。
   Color get selectionAccentColor => switch (this) {
+    ReaderThemePreset.mistBlue => const Color(0xFF3D85CC),
     ReaderThemePreset.parchment => const Color(0xFFCC8114),
     ReaderThemePreset.eyeCare => const Color(0xFF65992E),
     ReaderThemePreset.eink => Colors.black,
