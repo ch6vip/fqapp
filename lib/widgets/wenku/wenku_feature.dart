@@ -166,6 +166,20 @@ EdgeInsets featurePadding(BuildContext context) {
   );
 }
 
+/// Height of the floating archive header that is painted *over* the page body
+/// (`WenkuPage` / `ArchiveFeaturePage`): status bar + glass toolbar.
+///
+/// The scroll viewport starts at the very top of the screen in those shells, so
+/// this is the distance from its top edge to the first row that is not under
+/// the glass bar. Content anchors use it instead of the raw viewport edge; the
+/// classic shell puts its Material AppBar above the body, where the inset is 0.
+double archiveChromeInset(BuildContext context) {
+  final padding = MediaQuery.paddingOf(context);
+  final viewPadding = MediaQuery.viewPaddingOf(context);
+  final status = padding.top > viewPadding.top ? padding.top : viewPadding.top;
+  return status + FrostedHeader.toolbarHeight;
+}
+
 class FeatureEntry extends StatelessWidget {
   const FeatureEntry({
     super.key,

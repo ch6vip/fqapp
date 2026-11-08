@@ -10,6 +10,7 @@ import 'package:fqapp/models/book_comment.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/author_page.dart';
 import 'package:fqapp/pages/detail_page.dart';
+import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/pages/shuqi_detail_page.dart';
 import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/services/app_theme_style.dart';
@@ -406,7 +407,7 @@ void main() {
         'author_scroll',
         _authorIndexOf,
       );
-      final classicViewport = _viewportRect(tester, 'author_scroll');
+      final classicViewport = _visibleViewport(tester, 'author_scroll');
       final classicRect = _anchorRect(tester, anchor);
       expect(classicRect, isNotNull);
       expect(classicRect!.bottom, greaterThan(classicViewport.top));
@@ -416,7 +417,7 @@ void main() {
       await tester.pumpAndSettle();
       // Grid (3 columns) → list: the row is a different height, but the same
       // work is built and still intersects the viewport.
-      final archivedViewport = _viewportRect(tester, 'author_scroll');
+      final archivedViewport = _visibleViewport(tester, 'author_scroll');
       final archivedRect = _anchorRect(tester, anchor);
       expect(archivedRect, isNotNull, reason: 'the work row must be built');
       expect(
@@ -433,7 +434,7 @@ void main() {
       await tester.pumpAndSettle();
       // Back in the grid the anchored work sits at its old depth again (the
       // depth is converted by row height, so the round trip is stable).
-      final backViewport = _viewportRect(tester, 'author_scroll');
+      final backViewport = _visibleViewport(tester, 'author_scroll');
       final backRect = _anchorRect(tester, anchor);
       expect(backRect, isNotNull);
       expect(backRect!.bottom, greaterThan(backViewport.top));
@@ -470,7 +471,7 @@ void main() {
         await tester.pumpAndSettle();
 
         // Grid geometry at the top: pitch = card extent + row spacing.
-        final viewport = _viewportRect(tester, 'author_scroll');
+        final viewport = _visibleViewport(tester, 'author_scroll');
         final cardExtent = _anchorRect(tester, 'works/work:work-0')!.height;
         final pitch = _workDy(tester, 'work-3')! - _workDy(tester, 'work-0')!;
         final controller = tester
@@ -493,7 +494,7 @@ void main() {
 
         await store.select(AppThemeStyle.archive);
         await tester.pumpAndSettle();
-        final archivedViewport = _viewportRect(tester, 'author_scroll');
+        final archivedViewport = _visibleViewport(tester, 'author_scroll');
         final archivedRect = _anchorRect(tester, anchor);
         expect(archivedRect, isNotNull, reason: 'the row must be built');
         // The list row is ~109dp tall, the grid card ~231dp: the same pixel
@@ -509,7 +510,7 @@ void main() {
 
         await store.select(AppThemeStyle.classic);
         await tester.pumpAndSettle();
-        final backViewport = _viewportRect(tester, 'author_scroll');
+        final backViewport = _visibleViewport(tester, 'author_scroll');
         final backRect = _anchorRect(tester, anchor);
         expect(backRect, isNotNull);
         expect(backRect!.bottom, greaterThan(backViewport.top));
@@ -553,7 +554,7 @@ void main() {
         'shuqi-detail-scroll',
         _shuqiIndexOf,
       );
-      final archiveViewport = _viewportRect(tester, 'shuqi-detail-scroll');
+      final archiveViewport = _visibleViewport(tester, 'shuqi-detail-scroll');
       final archiveRect = _anchorRect(tester, anchor);
       expect(archiveRect, isNotNull);
       final depth = archiveViewport.top - archiveRect!.top;
@@ -561,7 +562,7 @@ void main() {
 
       await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
-      final classicViewport = _viewportRect(tester, 'shuqi-detail-scroll');
+      final classicViewport = _visibleViewport(tester, 'shuqi-detail-scroll');
       final classicRect = _anchorRect(tester, anchor);
       expect(classicRect, isNotNull);
       // Precondition for the bug: the copied pixels would clear the shorter row.
@@ -576,7 +577,7 @@ void main() {
       // And the round trip returns to (about) the same in-row depth.
       await store.select(AppThemeStyle.archive);
       await tester.pumpAndSettle();
-      final backViewport = _viewportRect(tester, 'shuqi-detail-scroll');
+      final backViewport = _visibleViewport(tester, 'shuqi-detail-scroll');
       final backRect = _anchorRect(tester, anchor);
       expect(backRect, isNotNull);
       expect(backRect!.bottom, greaterThan(backViewport.top));
@@ -586,6 +587,201 @@ void main() {
                 (archiveRect.top - archiveViewport.top))
             .abs(),
         lessThan(80),
+      );
+    });
+  });
+
+  group('floating header occlusion', () {
+    testWidgets('书旗 classic→档案：章节落在浮动头栏下方且真的可点', (tester) async {
+      final observer = _RouteObserver();
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester, const Size(393, 700));
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          observers: [observer],
+          home: _shuqiPage(chapters: 80),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Park chapter 21 (index 20) at the visible top of the classic body.
+      final controller = tester
+          .widget<CustomScrollView>(
+            find.byKey(const Key('shuqi-detail-scroll')),
+          )
+          .controller!;
+      final rowTop = _rowDy(tester, 0)!;
+      final pitch = _rowDy(tester, 1)! - rowTop;
+      controller.jumpTo(rowTop + pitch * 20);
+      await tester.pumpAndSettle();
+      expect(_rowDy(tester, 20), closeTo(0, 1));
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey('shuqi-chapter-20'));
+      expect(row, findsOneWidget);
+      final viewport = tester.getRect(
+        find.byKey(const Key('shuqi-detail-scroll')),
+      );
+      final rect = tester.getRect(row);
+      // The row must sit *below* the floating glass bar (FrostedHeader's 56dp
+      // toolbar, no status bar in this test), not under it.
+      expect(rect.top, greaterThanOrEqualTo(viewport.top + _glassBar - 1));
+      expect(rect.top, lessThan(viewport.top + _glassBar + 40));
+      expect(rect.height, greaterThan(20));
+
+      // And it is really tappable there: a tap opens the reader on that chapter.
+      await tester.tap(row);
+      await tester.idle();
+      final context = tester.element(find.byType(ShuqiDetailPage));
+      final route = observer.lastRoute;
+      expect(route, isA<MaterialPageRoute>());
+      final page = (route! as MaterialPageRoute).builder(context);
+      expect(page, isA<ReaderPage>());
+      expect((page as ReaderPage).startIndex, 20);
+      expect(page.bookId, 'shuqi:34078');
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('作者 classic→档案：作品行在浮动头栏下方且可点', (tester) async {
+      final observer = _RouteObserver();
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester, const Size(400, 700));
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          observers: [observer],
+          home: AuthorPage(
+            authorId: _author.id,
+            fallbackName: _author.name,
+            loader: (_) async => _author,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final controller = tester
+          .widget<CustomScrollView>(find.byKey(const Key('author_scroll')))
+          .controller!;
+      final rowTop = _workDy(tester, 'work-0')!;
+      final pitch = _workDy(tester, 'work-3')! - rowTop;
+      controller.jumpTo(rowTop + pitch * 6);
+      await tester.pumpAndSettle();
+      final before = _topAuthorWork(tester);
+      expect(before, isNotNull);
+      expect(before!.dy, closeTo(0, 1));
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      final archived = _topAuthorWork(tester);
+      expect(archived, isNotNull);
+      final viewport = tester.getRect(find.byKey(const Key('author_scroll')));
+      final row = find.byKey(ValueKey('author_work_${archived!.id}'));
+      expect(row, findsOneWidget);
+      final rect = tester.getRect(row);
+      expect(rect.top, greaterThanOrEqualTo(viewport.top + _glassBar - 1));
+      expect(archived.dy, lessThan(40));
+
+      await tester.tap(row);
+      await tester.idle();
+      final context = tester.element(find.byType(AuthorPage));
+      final route = observer.lastRoute;
+      expect(route, isA<MaterialPageRoute>());
+      final page = (route! as MaterialPageRoute).builder(context);
+      expect(page, isA<DetailPage>());
+      expect((page as DetailPage).item.id, archived.id);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('状态栏安全区计入浮动头栏的可见顶部', (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await _size(tester, const Size(393, 700));
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                padding: const EdgeInsets.only(top: 24),
+                viewPadding: const EdgeInsets.only(top: 24),
+              ),
+              child: _shuqiPage(chapters: 80),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final controller = tester
+          .widget<CustomScrollView>(
+            find.byKey(const Key('shuqi-detail-scroll')),
+          )
+          .controller!;
+      final rowTop = _rowDy(tester, 0)!;
+      final pitch = _rowDy(tester, 1)! - rowTop;
+      controller.jumpTo(rowTop + pitch * 20);
+      await tester.pumpAndSettle();
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      // status bar 24 + glass toolbar 56.
+      const statusBar = 24.0;
+      final row = find.byKey(const ValueKey('shuqi-chapter-20'));
+      final viewport = tester.getRect(
+        find.byKey(const Key('shuqi-detail-scroll')),
+      );
+      expect(
+        tester.getRect(row).top,
+        greaterThanOrEqualTo(viewport.top + statusBar + _glassBar - 1),
+      );
+      expect(_rowDy(tester, 20), lessThan(40));
+
+      await store.select(AppThemeStyle.classic);
+      await tester.pumpAndSettle();
+      // The classic body starts below its own AppBar, the inset is 0 there.
+      expect(_visibleInset(tester), 0);
+      expect(_rowDy(tester, 20), closeTo(0, 1));
+    });
+
+    testWidgets('被其他 route 覆盖后返回仍停在页头下方', (tester) async {
+      final store = await _pumpDetail(tester, size: const Size(393, 440));
+      addTearDown(store.dispose);
+
+      final directory = find.text('目录');
+      expect(directory, findsOneWidget);
+      await _scrollToTop(tester, directory, 'detail_scroll');
+      expect(
+        _viewportDy(tester, directory, 'detail_scroll').abs(),
+        lessThan(4),
+      );
+
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
+      expect(
+        _viewportDy(tester, directory, 'detail_scroll').abs(),
+        lessThan(20),
+      );
+
+      // Cover the page with the directory sheet, then come back to it.
+      await tester.tap(find.byKey(const Key('detail_directory_button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('detail_directory_search')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('detail_directory_close')));
+      await tester.pumpAndSettle();
+
+      final viewport = tester.getRect(find.byKey(const Key('detail_scroll')));
+      final rect = tester.getRect(directory);
+      expect(rect.top, greaterThanOrEqualTo(viewport.top + _glassBar - 1));
+      expect(
+        _viewportDy(tester, directory, 'detail_scroll').abs(),
+        lessThan(20),
       );
     });
   });
@@ -648,6 +844,10 @@ void main() {
     });
   });
 }
+
+/// `FrostedHeader.toolbarHeight`: the archive shells paint this glass bar over
+/// the scrolling body, so its bottom edge is the first visible y.
+const double _glassBar = 56;
 
 const _longSummary =
     '苏狂身穿玄幻世界，激活无敌宗门系统，开局就召唤出了大帝境强者！\n'
@@ -771,9 +971,19 @@ String _capturedAnchor(
     tester.element(page),
     controller.position,
     indexOf: indexOf,
+    visibleInset: _visibleInset(tester),
   );
   expect(anchor, isNotNull);
   return anchor!.id;
+}
+
+/// Distance from the scroll viewport's top edge to the first row that is not
+/// hidden by the current shell: 0 for the classic AppBar-below body, the glass
+/// header height for the archive body that scrolls underneath it.
+double _visibleInset(WidgetTester tester) {
+  final wenku = find.byType(WenkuPage);
+  if (wenku.evaluate().isEmpty) return 0;
+  return archiveChromeInset(tester.element(wenku.first));
 }
 
 /// Global rect of an anchor's row, or null when the row is not mounted.
@@ -783,8 +993,16 @@ Rect? _anchorRect(WidgetTester tester, String anchorId) {
   return tester.getRect(finder);
 }
 
-Rect _viewportRect(WidgetTester tester, String scrollKey) =>
-    tester.getRect(find.byKey(Key(scrollKey)));
+/// The part of the scroll viewport the reader can actually see and tap.
+Rect _visibleViewport(WidgetTester tester, String scrollKey) {
+  final rect = tester.getRect(find.byKey(Key(scrollKey)));
+  return Rect.fromLTRB(
+    rect.left,
+    rect.top + _visibleInset(tester),
+    rect.right,
+    rect.bottom,
+  );
+}
 
 int? _shuqiIndexOf(String anchorId) {
   const prefix = 'directory/chapter:';
@@ -808,10 +1026,12 @@ double? _workDy(WidgetTester tester, String id) {
   return _viewportDy(tester, f, 'author_scroll');
 }
 
-/// [target]'s top edge relative to the scroll view's top edge.
+/// [target]'s top edge relative to the *visible* top edge of the scroll view
+/// (below the floating archive header, below the classic AppBar).
 double _viewportDy(WidgetTester tester, Finder target, String scrollKey) =>
     tester.getTopLeft(target).dy -
-    tester.getTopLeft(find.byKey(Key(scrollKey))).dy;
+    tester.getTopLeft(find.byKey(Key(scrollKey))).dy -
+    _visibleInset(tester);
 
 double _offset(WidgetTester tester, String scrollKey) {
   final view = tester.widget<CustomScrollView>(find.byKey(Key(scrollKey)));
@@ -837,7 +1057,8 @@ int? _synopsisMaxLines(WidgetTester tester) {
     );
     if (finder.evaluate().isEmpty) continue;
     final dy = _viewportDy(tester, finder, 'shuqi-detail-scroll');
-    if (dy < 0) continue;
+    // A row parked exactly at the edge can measure a few ulps above it.
+    if (dy < -0.5) continue;
     if (best == null || dy < best.dy) best = (index: i, dy: dy);
   }
   return best;
@@ -866,7 +1087,7 @@ double? _rowDy(WidgetTester tester, int index) {
     );
     if (finder.evaluate().isEmpty) continue;
     final dy = _viewportDy(tester, finder, 'author_scroll');
-    if (dy < 0) continue;
+    if (dy < -0.5) continue;
     if (best == null || dy < best.dy) best = (id: work.id, dy: dy);
   }
   return best;

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
+import '../services/app_theme_style.dart';
 import '../services/library_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -72,7 +73,16 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
   /// 经典 ⇄ 档案换的是两棵不同的树：ScrollPosition 会重建，必须按内容 ID
   /// 恢复位置，而不是靠同一个 controller 的初始偏移。深章节在切换后通常还
   /// 没被懒列表构建，靠 [_anchorIndexOf] 先定位到它附近，再按 ID 精确对齐。
-  late final _anchors = ContentAnchorKeeper(_scroll, indexOf: _anchorIndexOf);
+  late final _anchors = ContentAnchorKeeper(
+    _scroll,
+    indexOf: _anchorIndexOf,
+    visibleTopInset: _anchorTopInset,
+  );
+
+  /// 档案 的滚动区延伸到浮动玻璃头栏下方，经典是 AppBar 之后的正文；
+  /// 锚点的“可见顶部”必须按当前布局算，否则内容会落在页头后面。
+  double _anchorTopInset(BuildContext context, AppThemeStyle style) =>
+      style == AppThemeStyle.classic ? 0 : archiveChromeInset(context);
 
   /// 目录行的数据下标；分区锚点（header/directory）没有下标。
   int? _anchorIndexOf(String anchorId) {
@@ -202,7 +212,9 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    if (AppUiScope.isClassic(context)) {
+    final style = AppUiScope.of(context);
+    _anchors.noteLayoutStyle(style);
+    if (style == AppThemeStyle.classic) {
       return _buildClassicPage(context, palette);
     }
     return WenkuPage(
