@@ -65,13 +65,13 @@ class DetailReviews extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (AppUiScope.isClassic(context))
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: horizontal),
-            child: _ClassicReviewsHeader(
-              countLabel: countLabel,
-              action: action,
-              loadingMore: loadingMore,
-            ),
+          // The classic header owns the section gutter (15sp title, plain
+          // `条数 · 全部 ›`), so it is not wrapped in the block's own padding.
+          _ClassicReviewsHeader(
+            countLabel: countLabel,
+            action: action,
+            loadingMore: loadingMore,
+            horizontal: horizontal,
           )
         else
           Padding(
@@ -144,11 +144,15 @@ class _ClassicReviewsHeader extends StatelessWidget {
     required this.countLabel,
     required this.action,
     required this.loadingMore,
+    required this.horizontal,
   });
 
   final String countLabel;
   final VoidCallback? action;
   final bool loadingMore;
+
+  /// Section gutter, once: the rows below use the same value.
+  final double horizontal;
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +163,7 @@ class _ClassicReviewsHeader extends StatelessWidget {
     return DetailSectionHeader(
       key: const Key('detail_reviews_header'),
       title: '书评',
+      padding: EdgeInsets.fromLTRB(horizontal, homeSectionGap, horizontal, 10),
       action: action == null
           ? Text(
               label,

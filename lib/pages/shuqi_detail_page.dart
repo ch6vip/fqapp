@@ -70,8 +70,19 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
   final _scroll = ScrollController();
 
   /// 经典 ⇄ 档案换的是两棵不同的树：ScrollPosition 会重建，必须按内容 ID
-  /// 恢复位置，而不是靠同一个 controller 的初始偏移。
-  late final _anchors = ContentAnchorKeeper(_scroll);
+  /// 恢复位置，而不是靠同一个 controller 的初始偏移。深章节在切换后通常还
+  /// 没被懒列表构建，靠 [_anchorIndexOf] 先定位到它附近，再按 ID 精确对齐。
+  late final _anchors = ContentAnchorKeeper(_scroll, indexOf: _anchorIndexOf);
+
+  /// 目录行的数据下标；分区锚点（header/directory）没有下标。
+  int? _anchorIndexOf(String anchorId) {
+    const prefix = 'directory/chapter:';
+    if (!anchorId.startsWith(prefix)) return null;
+    final id = anchorId.substring(prefix.length);
+    final chapters = _toc?.chapters ?? const <ShuqiChapter>[];
+    final index = chapters.indexWhere((chapter) => chapter.chapterId == id);
+    return index < 0 ? null : index;
+  }
 
   @override
   void initState() {
