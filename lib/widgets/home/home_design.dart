@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 
+import '../../services/app_style_tokens.dart';
 import '../../services/app_theme.dart';
+import '../../services/app_theme_style.dart';
 
-/// The home surface keeps its warm paper / tomato identity in both themes.
+/// Home colours follow the inherited presentation, with device modes first.
 class HomePalette {
   static const accent = Color(0xFFEF5038);
   static const accentStrong = Color(0xFFC73D29);
@@ -17,12 +19,22 @@ class HomePalette {
   /// 只在深色外观下生效（见 [oledActive]），这里的 `&& dark` 是二重保险。
   final bool oled;
 
-  const HomePalette(this.dark, {this.eink = false, this.oled = false});
+  /// Direct callers retain the archive palette unless they opt into classic.
+  final AppThemeStyle style;
+  bool get isClassic => style == AppThemeStyle.classic;
+
+  const HomePalette(
+    this.dark, {
+    this.eink = false,
+    this.oled = false,
+    this.style = AppThemeStyle.archive,
+  });
 
   factory HomePalette.of(BuildContext context) => HomePalette(
     Theme.of(context).brightness == Brightness.dark,
     eink: einkModeNotifier.value,
     oled: oledActive(),
+    style: AppStyleTokens.of(context).style,
   );
 
   /// 档案纸：2026-11 首页重构后画布取奶白 #F4F3EF，卡面 #FDFCFA。
@@ -32,37 +44,51 @@ class HomePalette {
   Color get canvas {
     if (eink) return Colors.white;
     if (oled && dark) return Colors.black;
+    if (isClassic) {
+      return dark ? const Color(0xFF151517) : const Color(0xFFF6F6F6);
+    }
     return dark ? const Color(0xFF191919) : const Color(0xFFF4F3EF);
   }
 
   Color get surface {
     if (eink) return Colors.white;
     if (oled && dark) return const Color(0xFF0C0C0E);
+    if (isClassic) return dark ? const Color(0xFF242427) : Colors.white;
     return dark ? const Color(0xFF242424) : const Color(0xFFFDFCFA);
   }
 
   Color get ink => eink
       ? Colors.black
+      : isClassic
+      ? (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522))
       : (dark ? const Color(0xFFF2F2F2) : const Color(0xFF1C1C1B));
   Color get muted => eink
       ? Colors.black
+      : isClassic
+      ? (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66))
       : (dark ? const Color(0xFFB7B7B7) : const Color(0xFF6E6D68));
   Color get accentText => eink ? Colors.black : (dark ? accent : accentStrong);
 
   Color get soft {
     if (eink) return Colors.white;
     if (oled && dark) return const Color(0xFF141417);
+    if (isClassic) {
+      return dark ? const Color(0xFF202023) : const Color(0xFFF1EEE9);
+    }
     return dark ? const Color(0xFF2D2D2D) : const Color(0xFFECE9E2);
   }
 
   Color get line {
     if (eink) return Colors.black;
     if (oled && dark) return const Color(0xFF2E2E34);
+    if (isClassic) {
+      return dark ? const Color(0xFF333336) : const Color(0xFFE8E4DE);
+    }
     return dark ? const Color(0xFF3C3C3C) : const Color(0xFFE1DFD8);
   }
 
   /// 书架背景的方格纸。浅色是极淡的黑格，深色是极淡的白格，墨水屏不画。
-  Color get grid => eink
+  Color get grid => eink || isClassic
       ? Colors.transparent
       : (dark ? const Color(0x06FFFFFF) : const Color(0x06000000));
 

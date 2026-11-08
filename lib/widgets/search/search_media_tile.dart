@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 
 import '../../models/media_item.dart';
 import '../../models/shuqi_book.dart';
+import '../../services/app_style_tokens.dart';
 import '../home/home_media_card.dart';
 import '../media_card.dart';
-import '../wenku/wenku_ui.dart';
+import '../wenku/wenku_archive.dart';
+import '../wenku/wenku_glass.dart';
+import '../wenku/wenku_icons.dart';
 
 String _fileCode(MediaItem item) {
   final prefix = isShuqiItem(item) ? 'SQ' : 'FQ';
@@ -39,6 +42,7 @@ class SearchNovelRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final style = AppStyleTokens.of(context);
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     return Semantics(
       button: true,
@@ -46,7 +50,9 @@ class SearchNovelRow extends StatelessWidget {
       child: JellyTapSurface(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 13),
+          padding: EdgeInsets.symmetric(
+            vertical: style.isClassic ? style.entryGap : 13,
+          ),
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(color: Theme.of(context).dividerColor),
@@ -55,7 +61,7 @@ class SearchNovelRow extends StatelessWidget {
           child: Row(
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+                borderRadius: BorderRadius.circular(style.coverRadius),
                 child: SizedBox(
                   width: 56,
                   height: 76,
@@ -65,13 +71,15 @@ class SearchNovelRow extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 15),
+              SizedBox(width: style.isClassic ? style.panelPadding : 15),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ArchiveCode(_fileCode(item)),
-                    const SizedBox(height: 4),
+                    if (style.showDecorativeCodes) ...[
+                      ArchiveCode(_fileCode(item)),
+                      const SizedBox(height: 4),
+                    ],
                     Text(
                       item.title,
                       maxLines: 2,
@@ -84,7 +92,10 @@ class SearchNovelRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 7),
                     Text(
-                      searchMediaMeta(item),
+                      [
+                        if (style.isClassic && isShuqiItem(item)) '书旗',
+                        searchMediaMeta(item),
+                      ].join(' · '),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -119,6 +130,7 @@ class SearchBookGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final style = AppStyleTokens.of(context);
     return Semantics(
       button: true,
       label: item.title,
@@ -134,9 +146,7 @@ class SearchBookGridTile extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(
-                    ArchiveDesign.coverRadius,
-                  ),
+                  borderRadius: BorderRadius.circular(style.coverRadius),
                   child: SizedBox(
                     height: coverHeight,
                     child: StoryCover(
@@ -158,7 +168,10 @@ class SearchBookGridTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  searchMediaMeta(item),
+                  [
+                    if (style.isClassic && isShuqiItem(item)) '书旗',
+                    searchMediaMeta(item),
+                  ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

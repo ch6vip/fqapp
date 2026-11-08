@@ -52,6 +52,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../shelf/shelf_cover_image.dart';
+import '../../services/app_style_tokens.dart';
 import 'book_source_badge.dart';
 import 'src/app_text.dart';
 import 'src/archive_icons.dart';
@@ -543,6 +544,7 @@ class ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                               '第 ${index % widget.entries.length + 1} 本，共 ${widget.entries.length} 本${widget.repeatFill ? '，循环浏览' : ''}',
                           child: ArchiveCode(
                             '${(index % widget.entries.length + 1).toString().padLeft(2, '0')} / ${widget.entries.length.toString().padLeft(2, '0')}',
+                            decorative: false,
                           ),
                         ),
                         ArchiveIconButton(
@@ -636,6 +638,7 @@ class ArchiveFileCarouselState extends State<ArchiveFileCarousel>
           children: [
             ArchiveCode(
               '${(index % widget.entries.length + 1).toString().padLeft(2, '0')} / ${widget.entries.length.toString().padLeft(2, '0')}',
+              decorative: false,
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -881,7 +884,8 @@ class ArchiveFileCarouselState extends State<ArchiveFileCarousel>
                           ],
                         ),
                       ),
-                      if (widget.showChrome) ...[
+                      if (widget.showChrome &&
+                          AppStyleTokens.of(context).showDecorativeCodes) ...[
                         const SizedBox(height: 4),
                         ArchiveCode(entry.fileCode),
                       ],
