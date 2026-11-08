@@ -210,6 +210,9 @@ void main() {
       expect(await client.write(Uint8List(0), null), isTrue);
       expect(requests.last.headers['if-none-match'], '*');
       expect(requests.first.followRedirects, isFalse);
+      for (final request in requests) {
+        expect(request.headers['accept-encoding'], 'identity');
+      }
       expect(
         requests.first.url.toString(),
         'https://dav.example.com/books/fqapp-sync.json',

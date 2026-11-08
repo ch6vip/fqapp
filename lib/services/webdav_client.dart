@@ -78,6 +78,9 @@ class WebDavClient {
     final request = http.Request(method, uri ?? config.fileUri)
       ..followRedirects = false
       ..headers.addAll({
+        // Compression proxies can weaken ETags; conditional PUT needs the
+        // validator for the original representation.
+        'accept-encoding': 'identity',
         'authorization':
             'Basic ${base64Encode(utf8.encode('${config.username}:${config.password}'))}',
         ...headers,
