@@ -26,6 +26,9 @@ class LibraryBackup {
   final Map<String, Map<String, int>> watched;
   final int excludedLocalRecords;
 
+  /// Base64(gzip(JSON)) AI segment. Null for a v1 backup.
+  final String? aiData;
+
   /// The optional shelf-group organization (visible groups and assignments).
   /// Empty means this backup carries no groups; the version stays 1 so older
   /// builds simply ignore the field.
@@ -37,6 +40,7 @@ class LibraryBackup {
     required this.history,
     required this.watched,
     required this.excludedLocalRecords,
+    this.aiData,
     this.groups = const {},
   });
 
@@ -55,6 +59,7 @@ class LibraryBackup {
     required List<ShelfRecord> shelf,
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
+    String? aiData,
     Map<String, dynamic> groups = const {},
   }) {
     var excluded = 0;
@@ -95,7 +100,7 @@ class LibraryBackup {
     // The same validation is used before export and before any restore writes.
     return LibraryBackup._fromJson({
       'format': _format,
-      'version': 1,
+      'version': aiData == null ? 1 : 2,
       'createdAt': DateTime.now().millisecondsSinceEpoch,
       'shelf': [
         for (final record in shelf)
@@ -118,6 +123,7 @@ class LibraryBackup {
       ],
       'excludedLocalRecords': excluded,
       if (portableGroups.isNotEmpty) 'groups': portableGroups,
+      'ai': ?aiData,
     });
   }
 
@@ -137,8 +143,19 @@ class LibraryBackup {
   }
 
   factory LibraryBackup._fromJson(Map<String, dynamic> raw) {
-    if (raw['format'] != _format || raw['version'] != 1) {
+    final version = raw['version'];
+    if (raw['format'] != _format || (version != 1 && version != 2)) {
       throw const FormatException('不是受支持的 FQApp 备份，请使用兼容版本导出的文件');
+    }
+    String? aiData;
+    if (version == 2) {
+      final ai = raw['ai'];
+      // The exporter writes v2 only when an AI section exists; a missing or
+      // non-string section is a damaged backup, not an empty AI dataset.
+      if (ai is! String || ai.isEmpty) {
+        throw const FormatException('备份中的 AI 分段缺失或无效');
+      }
+      aiData = ai;
     }
     final createdAt = _integer(raw['createdAt'], '备份时间', 8640000000000000);
     final shelf = <ShelfRecord>[];
@@ -259,6 +276,7 @@ class LibraryBackup {
         '排除条数',
         2147483647,
       ),
+      aiData: aiData,
       groups: _groups(raw['groups']),
     );
   }
@@ -266,7 +284,7 @@ class LibraryBackup {
   Uint8List encode() {
     final payload = <String, dynamic>{
       'format': _format,
-      'version': 1,
+      'version': aiData == null ? 1 : 2,
       'createdAt': createdAt.millisecondsSinceEpoch,
       'shelf': shelf.map(_shelfJson).toList(),
       'history': history,
@@ -279,6 +297,7 @@ class LibraryBackup {
     // An empty organization is omitted entirely (D-B1); older builds ignore
     // the unknown top-level key, so the version number does not change.
     if (groups.isNotEmpty) payload['groups'] = groups;
+    if (aiData != null) payload['ai'] = aiData;
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(payload)));
     if (bytes.length > maxBytes) throw const FormatException('备份数据超过 16 MB');
     return bytes;

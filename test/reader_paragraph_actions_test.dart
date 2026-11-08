@@ -295,23 +295,40 @@ void main() {
     expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
   });
 
-  // The Wenku8 port replaced the official Fanqie #FF303030 PopupWindow with
-  // one live glass bar; day keeps the shared milk tint, night uses the reader's
-  // near-black sheet so the white labels stay legible.
+  // The Wenku8 port replaced the official Fanqie #FF303030 PopupWindow with one
+  // live glass bar. The bar no longer pins its own tint: it inherits the shared
+  // glass tint of the ambient theme, so day keeps the milk plate and night the
+  // near-black one and the white labels stay legible either way.
   testWidgets('the bar keeps a day and night glass tint', (tester) async {
-    Future<Color?> barTint({required bool dark}) async {
+    Future<Color> barTint({required bool dark}) async {
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(
+            brightness: dark ? Brightness.dark : Brightness.light,
+          ),
           home: Scaffold(
             body: ReaderParagraphMenu(isDark: dark, onAction: (_) {}),
           ),
         ),
       );
-      return tester.widget<LiquidGlass>(find.byType(LiquidGlass)).tintColor;
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('reader-selection-glass-bar')),
+        findsOneWidget,
+      );
+      final context = tester.element(
+        find.byKey(const ValueKey('reader-selection-glass-bar')),
+      );
+      return GlassAppearance.tintOf(
+        context,
+        opacity: GlassAppearance.of(context).opacity,
+      );
     }
 
-    expect(await barTint(dark: false), const Color(0xFFFEFDF8));
-    expect(await barTint(dark: true), const Color(0xFF1C1C1C));
+    final day = await barTint(dark: false);
+    final night = await barTint(dark: true);
+    expect(day, const Color(0xFFFEFDF8));
+    expect(night.computeLuminance(), lessThan(0.1));
   });
 
   testWidgets('long press selects the paragraph with wash and handles', (

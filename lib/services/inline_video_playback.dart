@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import '../models/media_item.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'api_client.dart';
+import 'connectivity_status.dart';
 import 'drama_download_store.dart';
 import 'drama_mute_preferences.dart';
 import 'episode_source_cache.dart';
@@ -22,6 +23,7 @@ import 'player_preferences.dart';
 import 'player_pool.dart';
 import 'quality_memory.dart';
 import 'user_facing_error.dart';
+import 'video_catalogue.dart';
 
 /// The inline playback session of one 短剧 feed page.
 ///
@@ -256,23 +258,14 @@ class InlineVideoPlayback {
     final cached = _directories[key];
     if (cached != null) return cached;
     final loader = directoryLoader;
-    final volumes = loader != null
-        ? await loader(contentId, tab)
-        : await ApiClient.instance.directoryChapters(contentId, tab: tab);
-    final List<List<Chapter>> resolved =
-        volumes.isEmpty && series.episodeId != null
-        ? [
-            [
-              Chapter(
-                itemId: series.episodeId!,
-                title: series.title,
-                volumeName: '剧集',
-              ),
-            ],
-          ]
-        : volumes;
-    final episodes = <Chapter>[for (final volume in resolved) ...volume];
-    if (episodes.isNotEmpty) _directories[key] = episodes;
+    final episodes = await loadVideoCatalogue(
+      seriesId: contentId,
+      tab: tab,
+      episodeId: series.episodeId,
+      title: series.title,
+      loader: loader == null ? null : () => loader(contentId, tab),
+    );
+    if (hasCompleteEpisodeCatalogue(episodes)) _directories[key] = episodes;
     return episodes;
   }
 
@@ -429,7 +422,7 @@ class InlineVideoPlayback {
         position.value = Duration(milliseconds: startMs);
       }
       activeVid.value = episodes[index].itemId;
-      var source = await _sources.request(episodes[index]).future;
+      var source = await _sourceFor(episodes[index]);
       // 会话内记住的画质选择（官方=引擎当前档）：按画质名在本集自己
       // 的 variants 里找，找到就用，找不到回默认。记忆由
       // [QualityMemory] 在 Feed 与播放页之间共享；只记名、不搬
@@ -447,8 +440,9 @@ class InlineVideoPlayback {
       if (!_current(generation)) return;
       final uri = Uri.tryParse(source.url);
       if (uri == null ||
-          (uri.scheme != 'http' && uri.scheme != 'https') ||
-          uri.host.isEmpty) {
+          (uri.scheme != 'file' &&
+              ((uri.scheme != 'http' && uri.scheme != 'https') ||
+                  uri.host.isEmpty))) {
         throw const ApiException('获取播放地址失败');
       }
       // A parked player is only torn down here, and only its own release is
@@ -756,7 +750,7 @@ class InlineVideoPlayback {
   /// 听书页的取流入口：离线优先，在线走会话的取流
   /// 缓存——与全页播放页 `_resolveSource` 同构。失败返回 null，由听书页
   /// 呈现错误态，不抛穿。
-  Future<EpisodeSource?> resolveListenSource(Chapter episode) async {
+  Future<EpisodeSource> _sourceFor(Chapter episode) async {
     final store = HiveDramaDownloadStore.instance;
     if (store.isReady) {
       try {
@@ -768,8 +762,15 @@ class InlineVideoPlayback {
         // 离线索引读不出来就当没有缓存。
       }
     }
+    if (contentLoader == null && !(await currentConnectivity()).online) {
+      throw const OfflineEpisodeUnavailable();
+    }
+    return _sources.request(episode).future;
+  }
+
+  Future<EpisodeSource?> resolveListenSource(Chapter episode) async {
     try {
-      return await _sources.request(episode).future;
+      return await _sourceFor(episode);
     } catch (_) {
       return null;
     }
@@ -798,7 +799,7 @@ class InlineVideoPlayback {
       'seriesId': contentId,
       'episodeId': episodes[index].itemId,
       'chapterId': episodes[index].itemId,
-      'episode': index,
+      if (episodes[index].hasKnownIndex) 'episode': index,
       // 听书页只回传集内进度，总长未知：progress 置 0，续看按 position。
       'progress': 0.0,
       'position': positionMs / 1000,
@@ -1147,7 +1148,7 @@ class InlineVideoPlayback {
       'seriesId': contentId,
       'episodeId': _episodes[index].itemId,
       'chapterId': _episodes[index].itemId,
-      'episode': index,
+      if (_episodes[index].hasKnownIndex) 'episode': index,
       'progress': durationMs > 0 ? positionMs / durationMs : 0.0,
       'position': positionMs / 1000,
       'duration': durationMs / 1000,

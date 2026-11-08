@@ -18,6 +18,7 @@ import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/reader_bubble.dart';
 
 import 'support/fakes.dart';
+import 'support/reader_settings_nav.dart';
 
 /// Paragraph ids live in `<p idx="N">`; the idea map is keyed by exactly those.
 const _html =
@@ -420,7 +421,7 @@ void main() {
       await pumpReader(tester, ideas: _ideas());
       expect(find.byType(ReaderParagraphBubble), findsNWidgets(2));
 
-      // Open the appearance sheet: centre tap → controls → 设置.
+      // Open the appearance sheet: centre tap → controls → 外观.
       await tester.tapAt(
         tester
             .getRect(find.byKey(const ValueKey('reader-page-surface')))
@@ -429,12 +430,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-settings')));
       await tester.pumpAndSettle();
-      expect(find.text('阅读设置'), findsOneWidget);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('reader-more-appearance')),
+      expect(
+        find.byKey(const ValueKey('reader-settings-category-grid')),
+        findsOneWidget,
       );
-      await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
-      await tester.pumpAndSettle();
+      // 段评气波开关在「屏幕」分类的显示区块里。
+      await openReaderSettingsCategory(tester, 'page');
       final toggleRow = find
           .ancestor(of: find.text('段评气泡'), matching: find.byType(Row))
           .first;
@@ -452,10 +453,7 @@ void main() {
       await tester.tap(bubbleSwitch);
       await tester.pumpAndSettle();
       expect(find.byType(ReaderParagraphBubble), findsNWidgets(2));
-      await tester.tap(find.byTooltip('关闭更多设置'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('关闭排版设置'));
-      await tester.pumpAndSettle();
+      await closeReaderSettingsSheet(tester);
       expect((await ReaderPreferences.load()).showParagraphBubbles, isTrue);
       expect(tester.takeException(), isNull);
     });

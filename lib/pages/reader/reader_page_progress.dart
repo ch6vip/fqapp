@@ -15,7 +15,8 @@ extension _ReaderPageProgress on _ReaderPageState {
         _layoutMode == _preferences.pageMode &&
         _layoutIdeasRevision == _ideasRevision &&
         _layoutUnderlineRevision == _underlineRevision &&
-        _layoutBubblesVisible == _preferences.showParagraphBubbles) {
+        _layoutBubblesVisible == _preferences.showParagraphBubbles &&
+        _layoutDisplayRevision == _aiRevision) {
       return _chapterLayout!;
     }
     // Reuse the measured text layout only when nothing that feeds it changed.
@@ -29,7 +30,8 @@ extension _ReaderPageProgress on _ReaderPageState {
         _chapterLayout?.spec == spec &&
         _layoutIdeasRevision == _ideasRevision &&
         _layoutUnderlineRevision == _underlineRevision &&
-        _layoutBubblesVisible == bubblesVisible;
+        _layoutBubblesVisible == bubblesVisible &&
+        _layoutDisplayRevision == _aiRevision;
     final layoutChapter = _chapter;
     final layoutIdeas = _ideas;
     final layout = reusable
@@ -57,6 +59,7 @@ extension _ReaderPageProgress on _ReaderPageState {
     _layoutIdeasRevision = _ideasRevision;
     _layoutUnderlineRevision = _underlineRevision;
     _layoutBubblesVisible = bubblesVisible;
+    _layoutDisplayRevision = _aiRevision;
     final initialRestore = _needsRestore;
     // Joined content preserves its visible anchor during layout. Restoring a
     // second time after paint would cancel the user's ongoing drag or fling.
@@ -65,7 +68,15 @@ extension _ReaderPageProgress on _ReaderPageState {
         _joinedKey.currentState != null &&
         !initialRestore &&
         _chapterLayout?.spec == spec;
-    final restored = initialRestore
+    final stablePreviewOffset = _settingsPreviewSourceOffset;
+    final restored = stablePreviewOffset != null
+        ? (
+            textOffset: layout.displayOffsetForSource(stablePreviewOffset),
+            scroll: layout.scrollForTextOffset(
+              layout.displayOffsetForSource(stablePreviewOffset),
+            ),
+          )
+        : initialRestore
         ? layout.restore(
             _savedPosition,
             chapterId: _chapter.itemId,
@@ -87,7 +98,9 @@ extension _ReaderPageProgress on _ReaderPageState {
     _layoutMode = _preferences.pageMode;
     // Late paragraph bubbles can add pages. Keep a backward chapter entry
     // anchored to the text end, not the first layout's last-page start.
-    _textOffset = initialRestore && _requestedStartAtEnd && _paged
+    _textOffset =
+        (initialRestore && _requestedStartAtEnd && _paged) ||
+            (_keepChapterEndAnchor && _paged)
         ? layout.textLength
         : restored.textOffset;
     _pageIndex = layout.pageForOffset(_textOffset);
@@ -120,6 +133,10 @@ extension _ReaderPageProgress on _ReaderPageState {
   void _onScroll() {
     _saveTimer?.cancel();
     if (!_progressReady || _paged) return;
+    if (_progressPreviewActive || _settingsPreviewActive) {
+      _captureScrollProgress(updateTextOffset: !_settingsPreviewActive);
+      return;
+    }
     // 墨水屏滚动模式：按滚动距离累积，每滚够约 3 屏刷一次。
     if (einkModeNotifier.value && _scrollController.hasClients) {
       final offset = _scrollController.offset;
@@ -132,6 +149,7 @@ extension _ReaderPageProgress on _ReaderPageState {
       }
     }
     _captureScrollProgress(updateTextOffset: true);
+    unawaited(_maybeAiPrefetch());
     _saveTimer = Timer(const Duration(milliseconds: 500), () {
       _settleReadTime();
       unawaited(_persistProgress());
@@ -179,13 +197,21 @@ extension _ReaderPageProgress on _ReaderPageState {
     // Turning the page cancels the selection: the handles belong to the text,
     // the action bar's anchor would be stale. Reselecting is one long press.
     _closeSelectionBar(clearSelection: true);
+    _clearLocationHighlight();
     if (!_progressReady || _changingChapter || page == _pageIndex) return;
-    _setState(() {
-      _pageIndex = page;
-      _textOffset = _chapterLayout!.pages[page].start;
-    });
+    if (_settingsPreviewSourceOffset == null) {
+      _setState(() {
+        _pageIndex = page;
+        _textOffset = _chapterLayout!.pages[page].start;
+      });
+    } else {
+      _setState(() => _pageIndex = page);
+    }
+    if (_progressPreviewActive || _settingsPreviewActive) return;
+    _keepChapterEndAnchor = false;
     _settleReadTime();
     unawaited(_persistProgress());
+    unawaited(_maybeAiPrefetch());
     // 分页模式的实际翻页：累加墨水屏刷新计数（覆盖音量键/自动翻页/点按翻页）。
     _recordEinkPageTurn();
   }
@@ -248,8 +274,71 @@ extension _ReaderPageProgress on _ReaderPageState {
     _setState(() => _chapterTurnRequest = null);
   }
 
+  Future<void> _maybeAiPrefetch() async {
+    if (!_progressReady || _loading || _error != null) return;
+    final controller = AiReadingController.instance;
+    final effective = controller.settings.resolve(widget.bookId);
+    if (!effective.enabled || !effective.prefetchEnabled) return;
+    // Turning AI display off is also a signal to stop spending on chapters
+    // the reader may never display in optimized mode.
+    if (effective.displayMode != AiDisplayMode.aiOptimized) return;
+    if (_index + 1 >= widget.chapters.length) return;
+    final progress = _paged
+        ? ((_chapterLayout?.pages.length ?? 1) > 1
+              ? _pageIndex / ((_chapterLayout?.pages.length ?? 1) - 1)
+              : 0.0)
+        : (_lastMaxScroll > 0
+              ? (_lastPosition / _lastMaxScroll).clamp(0.0, 1.0)
+              : 0.0);
+    final sourceIndex = _index;
+    final ahead = effective.maxPrefetchChapters.clamp(1, 3);
+    for (var offset = 1; offset <= ahead; offset++) {
+      if (!mounted || _index != sourceIndex || !_routeCurrent) return;
+      final index = _index + offset;
+      if (index >= widget.chapters.length) break;
+      final next = widget.chapters[index];
+      final key = '${widget.bookId}\u0000${next.itemId}';
+      if (!_aiPrefetchScheduled.add(key)) continue;
+      unawaited(
+        _prefetchOne(
+          key: key,
+          sourceIndex: sourceIndex,
+          chapter: next,
+          progress: progress,
+        ),
+      );
+    }
+  }
+
+  Future<void> _prefetchOne({
+    required String key,
+    required int sourceIndex,
+    required Chapter chapter,
+    required double progress,
+  }) async {
+    try {
+      final loaded = await _chapterText(chapter);
+      if (!mounted || _index != sourceIndex || !_routeCurrent) return;
+      final content = ChapterContent.fromCacheText(loaded.text);
+      await AiReadingController.instance.maybePrefetch(
+        bookId: widget.bookId,
+        nextChapterId: chapter.itemId,
+        nextChapterTitle: chapter.title,
+        nextContent: content,
+        nextChapterVersion: chapter.version,
+        chapterProgress: progress,
+      );
+    } catch (_) {
+      // Prefetch is opportunistic; reading stays on the current chapter.
+    } finally {
+      _aiPrefetchScheduled.remove(key);
+    }
+  }
+
   Future<void> _persistProgress({bool createHistory = false}) async {
-    if (!_progressReady) return;
+    if (!_progressReady || _progressPreviewActive || _settingsPreviewActive) {
+      return;
+    }
     // The scrollable may already be detached when the reader is disposed.
     _captureScrollProgress();
     final joined = _joined ? _joinedKey.currentState?.position : null;
@@ -327,9 +416,11 @@ extension _ReaderPageProgress on _ReaderPageState {
   /// page while「下一章」lands on the first made the pair feel broken
   /// (issue #110).
   Future<void> _prev({bool startAtEnd = false}) async {
+    ++_readerNavigationGeneration;
     if (_index <= 0 || _changingChapter) return;
     // 用户主动换章 = 不想被朗读拽回去，否则轮询 100ms 后又跳回正在播的那章。
     _pauseListenFollow();
+    _finishChapterPreview();
     _changingChapter = true;
     try {
       _settleReadTime();
@@ -344,6 +435,7 @@ extension _ReaderPageProgress on _ReaderPageState {
   }
 
   Future<void> _next() async {
+    ++_readerNavigationGeneration;
     if (_changingChapter) return;
     if (_index >= widget.chapters.length - 1) {
       _showMessage('已是最后一章');
@@ -351,6 +443,7 @@ extension _ReaderPageProgress on _ReaderPageState {
     }
     // 同 [_prev]：主动翻到下一章也要退出跟随。
     _pauseListenFollow();
+    _finishChapterPreview();
     _changingChapter = true;
     try {
       _settleReadTime();
@@ -364,8 +457,15 @@ extension _ReaderPageProgress on _ReaderPageState {
     }
   }
 
-  Future<void> _jumpToChapter(int index, {bool followListening = false}) async {
-    if (!followListening) _pauseListenFollow();
+  Future<void> _jumpToChapter(
+    int index, {
+    bool followListening = false,
+    int? navigationGeneration,
+  }) async {
+    if (!followListening) {
+      _pauseListenFollow();
+      if (navigationGeneration == null) ++_readerNavigationGeneration;
+    }
     if (_changingChapter ||
         index == _index ||
         index < 0 ||
@@ -391,11 +491,12 @@ extension _ReaderPageProgress on _ReaderPageState {
       }
       _settleReadTime();
       await _persistProgress();
-      if (!mounted) return;
-      _setState(() {
-        _index = index;
-        _chapterSeekValue = null;
-      });
+      if (!mounted ||
+          (navigationGeneration != null &&
+              navigationGeneration != _readerNavigationGeneration)) {
+        return;
+      }
+      _setState(() => _index = index);
       await _load();
     } finally {
       _changingChapter = false;

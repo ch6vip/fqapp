@@ -16,6 +16,16 @@ extension _ReaderPageIdeas on _ReaderPageState {
       final ideas = await (loader ?? _defaultIdeas)(chapter.itemId);
       if (!mounted || generation != _loadGeneration) return;
       if (chapter.itemId != widget.chapters[_index].itemId) return;
+      final cacheKey = '${widget.bookId}\u0000${chapter.itemId}';
+      final previous = _ideasCache[cacheKey];
+      _ideasCache[cacheKey] = (version: chapter.version, ideas: ideas);
+      while (_ideasCache.length > 12) {
+        _ideasCache.remove(_ideasCache.keys.first);
+      }
+      final unchanged =
+          previous?.version == chapter.version &&
+          _sameChapterIdeas(previous!.ideas, ideas);
+      if (unchanged) return;
       _setState(() {
         _ideas = ideas;
         ++_ideasRevision;
@@ -180,4 +190,28 @@ extension _ReaderPageIdeas on _ReaderPageState {
       groupId: widget.bookId,
     );
   }
+}
+
+/// Full data comparison, not just bubble counts. The same number of comments
+/// can move to a different paragraph (or change ids/content) while the bubble
+/// decoration stays identical; that still has to refresh the sheet data.
+bool _sameChapterIdeas(ChapterIdeas a, ChapterIdeas b) {
+  if (identical(a, b)) return true;
+  if (a.itemVersion != b.itemVersion ||
+      a.paragraphs.length != b.paragraphs.length) {
+    return false;
+  }
+  for (var i = 0; i < a.paragraphs.length; i++) {
+    final left = a.paragraphs[i];
+    final right = b.paragraphs[i];
+    if (left.paraIndex != right.paraIndex ||
+        left.count != right.count ||
+        left.userCount != right.userCount ||
+        left.isAuthor != right.isAuthor ||
+        !listEquals(left.commentIds, right.commentIds) ||
+        !mapEquals(left.channelCounts, right.channelCounts)) {
+      return false;
+    }
+  }
+  return true;
 }

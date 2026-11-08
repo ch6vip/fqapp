@@ -4,6 +4,11 @@
     <!-- 听视频（listen mode）：前台服务保活 + 13+ 通知（通知被拒只影响可见性，服务照常跑） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- AI 校对请求：熄屏/切后台时保持网络与进程 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- 短剧 / 漫剧悬浮窗播放（#24）：切后台时把画面搬进系统悬浮窗，需要用户在系统设置里允许 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
@@ -26,6 +31,10 @@
             android:name=".FloatingVideoService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"/>
+        <service
+            android:name=".AiRequestService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

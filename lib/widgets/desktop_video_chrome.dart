@@ -1,4 +1,5 @@
 import '../services/player_preferences.dart';
+import '../models/media_item.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
@@ -287,7 +288,9 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '共 ${c.episodes.length} 集 · ${c.episodeLabel}',
+                  hasCompleteEpisodeCatalogue(c.episodes)
+                      ? '共 ${c.episodes.length} 集 · ${c.episodeLabel}'
+                      : '完整目录暂不可用',
                   style: const TextStyle(color: Colors.white60),
                 ),
                 if (c.synopsis.isNotEmpty) ...[
@@ -412,7 +415,9 @@ class _DesktopVideoChromeState extends State<DesktopVideoChrome> {
                       : Colors.white,
                 ),
                 onPressed: () => c.onSelectEpisode(index),
-                child: Text('${index + 1}'),
+                child: Text(
+                  c.episodes[index].hasKnownIndex ? '${index + 1}' : '当前',
+                ),
               ),
             ),
           ),
