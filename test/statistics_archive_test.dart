@@ -9,7 +9,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reading_statistics_page.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
-import 'package:fqapp/widgets/wenku/wenku_ui.dart';
+import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 
 /// Regression coverage for the statistics route moved onto the Wenku8 archive
 /// shell: the archive sections render and the rhythm chart keeps its day
@@ -35,7 +35,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: ReadingStatisticsPage()));
     await tester.pumpAndSettle();
 
-    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(find.byType(SettingsArchivePage), findsOneWidget);
     expect(find.text('阅读总览'), findsOneWidget);
 
     final list = find.byKey(const ValueKey('reading-statistics-list'));

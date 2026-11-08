@@ -59,16 +59,23 @@ class ClassicFeaturePage extends StatelessWidget {
     required this.title,
     required this.child,
     this.actions = const [],
+    this.bottomNavigationBar,
   });
 
   final String title;
   final Widget child;
   final List<Widget> actions;
 
+  /// Fixed action bar for pages whose pre-#291 layout pinned its primary
+  /// action (text replacement, backup, 番茄 import). The archive presentation
+  /// keeps those actions inside the page instead.
+  final Widget? bottomNavigationBar;
+
   @override
   Widget build(BuildContext context) => SettingsScaffold(
     title: title,
     actions: actions.isEmpty ? null : actions,
+    bottomNavigationBar: bottomNavigationBar,
     // A single embedded route must not offer a back affordance that would pop
     // the only page blank (Windows two-pane settings).
     showBack: Navigator.of(context).canPop(),
@@ -139,14 +146,25 @@ class _AppFeaturePageState extends State<AppFeaturePage> {
 /// [ClassicFeaturePage] extends its body behind the opaque AppBar, so a page
 /// that keeps using this padding lands 12dp below the classic AppBar instead
 /// of reserving the header height twice.
-EdgeInsets featurePadding(BuildContext context) => EdgeInsets.fromLTRB(
-  AppStyleTokens.of(context).pageGutter,
-  MediaQuery.paddingOf(context).top +
-      FrostedHeader.toolbarHeight +
-      (AppStyleTokens.of(context).isClassic ? 12 : 20),
-  AppStyleTokens.of(context).pageGutter,
-  MediaQuery.paddingOf(context).bottom + 32,
-);
+///
+/// The gutter and gap come from the **discrete** style when [AppUiScope] is
+/// above the page, not from the interpolated `AppStyleTokens` the animated
+/// theme reports mid-transition: a padding that lerps would move the whole
+/// list while a style switch is animating, and a scroll anchor restored at the
+/// start of that animation would end up a few pixels off.
+EdgeInsets featurePadding(BuildContext context) {
+  final tokens = AppUiScope.isAvailable(context)
+      ? AppUiScope.presentationOf(context).tokens
+      : AppStyleTokens.of(context);
+  return EdgeInsets.fromLTRB(
+    tokens.pageGutter,
+    MediaQuery.paddingOf(context).top +
+        FrostedHeader.toolbarHeight +
+        (tokens.isClassic ? 12 : 20),
+    tokens.pageGutter,
+    MediaQuery.paddingOf(context).bottom + 32,
+  );
+}
 
 class FeatureEntry extends StatelessWidget {
   const FeatureEntry({
