@@ -4,6 +4,7 @@ import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
 import 'services/platform_capabilities.dart';
 import 'services/platform_channel.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
@@ -21,6 +22,7 @@ import 'pages/cached_books_page.dart';
 import 'pages/drama_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
+import 'pages/theme_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/app_theme_style.dart';
@@ -41,6 +43,7 @@ import 'services/fair_memory.dart';
 import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
 import 'services/library_store.dart';
+import 'services/legacy_ui_notice.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
 import 'services/short_series_font_scale.dart';
@@ -510,6 +513,7 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
   bool _backendReady = false;
+  bool _legacyNoticeScheduled = false;
 
   /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
   final ScrollController _homeScroll = ScrollController();
@@ -564,6 +568,7 @@ class _RootShellState extends State<RootShell> {
       await (widget.backendStarter ?? BackendService.instance.start)();
       if (mounted) {
         setState(() => _backendReady = true);
+        _scheduleLegacyUiNotice();
       }
     } catch (e) {
       if (mounted) {
@@ -572,6 +577,41 @@ class _RootShellState extends State<RootShell> {
         });
       }
     }
+  }
+
+  void _scheduleLegacyUiNotice() {
+    if (_legacyNoticeScheduled) return;
+    _legacyNoticeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_maybeShowLegacyUiNotice());
+    });
+  }
+
+  Future<void> _maybeShowLegacyUiNotice() async {
+    if (!mounted || !await LegacyUiNotice.shouldShow()) return;
+    if (!mounted) return;
+    final goToTheme = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('界面UI已升级'),
+        content: const Text('新版默认使用档案界面。想继续使用经典界面，可以到「设置 → 主题」切换。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('知道了'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('去设置'),
+          ),
+        ],
+      ),
+    );
+    await LegacyUiNotice.markSeen();
+    if (!mounted || goToTheme != true) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const ThemePage()));
   }
 
   @override
