@@ -52,6 +52,7 @@ import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
+import 'widgets/app_ui/app_ui_scope.dart';
 import 'widgets/shell_dock.dart';
 import 'widgets/unsupported_feature_page.dart';
 import 'widgets/home/home_design.dart';
@@ -239,13 +240,30 @@ Future<void> _initializeLocalData() async {
 }
 
 class FqApp extends StatefulWidget {
-  const FqApp({super.key});
+  const FqApp({
+    super.key,
+    this.initializer,
+    this.backendStarter,
+    this.styleStore,
+  });
+
+  /// Test seams for the real production tree. Production leaves them null:
+  /// startup uses [_initializeLocalData] and the real backend, and appearance
+  /// reads the device-wide [AppThemeStyleStore.instance].
+  @visibleForTesting
+  final Future<void> Function()? initializer;
+  @visibleForTesting
+  final Future<void> Function()? backendStarter;
+  @visibleForTesting
+  final AppThemeStyleStore? styleStore;
 
   @override
   State<FqApp> createState() => _FqAppState();
 }
 
 class _FqAppState extends State<FqApp> {
+  AppThemeStyleStore get _styleStore =>
+      widget.styleStore ?? AppThemeStyleStore.instance;
   // Official tabbar + 18dp applies on every page. Our floating dock is 64
   // high with an 8px gap; the desktop shell has no bottom bar.
   final _audioRoutes = AudioFloatingRoutes(
@@ -278,7 +296,7 @@ class _FqAppState extends State<FqApp> {
                 // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
                 final effectiveMode = eink ? ThemeMode.light : mode;
                 return ValueListenableBuilder<AppThemeStyle>(
-                  valueListenable: AppThemeStyleStore.instance,
+                  valueListenable: _styleStore,
                   builder: (context, style, _) => MaterialApp(
                     navigatorKey: _navigatorKey,
                     navigatorObservers: [_audioRoutes],
@@ -290,29 +308,38 @@ class _FqAppState extends State<FqApp> {
                         recentListen: loadRecentListen,
                         child: child ?? const SizedBox.shrink(),
                       );
-                      // Routes without an AppBar need a live fallback above the
-                      // Navigator; the covered root route cannot paint its style.
-                      // Reader/video annotations still override this default.
-                      return AnnotatedRegion<SystemUiOverlayStyle>(
-                        value:
-                            (palette.dark
-                                    ? SystemUiOverlayStyle.light
-                                    : SystemUiOverlayStyle.dark)
-                                .copyWith(
-                                  statusBarColor: palette.canvas,
-                                  systemNavigationBarColor: palette.canvas,
-                                  systemNavigationBarDividerColor:
-                                      palette.canvas,
-                                  systemNavigationBarIconBrightness:
-                                      palette.dark
-                                      ? Brightness.light
-                                      : Brightness.dark,
-                                ),
-                        child: AudioFloatingRouteScope(
-                          routes: _audioRoutes,
-                          child: isWindowsDesktop
-                              ? DesktopAppFrame(child: playback)
-                              : playback,
+                      // One live presentation scope above the root Navigator,
+                      // so pushed routes, nested Navigators and every Overlay
+                      // entry read the same discrete style. It is installed in
+                      // the builder (not in a page) on purpose; see
+                      // [AppUiScope].
+                      return AppUiScope(
+                        store: _styleStore,
+                        child: AnnotatedRegion<SystemUiOverlayStyle>(
+                          // Routes without an AppBar need a live fallback above
+                          // the Navigator; the covered root route cannot paint
+                          // its style. Reader/video annotations still override
+                          // this default.
+                          value:
+                              (palette.dark
+                                      ? SystemUiOverlayStyle.light
+                                      : SystemUiOverlayStyle.dark)
+                                  .copyWith(
+                                    statusBarColor: palette.canvas,
+                                    systemNavigationBarColor: palette.canvas,
+                                    systemNavigationBarDividerColor:
+                                        palette.canvas,
+                                    systemNavigationBarIconBrightness:
+                                        palette.dark
+                                        ? Brightness.light
+                                        : Brightness.dark,
+                                  ),
+                          child: AudioFloatingRouteScope(
+                            routes: _audioRoutes,
+                            child: isWindowsDesktop
+                                ? DesktopAppFrame(child: playback)
+                                : playback,
+                          ),
                         ),
                       );
                     },
@@ -339,8 +366,11 @@ class _FqAppState extends State<FqApp> {
                     localizationsDelegates:
                         GlobalMaterialLocalizations.delegates,
                     home: AppBootstrap(
-                      backendStarter: BackendService.instance.start,
-                      child: const RootShell(),
+                      backendStarter:
+                          widget.backendStarter ??
+                          BackendService.instance.start,
+                      initializer: widget.initializer,
+                      child: RootShell(backendStarter: widget.backendStarter),
                     ),
                   ),
                 );
