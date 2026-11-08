@@ -18,23 +18,31 @@ class DetailSectionHeader extends StatelessWidget {
   /// Gap between the header and the content below (mockup default 10).
   final double bottomGap;
 
+  /// Overrides the default 16dp gutter + 20dp top gap. Callers that already
+  /// own the horizontal gutter (a `flush` block, a nested panel) pass their own
+  /// padding instead of stacking a second one.
+  final EdgeInsetsGeometry? padding;
+
   const DetailSectionHeader({
     super.key,
     required this.title,
     this.action,
     this.bottomGap = 10,
+    this.padding,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        homeGutter,
-        homeSectionGap,
-        homeGutter,
-        bottomGap,
-      ),
+      padding:
+          padding ??
+          EdgeInsets.fromLTRB(
+            homeGutter,
+            homeSectionGap,
+            homeGutter,
+            bottomGap,
+          ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
