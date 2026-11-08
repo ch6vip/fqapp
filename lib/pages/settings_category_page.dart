@@ -122,6 +122,7 @@ class _SettingsCategoryPageState extends State<SettingsCategoryPage> {
     if (AppStyleTokens.of(context).isClassic) {
       return SettingsScaffold(
         title: widget.title,
+        showBack: Navigator.of(context).canPop(),
         body: ListView(
           key: PageStorageKey('settings-category-classic-${widget.title}'),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

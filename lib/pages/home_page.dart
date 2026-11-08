@@ -724,7 +724,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       SliverToBoxAdapter(child: SizedBox(height: homeBottomClearance(context)));
 
   void _openSearch() {
-    Navigator.push(context, SearchRoute(builder: (_) => const SearchPage()));
+    Navigator.push(
+      context,
+      SearchRoute.open<void>(context, builder: (_) => const SearchPage()),
+    );
   }
 
   /// 官方搜索行右上角的「分类」入口（`alx.xml` `i_y`）。官方点它走
