@@ -23,6 +23,7 @@ import '../services/shelf_group_store.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'ai_reading/settings/ai_settings_widgets.dart';
 import 'fanqie_history_import_page.dart';
+import 'webdav_sync_page.dart';
 
 class LibraryBackupPage extends StatefulWidget {
   const LibraryBackupPage({super.key});
@@ -258,6 +259,23 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 24),
+            const ArchiveSection(title: '云端同步', code: 'SYNC / WEBDAV'),
+            const SizedBox(height: 14),
+            FeatureEntry(
+              key: const ValueKey('backup-webdav'),
+              title: 'WebDAV 同步',
+              subtitle: '自动同步书架和阅读进度',
+              icon: LucideIcons.cloud,
+              onTap: enabled
+                  ? () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => const WebDavSyncPage(),
+                      ),
+                    )
+                  : null,
             ),
             const SizedBox(height: 24),
             const ArchiveSection(title: '其他来源', code: 'BACKUP / OTHER SOURCES'),

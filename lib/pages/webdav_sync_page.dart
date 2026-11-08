@@ -1,0 +1,210 @@
+import 'package:flutter/material.dart';
+
+import '../services/webdav_client.dart';
+import '../services/webdav_sync_service.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_widgets.dart';
+
+class WebDavSyncPage extends StatefulWidget {
+  const WebDavSyncPage({super.key});
+  @override
+  State<WebDavSyncPage> createState() => _WebDavSyncPageState();
+}
+
+class _WebDavSyncPageState extends State<WebDavSyncPage> {
+  final _service = WebDavSyncService.instance;
+  final _form = GlobalKey<FormState>();
+  late final TextEditingController _directory;
+  late final TextEditingController _username;
+  late final TextEditingController _password;
+  bool _enabled = false;
+  bool _saving = false;
+  bool _obscure = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    final config = _service.config;
+    _directory = TextEditingController(text: config?.directory);
+    _username = TextEditingController(text: config?.username);
+    _password = TextEditingController(text: config?.password);
+    _enabled = config?.enabled ?? false;
+  }
+
+  @override
+  void dispose() {
+    _directory.dispose();
+    _username.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save({bool sync = false}) async {
+    if (!_form.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _message = null;
+    });
+    try {
+      await _service.configure(
+        WebDavConfig(
+          directory: _directory.text.trim(),
+          username: _username.text.trim(),
+          password: _password.text,
+          enabled: _enabled,
+        ),
+      );
+      if (sync) await _service.sync();
+      if (mounted) setState(() => _message = sync ? '同步完成' : '设置已安全保存');
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _message = error is WebDavException
+              ? error.message
+              : '保存或同步失败，请检查连接设置及设备安全存储后重试',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return AnimatedBuilder(
+      animation: Listenable.merge([_service.busy, _service.status]),
+      builder: (context, _) {
+        final busy = _saving || _service.busy.value;
+        return Scaffold(
+          backgroundColor: palette.canvas,
+          appBar: settingsAppBar(context, title: 'WebDAV 同步'),
+          body: SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Form(
+                  key: _form,
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      const Text(
+                        '自动同步书架与阅读进度',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        '使用已有的 HTTPS WebDAV 目录。应用会创建 fqapp-sync.json；其他设备填写相同目录即可同步。',
+                      ),
+                      const SizedBox(height: 20),
+                      TextFormField(
+                        controller: _directory,
+                        enabled: !busy,
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          labelText: 'WebDAV 目录地址',
+                          hintText: 'https://dav.example.com/fqapp/',
+                        ),
+                        validator: (value) {
+                          try {
+                            WebDavConfig(
+                              directory: value ?? '',
+                              username: '',
+                              password: '',
+                              enabled: false,
+                            ).fileUri;
+                            return null;
+                          } on WebDavException catch (error) {
+                            return error.message;
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _username,
+                        enabled: !busy,
+                        autocorrect: false,
+                        decoration: const InputDecoration(labelText: '用户名'),
+                        validator: (value) =>
+                            value?.contains(':') == true ? '用户名不能包含冒号' : null,
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _password,
+                        enabled: !busy,
+                        obscureText: _obscure,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: InputDecoration(
+                          labelText: '密码 / 应用专用密码',
+                          suffixIcon: IconButton(
+                            tooltip: _obscure ? '显示密码' : '隐藏密码',
+                            onPressed: () =>
+                                setState(() => _obscure = !_obscure),
+                            icon: Icon(
+                              _obscure
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('自动同步'),
+                        subtitle: const Text(
+                          '启动、返回应用、数据变更后及前台每 2 分钟同步；离线后自动重试',
+                        ),
+                        value: _enabled,
+                        onChanged: busy
+                            ? null
+                            : (value) => setState(() => _enabled = value),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _service.status.value,
+                        key: const Key('webdav-status'),
+                      ),
+                      if (_message != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(_message!),
+                        ),
+                      const SizedBox(height: 20),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          OutlinedButton(
+                            onPressed: busy ? null : () => _save(),
+                            child: const Text('保存设置'),
+                          ),
+                          FilledButton(
+                            onPressed: busy ? null : () => _save(sync: true),
+                            child: Text(busy ? '请稍候…' : '保存并立即同步'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        '进度冲突保留时间较新的记录，请确保各设备时间准确。书架移除也会同步；历史与已看剧集取并集，本机删除的历史可能从云端恢复。\n\n'
+                        '不上传本地书籍、下载缓存或账号密码。密码保存在设备安全存储中；云端同步文件包含书架与进度，请使用私人目录。服务器需支持 ETag 和条件写入。',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
