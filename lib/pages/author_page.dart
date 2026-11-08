@@ -12,6 +12,7 @@ import '../services/app_style_tokens.dart';
 import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/app_ui/content_anchor.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/home/home_back_button.dart';
 import '../widgets/home/home_design.dart';
@@ -63,10 +64,31 @@ class _AuthorPageState extends State<AuthorPage> {
   String? _error;
   int _generation = 0;
 
+  /// Classic keeps works in a home-card grid, archive in the upstream rows;
+  /// both scroll the same list, so one controller serves both bodies.
+  final _scroll = ScrollController();
+
+  /// 经典 ⇄ 档案 swaps the whole tree: keep the visible work (or the section
+  /// header) instead of relying on a recreated ScrollPosition.
+  late final _anchors = ContentAnchorKeeper(_scroll);
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _anchors.attach(AppUiScope.maybeOf(context)?.notifier, context);
+  }
+
+  @override
+  void dispose() {
+    _anchors.detach();
+    _scroll.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -160,11 +182,17 @@ class _AuthorPageState extends State<AuthorPage> {
     final works = _profile.works;
     return CustomScrollView(
       key: const Key('author_scroll'),
+      controller: _scroll,
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         SliverPadding(
           padding: padding.copyWith(bottom: 0),
-          sliver: SliverToBoxAdapter(child: _profileHeader(context)),
+          sliver: SliverToBoxAdapter(
+            child: KeyedSubtree(
+              key: contentAnchorKey('header'),
+              child: _profileHeader(context),
+            ),
+          ),
         ),
         if (works.isEmpty)
           SliverPadding(
@@ -181,10 +209,13 @@ class _AuthorPageState extends State<AuthorPage> {
           SliverPadding(
             padding: padding.copyWith(top: 28, bottom: 10),
             sliver: SliverToBoxAdapter(
-              child: ArchiveSection(
-                title: '全部作品',
-                code: '02 / ARCHIVE INDEX',
-                subtitle: '${works.length} 部作品',
+              child: KeyedSubtree(
+                key: contentAnchorKey('works'),
+                child: ArchiveSection(
+                  title: '全部作品',
+                  code: '02 / ARCHIVE INDEX',
+                  subtitle: '${works.length} 部作品',
+                ),
               ),
             ),
           ),
@@ -192,7 +223,10 @@ class _AuthorPageState extends State<AuthorPage> {
             padding: padding.copyWith(top: 0),
             sliver: SliverList.builder(
               itemCount: works.length,
-              itemBuilder: (context, index) => _workRow(context, works[index]),
+              itemBuilder: (context, index) => KeyedSubtree(
+                key: contentAnchorKey('works/work:${works[index].id}'),
+                child: _workRow(context, works[index]),
+              ),
             ),
           ),
         ],

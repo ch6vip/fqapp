@@ -19,11 +19,18 @@ class DetailDescription extends StatefulWidget {
   final bool desktop;
   final String title;
 
+  /// Controlled expansion when non-null: the detail page owns the value so a
+  /// layout swap (经典 ⇄ 档案) cannot fold the synopsis back to three lines.
+  final bool? expanded;
+  final ValueChanged<bool>? onExpandedChanged;
+
   const DetailDescription({
     super.key,
     required this.text,
     this.desktop = false,
     this.title = '简介',
+    this.expanded,
+    this.onExpandedChanged,
   });
 
   @override
@@ -33,10 +40,21 @@ class DetailDescription extends StatefulWidget {
 class _DetailDescriptionState extends State<DetailDescription> {
   bool _expanded = false;
 
+  bool get _isExpanded => widget.expanded ?? _expanded;
+
   @override
   void didUpdateWidget(DetailDescription oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) _expanded = false;
+    // Uncontrolled callers keep the original reset-on-new-text behaviour.
+    if (widget.expanded == null && oldWidget.text != widget.text) {
+      _expanded = false;
+    }
+  }
+
+  void _toggle() {
+    final next = !_isExpanded;
+    if (widget.expanded == null) setState(() => _expanded = next);
+    widget.onExpandedChanged?.call(next);
   }
 
   @override
@@ -97,8 +115,8 @@ class _DetailDescriptionState extends State<DetailDescription> {
                           child: AppText(
                             widget.text,
                             key: const Key('detail_description_text'),
-                            maxLines: _expanded ? null : 3,
-                            overflow: _expanded
+                            maxLines: _isExpanded ? null : 3,
+                            overflow: _isExpanded
                                 ? TextOverflow.visible
                                 : TextOverflow.ellipsis,
                             style: style,
@@ -107,14 +125,14 @@ class _DetailDescriptionState extends State<DetailDescription> {
                         if (canExpand)
                           JellyTapSurface(
                             key: const Key('detail_description_toggle'),
-                            onTap: () => setState(() => _expanded = !_expanded),
+                            onTap: _toggle,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   AppText(
-                                    _expanded ? '收起' : '展开全部',
+                                    _isExpanded ? '收起' : '展开全部',
                                     style: TextStyle(
                                       color: classic
                                           ? palette.muted
@@ -125,7 +143,7 @@ class _DetailDescriptionState extends State<DetailDescription> {
                                   ),
                                   const SizedBox(width: 7),
                                   AnimatedRotation(
-                                    turns: _expanded ? .5 : 0,
+                                    turns: _isExpanded ? .5 : 0,
                                     duration:
                                         MediaQuery.disableAnimationsOf(context)
                                         ? Duration.zero

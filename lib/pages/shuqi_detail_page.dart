@@ -9,6 +9,7 @@ import '../services/app_style_tokens.dart';
 import '../services/library_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/app_ui/content_anchor.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_states.dart';
 import '../widgets/detail/detail_style.dart';
@@ -64,10 +65,31 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
   bool _tocLoading = true;
   String? _tocError;
 
+  /// Both layouts read the same chapter list, so one controller serves the
+  /// classic and the archive body.
+  final _scroll = ScrollController();
+
+  /// 经典 ⇄ 档案换的是两棵不同的树：ScrollPosition 会重建，必须按内容 ID
+  /// 恢复位置，而不是靠同一个 controller 的初始偏移。
+  late final _anchors = ContentAnchorKeeper(_scroll);
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _anchors.attach(AppUiScope.maybeOf(context)?.notifier, context);
+  }
+
+  @override
+  void dispose() {
+    _anchors.detach();
+    _scroll.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -255,6 +277,7 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
         Positioned.fill(
           child: CustomScrollView(
             key: const Key('shuqi-detail-scroll'),
+            controller: _scroll,
             physics: const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
@@ -270,13 +293,19 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _identity(context, book),
+                      KeyedSubtree(
+                        key: contentAnchorKey('header'),
+                        child: _identity(context, book),
+                      ),
                       if (book.intro.isNotEmpty) ...[
                         const SizedBox(height: 28),
                         DetailArchiveSynopsis(text: book.intro),
                       ],
                       const SizedBox(height: 30),
-                      _contentsHeading(context, toc, chapters),
+                      KeyedSubtree(
+                        key: contentAnchorKey('directory'),
+                        child: _contentsHeading(context, toc, chapters),
+                      ),
                       if (_tocError != null)
                         DetailInlineError(
                           message: _tocError!,
@@ -453,6 +482,18 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
 
   Widget _chapterRow(BuildContext context, ShuqiChapter chapter, int index) {
     final scheme = Theme.of(context).colorScheme;
+    return KeyedSubtree(
+      key: contentAnchorKey('directory/chapter:${chapter.chapterId}'),
+      child: _archiveChapterRow(context, chapter, index, scheme),
+    );
+  }
+
+  Widget _archiveChapterRow(
+    BuildContext context,
+    ShuqiChapter chapter,
+    int index,
+    ColorScheme scheme,
+  ) {
     return JellyTapSurface(
       key: ValueKey('shuqi-chapter-$index'),
       onTap: () => unawaited(_openChapter(index)),

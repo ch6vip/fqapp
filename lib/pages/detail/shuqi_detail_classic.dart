@@ -100,22 +100,32 @@ extension _ShuqiDetailClassic on _ShuqiDetailPageState {
         constraints: const BoxConstraints(maxWidth: 840),
         child: CustomScrollView(
           key: const Key('shuqi-detail-scroll'),
+          controller: _scroll,
           physics: const BouncingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
           ),
           slivers: [
             SliverToBoxAdapter(
-              child: _classicHeader(context, palette, book, toc),
+              child: KeyedSubtree(
+                key: contentAnchorKey('header'),
+                child: _classicHeader(context, palette, book, toc),
+              ),
             ),
             SliverToBoxAdapter(child: _classicTocStatus(palette)),
             if (showingChapters)
               SliverList.builder(
                 itemCount: chapters.length,
-                itemBuilder: (context, index) =>
-                    _classicChapterRow(context, palette, chapters[index], index),
+                itemBuilder: (context, index) => _classicChapterRow(
+                  context,
+                  palette,
+                  chapters[index],
+                  index,
+                ),
               ),
             SliverToBoxAdapter(
-              child: SizedBox(height: MediaQuery.paddingOf(context).bottom + 24),
+              child: SizedBox(
+                height: MediaQuery.paddingOf(context).bottom + 24,
+              ),
             ),
           ],
         ),
@@ -208,15 +218,12 @@ extension _ShuqiDetailClassic on _ShuqiDetailPageState {
               key: const Key('shuqi-intro'),
               maxLines: 6,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: palette.ink,
-                fontSize: 13,
-                height: 1.6,
-              ),
+              style: TextStyle(color: palette.ink, fontSize: 13, height: 1.6),
             ),
           ],
           const SizedBox(height: 16),
           Row(
+            key: contentAnchorKey('directory'),
             children: [
               Flexible(
                 child: Text(
@@ -292,42 +299,45 @@ extension _ShuqiDetailClassic on _ShuqiDetailPageState {
     ShuqiChapter chapter,
     int index,
   ) {
-    return HomePressable(
-      key: ValueKey('shuqi-chapter-$index'),
-      semanticLabel: chapter.title,
-      onTap: () => unawaited(_openChapter(index)),
-      borderRadius: BorderRadius.zero,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: palette.line)),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                chapter.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.ink,
-                  fontSize: 13.5,
-                  height: 1.5,
+    return KeyedSubtree(
+      key: contentAnchorKey('directory/chapter:${chapter.chapterId}'),
+      child: HomePressable(
+        key: ValueKey('shuqi-chapter-$index'),
+        semanticLabel: chapter.title,
+        onTap: () => unawaited(_openChapter(index)),
+        borderRadius: BorderRadius.zero,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: palette.line)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  chapter.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.ink,
+                    fontSize: 13.5,
+                    height: 1.5,
+                  ),
                 ),
               ),
-            ),
-            if (chapter.isVip) ...[
-              const SizedBox(width: 10),
-              Text(
-                'VIP',
-                style: TextStyle(
-                  color: palette.accentText,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
+              if (chapter.isVip) ...[
+                const SizedBox(width: 10),
+                Text(
+                  'VIP',
+                  style: TextStyle(
+                    color: palette.accentText,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
