@@ -7,6 +7,7 @@ import '../../services/app_style_tokens.dart';
 import '../../services/poster_cache.dart';
 import '../cover_tag_chip.dart';
 import '../media_card.dart' show mediaLengthLabel;
+import 'classic_home_cover_artwork.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -57,7 +58,18 @@ class StoryCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    final fallback = CustomPaint(painter: _CoverArtwork(item));
+    final fallback = AppStyleTokens.of(context).isClassic
+        ? CustomPaint(
+            painter: ClassicHomeCoverArtwork(item.kind),
+            child: Center(
+              child: Icon(
+                homeKindIcon(item.kind),
+                color: Colors.white.withValues(alpha: 0.32),
+                size: 38,
+              ),
+            ),
+          )
+        : CustomPaint(painter: _CoverArtwork(item));
     final Widget art;
     if (item.cover.isEmpty) {
       art = fallback;

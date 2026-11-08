@@ -24,6 +24,7 @@ import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/app_theme_style.dart';
+import 'services/api_client.dart';
 import 'services/ai_reading/ai_controller.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
@@ -611,7 +612,7 @@ class _RootShellState extends State<RootShell> {
           return LazyIndexedStack(
             index: index,
             children: [
-              const HomePage(),
+              HomePage(cueLoader: ApiClient.instance.searchCue),
               const DramaPage(),
               LibraryPage(
                 onBrowse: () => desktopTab.value = 0,
@@ -665,7 +666,10 @@ class _RootShellState extends State<RootShell> {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(scrollController: _homeScroll),
+            HomePage(
+              scrollController: _homeScroll,
+              cueLoader: ApiClient.instance.searchCue,
+            ),
             // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
             // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
             if (supportsVideoPlayback)

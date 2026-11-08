@@ -5,6 +5,7 @@ import '../../models/media_item.dart';
 import '../../services/app_style_tokens.dart';
 import '../../services/library_store.dart';
 import '../../services/media_history_store.dart';
+import 'classic_home_continue_row.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -105,6 +106,13 @@ class HomeContinueRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final tokens = AppStyleTokens.of(context);
+    if (tokens.isClassic) {
+      return ClassicHomeContinueRow(
+        now: now,
+        onOpen: onOpen,
+        onDismiss: onDismiss,
+      );
+    }
     final panelRadius = BorderRadius.circular(tokens.panelRadius);
     final percent = (now.progress * 100).round();
     return Padding(
