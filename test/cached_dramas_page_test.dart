@@ -1,17 +1,22 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/cached_dramas_page.dart';
+import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/drama_downloader.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
+import 'package:fqapp/widgets/cache/cache_page_widgets.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
+import 'support/app_ui_host.dart';
 import 'support/fakes.dart';
 
 void main() {
@@ -19,6 +24,7 @@ void main() {
   late DramaDownloader downloader;
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     store = MemoryDramaDownloadStore();
     downloader = DramaDownloader(store: store);
   });
@@ -61,6 +67,23 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  Future<AppThemeStyleStore> pumpDramaCacheWithStyle(
+    WidgetTester tester, {
+    required bool classic,
+  }) async {
+    final styleStore = AppThemeStyleStore()
+      ..value = classic ? AppThemeStyle.classic : AppThemeStyle.archive;
+    addTearDown(styleStore.dispose);
+    await tester.pumpWidget(
+      AppUiHost(
+        store: styleStore,
+        home: CachedDramasPage(store: store, downloader: downloader),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return styleStore;
   }
 
   testWidgets('按剧聚合展示：集数、占用、集级明细', (tester) async {
@@ -194,5 +217,145 @@ void main() {
     expect(await store.isDownloaded('ep0'), isFalse);
     expect(find.textContaining('暂无离线缓存'), findsOneWidget);
     expect(find.text('已完成'), findsNothing);
+  });
+
+  testWidgets('经典主题恢复缓存统计、设置卡列表与 AppBar 管理动作', (tester) async {
+    await seed();
+    await pumpDramaCacheWithStyle(tester, classic: true);
+
+    expect(find.byType(ClassicFeaturePage), findsOneWidget);
+    expect(find.byType(ArchiveFeaturePage), findsNothing);
+    expect(find.byType(CacheSummaryCard), findsOneWidget);
+    expect(find.text('已缓存 1 部 · 共 2 集'), findsOneWidget);
+    expect(find.textContaining('占用空间：4.0 KB · 加密离线播放'), findsOneWidget);
+    expect(find.byType(ArchiveSection), findsNothing);
+    expect(find.byKey(const ValueKey('dramas-more-actions')), findsNothing);
+    expect(find.byKey(const ValueKey('dramas-pause-all')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dramas-resume-all')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dramas-clear-all')), findsOneWidget);
+    // 没有在途任务时暂停/继续禁用，清空可用。
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const ValueKey('dramas-pause-all')))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const ValueKey('dramas-clear-all')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('经典 AppBar 清空全部仍走确认并刷新空态', (tester) async {
+    await seed();
+    await pumpDramaCacheWithStyle(tester, classic: true);
+
+    await tester.tap(find.byKey(const ValueKey('dramas-clear-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('清空全部离线缓存'), findsOneWidget);
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+
+    expect(await store.isDownloaded('ep0'), isFalse);
+    expect(find.byType(CacheEmptyState), findsOneWidget);
+    expect(find.textContaining('暂无离线缓存'), findsOneWidget);
+  });
+
+  testWidgets('切换主题保留展开的剧集与页面 State', (tester) async {
+    await seed();
+    final store = await pumpDramaCacheWithStyle(tester, classic: false);
+    await tester.tap(find.text('测试剧'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('drama-episode-ep0')), findsOneWidget);
+    final state = tester.state(find.byType(CachedDramasPage));
+
+    await store.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ClassicFeaturePage), findsOneWidget);
+    expect(find.byType(ArchiveFeaturePage), findsNothing);
+    expect(tester.state(find.byType(CachedDramasPage)), same(state));
+    expect(find.byKey(const ValueKey('drama-episode-ep0')), findsOneWidget);
+
+    await store.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(tester.state(find.byType(CachedDramasPage)), same(state));
+    expect(find.byKey(const ValueKey('drama-episode-ep0')), findsOneWidget);
+  });
+
+  testWidgets('集号未知的集记录在两套主题下都不冒充第 1 集', (tester) async {
+    await store.ensureCatalogue(
+      CachedDrama(
+        id: 'series1',
+        title: '测试剧',
+        cover: '',
+        episodes: [
+          Chapter(
+            itemId: 'ep0',
+            title: '',
+            volumeName: '剧集',
+            hasKnownIndex: false,
+          ),
+        ],
+      ),
+    );
+    await store.saveEpisode(seedEpisode('ep0', index: 4));
+    final storeController = await pumpDramaCacheWithStyle(
+      tester,
+      classic: false,
+    );
+    await tester.tap(find.text('测试剧'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('集号未知'), findsOneWidget);
+    expect(find.textContaining('第 1 集'), findsNothing);
+
+    await storeController.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('集号未知'), findsOneWidget);
+    expect(find.textContaining('第 1 集'), findsNothing);
+  });
+
+  testWidgets('经典主题的暂停任务可继续下载', (tester) async {
+    final gate = Completer<EpisodeSource>();
+    final pendingDownloader = DramaDownloader(
+      store: store,
+      // resolver 永不完成：任务停在暂停/续下状态，不触真网。
+      resolve: (episode) => gate.future,
+    );
+    final drama = CachedDrama(
+      id: 'series1',
+      title: '测试剧',
+      cover: '',
+      episodes: [Chapter(itemId: 'ep9', title: '第九集', volumeName: '')],
+    );
+    await pendingDownloader.enqueue(drama: drama, episodes: drama.episodes);
+    pendingDownloader.pauseAll();
+
+    final storeController = AppThemeStyleStore()..value = AppThemeStyle.classic;
+    addTearDown(storeController.dispose);
+    await tester.pumpWidget(
+      AppUiHost(
+        store: storeController,
+        home: CachedDramasPage(store: store, downloader: pendingDownloader),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('download-task-ep9')), findsOneWidget);
+    expect(find.byTooltip('继续下载'), findsOneWidget);
+    expect(pendingDownloader.value.single.status, DramaDownloadStatus.paused);
+
+    await tester.tap(find.byTooltip('继续下载'));
+    await tester.pump();
+
+    expect(
+      pendingDownloader.value.single.status,
+      isNot(DramaDownloadStatus.paused),
+    );
   });
 }
