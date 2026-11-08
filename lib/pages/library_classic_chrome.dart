@@ -96,12 +96,21 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
                 ),
           ],
           child: Padding(
-            padding: const EdgeInsets.only(
-              right: ShelfTokens.screenPadding,
-              left: 6,
-              bottom: 2,
+            padding: const EdgeInsets.only(right: ShelfTokens.screenPadding),
+            child: SizedBox(
+              width: 42,
+              height: 42,
+              child: Center(
+                child: Transform.translate(
+                  offset: const Offset(0, -1),
+                  child: Icon(
+                    LucideIcons.ellipsis,
+                    size: 22,
+                    color: palette.ink,
+                  ),
+                ),
+              ),
             ),
-            child: Icon(LucideIcons.ellipsis, size: 22, color: palette.ink),
           ),
         ),
       ],
