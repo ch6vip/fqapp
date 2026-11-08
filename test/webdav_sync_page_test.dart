@@ -56,6 +56,9 @@ void main() {
         ),
       );
       expect(password.obscureText, isTrue);
+      await tester.ensureVisible(find.byType(SwitchListTile));
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
       final save = find.text('保存设置');
       await tester.ensureVisible(save);
       await tester.tap(save);
