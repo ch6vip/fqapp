@@ -1,27 +1,36 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../app_ui/app_ui_scope.dart';
+import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import '../wenku/wenku_ui.dart';
+import 'detail_states.dart';
 
-/// `简介` block: the archive section heading, the clamped summary and an inline
+/// `简介` block: the section heading, the clamped summary and an inline
 /// expand/collapse control.
 ///
 /// The heading is a plain `简介` on every kind: the old `书籍简介` read as
-/// nonsense on audio and manga. Kept for fqapp's desktop column; the phone
-/// detail page uses the ported `DetailArchiveSynopsis` instead. The shared
-/// archive heading carries no gutter of its own, so the desktop branch pads it
-/// to line up with the body text below.
+/// nonsense on audio and manga. 档案 keeps the `01 / SYNOPSIS` archive heading;
+/// 经典 uses the old 15sp text header, so the classic phone detail page and the
+/// Windows desktop column follow the selected style.
 class DetailDescription extends StatefulWidget {
   final String text;
   final bool desktop;
   final String title;
+
+  /// Controlled expansion when non-null: the detail page owns the value so a
+  /// layout swap (经典 ⇄ 档案) cannot fold the synopsis back to three lines.
+  final bool? expanded;
+  final ValueChanged<bool>? onExpandedChanged;
 
   const DetailDescription({
     super.key,
     required this.text,
     this.desktop = false,
     this.title = '简介',
+    this.expanded,
+    this.onExpandedChanged,
   });
 
   @override
@@ -31,17 +40,31 @@ class DetailDescription extends StatefulWidget {
 class _DetailDescriptionState extends State<DetailDescription> {
   bool _expanded = false;
 
+  bool get _isExpanded => widget.expanded ?? _expanded;
+
   @override
   void didUpdateWidget(DetailDescription oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) _expanded = false;
+    // Uncontrolled callers keep the original reset-on-new-text behaviour.
+    if (widget.expanded == null && oldWidget.text != widget.text) {
+      _expanded = false;
+    }
+  }
+
+  void _toggle() {
+    final next = !_isExpanded;
+    if (widget.expanded == null) setState(() => _expanded = next);
+    widget.onExpandedChanged?.call(next);
   }
 
   @override
   Widget build(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    final palette = HomePalette.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final bodyColor = classic ? palette.ink : scheme.onSurface;
     final style = TextStyle(
-      color: scheme.onSurface,
+      color: bodyColor,
       fontSize: widget.desktop ? 15 : 13,
       height: widget.desktop ? 1.65 : 1.5,
     );
@@ -54,16 +77,21 @@ class _DetailDescriptionState extends State<DetailDescription> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-          child: sectionHeader(context, widget.title, ''),
-        ),
+        if (classic)
+          DetailSectionHeader(title: widget.title)
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+            child: sectionHeader(context, widget.title, ''),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: homeGutter),
           child: widget.text.isEmpty
               ? Text(
                   '暂无简介',
-                  style: style.copyWith(color: scheme.onSurfaceVariant),
+                  style: style.copyWith(
+                    color: classic ? palette.muted : scheme.onSurfaceVariant,
+                  ),
                 )
               : LayoutBuilder(
                   builder: (context, constraints) {
@@ -87,8 +115,8 @@ class _DetailDescriptionState extends State<DetailDescription> {
                           child: AppText(
                             widget.text,
                             key: const Key('detail_description_text'),
-                            maxLines: _expanded ? null : 3,
-                            overflow: _expanded
+                            maxLines: _isExpanded ? null : 3,
+                            overflow: _isExpanded
                                 ? TextOverflow.visible
                                 : TextOverflow.ellipsis,
                             style: style,
@@ -97,23 +125,25 @@ class _DetailDescriptionState extends State<DetailDescription> {
                         if (canExpand)
                           JellyTapSurface(
                             key: const Key('detail_description_toggle'),
-                            onTap: () => setState(() => _expanded = !_expanded),
+                            onTap: _toggle,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   AppText(
-                                    _expanded ? '收起' : '展开全部',
+                                    _isExpanded ? '收起' : '展开全部',
                                     style: TextStyle(
-                                      color: scheme.onSurfaceVariant,
+                                      color: classic
+                                          ? palette.muted
+                                          : scheme.onSurfaceVariant,
                                       fontSize: 13,
                                       height: 1.5,
                                     ),
                                   ),
                                   const SizedBox(width: 7),
                                   AnimatedRotation(
-                                    turns: _expanded ? .5 : 0,
+                                    turns: _isExpanded ? .5 : 0,
                                     duration:
                                         MediaQuery.disableAnimationsOf(context)
                                         ? Duration.zero
