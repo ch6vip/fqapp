@@ -94,15 +94,23 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
       );
     }
     final filtered = _classicHasFilters;
+    // 分组筛选后没有书：空态点名当前分组（与 fork .4 一致），而不是笼统的
+    // 「未找到相关内容」。全部书籍不点名，沿用原来的通用文案。
+    final category = _category;
+    final groupEmpty = _tab == 0 && category != ShelfCategory.all
+        ? '「${ShelfGroupStore.instance.nameOf(category)}」暂无书籍'
+        : null;
     return _ClassicEmptyNotice(
       icon: LucideIcons.search_x,
-      title: !filtered
-          ? '未找到相关内容'
-          : switch (_tab) {
-              0 => '没有符合筛选的书籍',
-              2 => '没有符合筛选的收藏',
-              _ => '没有符合筛选的记录',
-            },
+      title:
+          groupEmpty ??
+          (!filtered
+              ? '未找到相关内容'
+              : switch (_tab) {
+                  0 => '没有符合筛选的书籍',
+                  2 => '没有符合筛选的收藏',
+                  _ => '没有符合筛选的记录',
+                }),
       actionLabel: filtered ? '清除筛选' : null,
       actionKey: const Key('shelf-clear-filters'),
       onAction: _clearFilters,

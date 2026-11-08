@@ -136,6 +136,10 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
     }
   }
 
+  /// L2 工具栏：左「今日已读」胶囊，中间分组筛选胶囊（书架 tab），右侧版式
+  /// 分段。分组胶囊把 `_category` 写成胶囊文案，也是分组入口（点开现有分类
+  /// 弹层，选择 / 新建 / 重命名 / 删除都在那里）。窄屏或 2x 字号整行会放
+  /// 不下，胶囊与「今日已读」一起横向滚动，版式分段固定不动，不出现 overflow。
   Widget _classicToolbar(HomePalette palette) => Padding(
     padding: const EdgeInsets.fromLTRB(
       ShelfTokens.screenPadding,
@@ -148,9 +152,10 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
         Expanded(
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: _tab == 2
-                ? Row(
-                    children: [
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: _tab == 2
+                  ? [
                       for (final (value, label) in const [
                         (null, '全部'),
                         ('video', '短剧'),
@@ -167,42 +172,15 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
                               setState(() => _collectionFilter = value),
                         ),
                       ],
-                    ],
-                  )
-                : Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: palette.soft,
-                      borderRadius: BorderRadius.circular(
-                        ShelfTokens.radiusChip,
-                      ),
-                      border: palette.eink
-                          ? Border.all(color: palette.line)
-                          : null,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          LucideIcons.clock,
-                          size: ShelfTokens.iconInline,
-                          color: palette.muted,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          '今日已读$_todayMinutes分钟',
-                          style: TextStyle(
-                            fontSize: ShelfTokens.subtitle,
-                            fontWeight: FontWeight.w500,
-                            color: palette.ink,
-                          ),
-                        ),
+                    ]
+                  : [
+                      _classicTodayPill(palette),
+                      if (_tab == 0) ...[
+                        const SizedBox(width: 8),
+                        _classicGroupChip(palette),
                       ],
-                    ),
-                  ),
+                    ],
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -214,6 +192,49 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
       ],
     ),
   );
+
+  Widget _classicTodayPill(HomePalette palette) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: palette.soft,
+      borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
+      border: palette.eink ? Border.all(color: palette.line) : null,
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          LucideIcons.clock,
+          size: ShelfTokens.iconInline,
+          color: palette.muted,
+        ),
+        const SizedBox(width: 5),
+        Text(
+          '今日已读$_todayMinutes分钟',
+          style: TextStyle(
+            fontSize: ShelfTokens.subtitle,
+            fontWeight: FontWeight.w500,
+            color: palette.ink,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// 分组胶囊的宽度上限：长分组名只省略，不把工具栏推出去换行。
+  Widget _classicGroupChip(HomePalette palette) {
+    final category = _category;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 148),
+      child: _ClassicGroupChip(
+        key: const Key('shelf-group-chip'),
+        label: ShelfGroupStore.instance.nameOf(category),
+        active: category != ShelfCategory.all,
+        palette: palette,
+        onTap: () => unawaited(_openCategorySheet()),
+      ),
+    );
+  }
 
   /// No permanent archive toolbar. Applied filters must nevertheless never be
   /// invisible, including a category selected while the archive was active.
