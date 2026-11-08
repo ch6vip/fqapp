@@ -8,17 +8,24 @@ import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
 import '../services/library_store.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_states.dart';
+import '../widgets/detail/detail_style.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'reader_page.dart';
 
+part 'detail/shuqi_detail_classic.dart';
+
 /// 书旗书籍详情 + 目录。
 ///
-/// 页面版式来自上游 `DetailPage`（revision ebcd7f1）：磨砂头栏、档案分区、
-/// 行内目录和底部玻璃操作坞。书旗仍是一条**只读**链路：不写书架、不写阅读
-/// 历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过番茄那套目录同步与
-/// 磁盘缓存；阅读器内部的进度/阅读时长写入则靠注入 [_ReadOnlyReaderStore]
+/// 档案主题沿用上游 `DetailPage`（revision ebcd7f1）：磨砂头栏、档案分区、
+/// 行内目录和底部玻璃操作坞；经典主题走 `detail/shuqi_detail_classic.dart`
+/// 的旧版式（Material AppBar、封面头部、简介与目录行），两者共用同一个
+/// `_ShuqiDetailPageState` 和同一批 loader。书旗仍是一条**只读**链路：不写书架、
+/// 不写阅读历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过番茄那套目录
+/// 同步与磁盘缓存；阅读器内部的进度/阅读时长写入则靠注入 [_ReadOnlyReaderStore]
 /// 丢弃。
 ///
 /// 书旗 bookId 与番茄同为纯数字，所以在阅读器里加 `shuqi:` 前缀，避免两套 id
@@ -160,27 +167,33 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
       : (widget.initialTitle.isEmpty ? '书旗' : widget.initialTitle);
 
   @override
-  Widget build(BuildContext context) => WenkuPage(
-    header: ArchiveHeaderBar(
-      leading: GlassIconButton(
-        icon: CupertinoIcons.back,
-        label: '返回',
-        onPressed: () => Navigator.maybePop(context),
-      ),
-      title: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: const AppText(
-          '书籍详情',
-          style: TextStyle(
-            fontSize: 18,
-            height: 1.2,
-            fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    if (AppUiScope.isClassic(context)) {
+      return _buildClassicPage(context, palette);
+    }
+    return WenkuPage(
+      header: ArchiveHeaderBar(
+        leading: GlassIconButton(
+          icon: CupertinoIcons.back,
+          label: '返回',
+          onPressed: () => Navigator.maybePop(context),
+        ),
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: const AppText(
+            '书籍详情',
+            style: TextStyle(
+              fontSize: 18,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ),
-    ),
-    child: Builder(builder: _body),
-  );
+      child: Builder(builder: _body),
+    );
+  }
 
   Widget _body(BuildContext context) {
     final safe = MediaQuery.paddingOf(context);
