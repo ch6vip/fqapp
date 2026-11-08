@@ -58,6 +58,7 @@ class SettingsScaffold extends StatelessWidget {
     this.bottom,
     this.resizeToAvoidBottomInset,
     this.showBack = true,
+    this.extendBodyBehindAppBar = false,
   });
 
   final String title;
@@ -70,11 +71,17 @@ class SettingsScaffold extends StatelessWidget {
   /// passes the nearest Navigator's `canPop` for embedded panes.
   final bool showBack;
 
+  /// The classic feature shell extends the body behind its opaque AppBar so a
+  /// page that still uses the archive header clearance keeps the same first-row
+  /// position instead of reserving status bar + toolbar height twice.
+  final bool extendBodyBehindAppBar;
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Scaffold(
       backgroundColor: palette.canvas,
+      extendBodyBehindAppBar: extendBodyBehindAppBar,
       appBar: settingsAppBar(
         context,
         title: title,

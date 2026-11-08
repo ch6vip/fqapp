@@ -620,7 +620,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
     this.surfaceWrapper,
     this.preferBelow = false,
     this.guardDragDismiss = false,
-  });
+  }) : _classicForBarrier = classicAtOpen;
   final WidgetBuilder builder;
   final GlassOverlayKind kind;
   final bool reduceMotion;
@@ -628,6 +628,12 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
   /// Style at push time. Entry/exit policy is fixed for one flight; the body
   /// keeps reading the live scope so a switch while open only swaps chrome.
   final bool classicAtOpen;
+
+  /// Last live style seen by the barrier/page build. The actual barrier is
+  /// built through [barrierColorOf] (which reads the scope directly); this
+  /// keeps the metadata getter (`ModalRoute.barrierColor`) in sync for callers
+  /// and tests that read it after a switch.
+  bool _classicForBarrier;
 
   /// Renders the classic confirm as a centred dialog instead of a sheet. The
   /// archive style keeps its bottom sheet for the same route.
@@ -640,6 +646,11 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
   /// shell widget types, so this key is what carries an open editor, input or
   /// scroll position across a style switch in either direction.
   final GlobalKey _contentKey = GlobalKey(debugLabel: 'overlay-content');
+
+  /// Owns the menu scroll container above the shell branch. The scrollable
+  /// Element (and therefore its offset) moves between the archive and classic
+  /// surfaces instead of being recreated at offset 0.
+  final GlobalKey _menuScrollKey = GlobalKey(debugLabel: 'overlay-menu-scroll');
 
   final Rect? anchor;
   final RenderBox? anchorBox;
@@ -681,13 +692,37 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
       : WenkuMotion.exit;
   @override
   bool get barrierDismissible => true;
+
+  /// The scrim is presentation, not entry/exit motion: it follows the live
+  /// style for the whole life of an open route. Only [classicAtOpen] stays
+  /// frozen (transition duration).
   @override
-  Color get barrierColor {
-    if (kind == GlassOverlayKind.menu) return Colors.transparent;
-    if (previewing?.value ?? false) return Colors.transparent;
+  Color? barrierColorOf(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    _classicForBarrier = classic;
+    return _barrierColor(
+      classic: classic,
+      menu: kind == GlassOverlayKind.menu,
+      previewing: previewing?.value ?? false,
+    );
+  }
+
+  @override
+  Color get barrierColor => _barrierColor(
+    classic: _classicForBarrier,
+    menu: kind == GlassOverlayKind.menu,
+    previewing: previewing?.value ?? false,
+  );
+
+  static Color _barrierColor({
+    required bool classic,
+    required bool menu,
+    required bool previewing,
+  }) {
+    if (menu || previewing) return Colors.transparent;
     // A plain Material sheet/dialog dims the page; the archive plate keeps its
     // light scrim so the milk paper stays visible behind it.
-    return classicAtOpen
+    return classic
         ? Colors.black.withValues(alpha: .5)
         : Colors.black.withValues(alpha: .16);
   }
@@ -705,6 +740,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
     // the shell widgets) so an already-open sheet/menu swaps chrome instead of
     // keeping the style captured with `themes`.
     final classic = AppUiScope.isClassic(context);
+    _classicForBarrier = classic;
     final overlay =
         navigator!.overlay!.context.findRenderObject()! as RenderBox;
     final trigger = anchorBox;
@@ -725,11 +761,25 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
     );
     final Widget material;
     if (kind == GlassOverlayKind.menu) {
+      // The scroll container is route-owned (above the shell branch) so the
+      // Scrollable Element keeps its offset when the menu swaps surfaces.
+      final menuScroll = KeyedSubtree(
+        key: _menuScrollKey,
+        child: SingleChildScrollView(
+          primary: false,
+          padding: const EdgeInsets.all(8),
+          child: ArchiveMotionScope(
+            animation: animation,
+            enabled: !reduceMotion && !classic,
+            child: content,
+          ),
+        ),
+      );
       material = classic
           ? _ClassicMenuSurface(
               animation: animation,
               reduceMotion: reduceMotion,
-              child: content,
+              child: menuScroll,
             )
           : GlassOverlayTransition(
               animation: animation,
@@ -742,15 +792,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
                 anchor: origin!,
                 source: source,
                 reduceMotion: reduceMotion,
-                child: SingleChildScrollView(
-                  primary: false,
-                  padding: const EdgeInsets.all(8),
-                  child: ArchiveMotionScope(
-                    animation: animation,
-                    enabled: !reduceMotion,
-                    child: content,
-                  ),
-                ),
+                child: menuScroll,
               ),
             );
     } else if (classic && classicDialog) {
@@ -830,25 +872,52 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
                     );
                   }
                   if (classic && classicDialog) {
-                    // Same route and content, classic Material placement. The
-                    // keyboard/safe-area rect above already folded insets in.
+                    // Center inside the keyboard/safe rect, not the whole
+                    // overlay: `safe` is already in this Overlay's coordinate
+                    // space (nested Navigators included). Keep a scroll view
+                    // for landscape/split heights.
+                    if (safe.isEmpty) return const SizedBox.shrink();
+                    final margin = math.min(
+                      24.0,
+                      math.min(safe.width, safe.height) / 4,
+                    );
+                    final availableWidth = math.max(
+                      0.0,
+                      safe.width - margin * 2,
+                    );
+                    final availableHeight = math.max(
+                      0.0,
+                      safe.height - margin * 2,
+                    );
                     final dialogWidth = math.min(
                       math.min(maxWidth, 420.0),
-                      math.max(0.0, safe.width - 48),
+                      availableWidth,
                     );
                     final dialogHeight = math.min(
                       maxHeight ?? double.infinity,
-                      math.max(0.0, safe.height - 48),
+                      availableHeight,
                     );
-                    return Align(
-                      alignment: Alignment.center,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: dialogWidth,
-                          maxHeight: dialogHeight,
+                    return Stack(
+                      children: [
+                        Positioned.fromRect(
+                          rect: safe,
+                          child: Padding(
+                            padding: EdgeInsets.all(margin),
+                            child: Center(
+                              child: SingleChildScrollView(
+                                primary: false,
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth: dialogWidth,
+                                    maxHeight: dialogHeight,
+                                  ),
+                                  child: surface,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                        child: surface,
-                      ),
+                      ],
                     );
                   }
                   final width = math.min(
@@ -1057,19 +1126,21 @@ class _GlassSheetState extends State<_GlassSheet>
               ? ValueListenableBuilder<bool>(
                   valueListenable:
                       widget.previewing ?? const AlwaysStoppedAnimation(false),
-                  builder: (context, previewing, child) => Opacity(
-                    opacity: previewing ? 0 : 1,
-                    child: Material(
-                      key: _surfaceKey,
-                      color: Theme.of(context).colorScheme.surface,
-                      clipBehavior: Clip.antiAlias,
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(16),
-                        ),
+                  builder: (context, previewing, child) => Material(
+                    key: _surfaceKey,
+                    // Preview removes only the panel material, like the
+                    // archive plate; the foreground stays visible and keeps
+                    // owning its gestures.
+                    color: previewing
+                        ? Colors.transparent
+                        : Theme.of(context).colorScheme.surface,
+                    clipBehavior: Clip.antiAlias,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(16),
                       ),
-                      child: child,
                     ),
+                    child: child,
                   ),
                   child: _contents(context),
                 )
@@ -1377,11 +1448,7 @@ class _ClassicMenuSurface extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: theme.colorScheme.outlineVariant, width: .6),
       ),
-      child: SingleChildScrollView(
-        primary: false,
-        padding: const EdgeInsets.all(8),
-        child: child,
-      ),
+      child: child,
     );
     if (reduceMotion || MediaQuery.disableAnimationsOf(context)) return panel;
     return FadeTransition(

@@ -48,6 +48,11 @@ class ArchiveFeaturePage extends StatelessWidget {
 /// The back affordance follows the nearest Navigator: a single embedded route
 /// (the Windows two-pane settings Navigator) keeps its content instead of
 /// popping itself blank.
+///
+/// The body extends behind the opaque AppBar on purpose: pages still use
+/// [featurePadding]'s archive header clearance, which then lands one gutter
+/// below the AppBar instead of being counted twice. A page that brings its own
+/// zero top inset must start below the AppBar itself.
 class ClassicFeaturePage extends StatelessWidget {
   const ClassicFeaturePage({
     super.key,
@@ -67,16 +72,20 @@ class ClassicFeaturePage extends StatelessWidget {
     // A single embedded route must not offer a back affordance that would pop
     // the only page blank (Windows two-pane settings).
     showBack: Navigator.of(context).canPop(),
+    // Pages migrated later still use featurePadding's archive header
+    // clearance; extending behind the opaque AppBar keeps that clearance from
+    // being counted twice (first row stays 12dp below the AppBar).
+    extendBodyBehindAppBar: true,
     body: child,
   );
 }
 
 /// Selects the shared business page's chrome for the live style.
 ///
-/// The page content stays the same widget and State; only the header/shell
-/// changes. Existing call sites are migrated one by one (`ArchiveFeaturePage`
-/// and `SettingsArchivePage` stay available for their archive shapes).
-class AppFeaturePage extends StatelessWidget {
+/// The page content keeps one element (and State) across the shell switch: the
+/// state holds a stable [GlobalKey] above the shell branch, so an open draft,
+/// focus or scroll position is not re-inflated with the new header.
+class AppFeaturePage extends StatefulWidget {
   const AppFeaturePage({
     super.key,
     required this.title,
@@ -96,20 +105,40 @@ class AppFeaturePage extends StatelessWidget {
   final bool? canPop;
 
   @override
+  State<AppFeaturePage> createState() => _AppFeaturePageState();
+}
+
+class _AppFeaturePageState extends State<AppFeaturePage> {
+  /// Owned above the shell branch: the child's Element moves between shells
+  /// instead of being recreated.
+  final _contentKey = GlobalKey(debugLabel: 'app-feature-content');
+
+  @override
   Widget build(BuildContext context) {
+    final content = KeyedSubtree(key: _contentKey, child: widget.child);
     if (AppUiScope.isClassic(context)) {
-      return ClassicFeaturePage(title: title, actions: actions, child: child);
+      return ClassicFeaturePage(
+        title: widget.title,
+        actions: widget.actions,
+        child: content,
+      );
     }
     return ArchiveFeaturePage(
-      title: title,
-      code: code,
-      actions: actions,
-      canPop: canPop ?? Navigator.of(context).canPop(),
-      child: child,
+      title: widget.title,
+      code: widget.code,
+      actions: widget.actions,
+      canPop: widget.canPop ?? Navigator.of(context).canPop(),
+      child: content,
     );
   }
 }
 
+/// Clearance for the floating archive header used by `WenkuPage` /
+/// `ArchiveFeaturePage`: status bar + toolbar height + the style's extra gap.
+///
+/// [ClassicFeaturePage] extends its body behind the opaque AppBar, so a page
+/// that keeps using this padding lands 12dp below the classic AppBar instead
+/// of reserving the header height twice.
 EdgeInsets featurePadding(BuildContext context) => EdgeInsets.fromLTRB(
   AppStyleTokens.of(context).pageGutter,
   MediaQuery.paddingOf(context).top +

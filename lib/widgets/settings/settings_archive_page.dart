@@ -26,7 +26,11 @@ import '../wenku/wenku_ui.dart';
 
 /// [ArchiveFeaturePage] with a back affordance only when there is something
 /// to pop, and the classic feature shell for the classic style.
-class SettingsArchivePage extends StatelessWidget {
+///
+/// The content keeps one element (and State) across a style switch: the state
+/// owns a [GlobalKey] above the shell branch, so an open draft, focus or scroll
+/// position survives archive -> classic -> archive.
+class SettingsArchivePage extends StatefulWidget {
   const SettingsArchivePage({
     super.key,
     required this.title,
@@ -41,9 +45,21 @@ class SettingsArchivePage extends StatelessWidget {
   final List<Widget> actions;
 
   @override
+  State<SettingsArchivePage> createState() => _SettingsArchivePageState();
+}
+
+class _SettingsArchivePageState extends State<SettingsArchivePage> {
+  final _contentKey = GlobalKey(debugLabel: 'settings-archive-content');
+
+  @override
   Widget build(BuildContext context) {
+    final content = KeyedSubtree(key: _contentKey, child: widget.child);
     if (AppUiScope.isClassic(context)) {
-      return ClassicFeaturePage(title: title, actions: actions, child: child);
+      return ClassicFeaturePage(
+        title: widget.title,
+        actions: widget.actions,
+        child: content,
+      );
     }
     final canPop = Navigator.of(context).canPop();
     return WenkuPage(
@@ -55,10 +71,10 @@ class SettingsArchivePage extends StatelessWidget {
                 onPressed: () => Navigator.maybePop(context),
               )
             : const SizedBox.shrink(),
-        title: ArchiveRouteTitle(title: title, code: code),
-        actions: actions,
+        title: ArchiveRouteTitle(title: widget.title, code: widget.code),
+        actions: widget.actions,
       ),
-      child: child,
+      child: content,
     );
   }
 }
