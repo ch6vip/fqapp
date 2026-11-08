@@ -295,7 +295,7 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
                       itemBuilder: (context, index) {
                         final record = records[index];
                         return KeyedSubtree(
-                          key: _anchor.keyFor(record.key),
+                          key: _anchor.keyFor(record.key, index: index),
                           child: _classicRow(preset, record, index, busy),
                         );
                       },
@@ -527,7 +527,7 @@ class _ReaderBookmarksPanelState extends State<ReaderBookmarksPanel> {
                       itemBuilder: (context, index) {
                         final record = records[index];
                         return KeyedSubtree(
-                          key: _anchor.keyFor(record.key),
+                          key: _anchor.keyFor(record.key, index: index),
                           child: JellyTapSurface(
                             key: ValueKey('reader-bookmark-${record.key}'),
                             onTap: busy

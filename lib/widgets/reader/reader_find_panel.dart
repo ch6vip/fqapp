@@ -318,7 +318,7 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
       itemBuilder: (context, index) {
         final match = _result.matches[index];
         return KeyedSubtree(
-          key: _anchor.keyFor('${match.start}:${match.end}'),
+          key: _anchor.keyFor('${match.start}:${match.end}', index: index),
           child: _classicResultRow(context, preset, index),
         );
       },
@@ -513,7 +513,10 @@ class _ReaderFindPanelState extends State<ReaderFindPanel> {
                   end++;
                 }
                 return KeyedSubtree(
-                  key: _anchor.keyFor('${match.start}:${match.end}'),
+                  key: _anchor.keyFor(
+                    '${match.start}:${match.end}',
+                    index: index,
+                  ),
                   child: JellyTapSurface(
                     key: ValueKey('reader-find-result-$index'),
                     onTap: () {
