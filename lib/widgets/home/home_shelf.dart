@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../services/app_style_tokens.dart';
+
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -90,8 +92,8 @@ SliverGridDelegate homeShelfDelegate(BuildContext context, double width) {
 /// 网格卡片的字号。卡片本身和 [homeCardExtent] 必须一起改，否则书名会被
 /// 网格裁掉一行。
 ///
-/// Cover (5:7) + 8dp + two title lines + 5dp + one code line + 2dp +
-/// one meta line.
+/// Cover (5:7) + 8dp + two title lines + optional archive code row +
+/// one meta line. Keep the archive's 2dp rounding allowance in both styles.
 double homeCardExtent(
   BuildContext context,
   double cardWidth,
@@ -100,9 +102,9 @@ double homeCardExtent(
     cardWidth * 1.4 +
     8 +
     scaler.scale(homeCardTitleSize) * 1.35 * 2 +
-    5 +
-    scaler.scale(homeCardCodeSize) * 1.35 +
-    2 +
+    (AppStyleTokens.of(context).showDecorativeCodes
+        ? 5 + scaler.scale(homeCardCodeSize) * 1.35 + 2
+        : 4) +
     scaler.scale(homeCardMetaSize) * 1.3 +
     2;
 

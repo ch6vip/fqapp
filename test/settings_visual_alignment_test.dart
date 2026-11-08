@@ -49,10 +49,20 @@ void main() {
     expect(find.byType(ArchiveMasthead), findsOneWidget);
     expect(find.byType(FeatureEntry), findsWidgets);
     expect(find.text('设置'), findsOneWidget);
-    for (final title in ['外观', '阅读', '听书', '短剧', '数据', '服务']) {
+    for (final title in ['外观', '主题', '阅读', '听书', '短剧', '数据', '服务']) {
+      await tester.scrollUntilVisible(
+        find.text(title).hitTestable(),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text(title), findsOneWidget);
     }
 
+    await tester.scrollUntilVisible(
+      find.text('外观').hitTestable(),
+      -150,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('外观'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsArchivePage), findsOneWidget);
@@ -63,7 +73,7 @@ void main() {
   testWidgets('设置首页可滚动到「关于」并打开关于页', (tester) async {
     await pumpSettings(tester);
     await tester.scrollUntilVisible(
-      find.text('关于'),
+      find.text('关于').hitTestable(),
       120,
       scrollable: find.byType(Scrollable).first,
     );

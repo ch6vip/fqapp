@@ -23,6 +23,7 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/app_theme_style.dart';
 import 'services/ai_reading/ai_controller.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
@@ -215,6 +216,7 @@ Future<void> _initializeLocalData() async {
   // 否则广播到达时 Dart 侧还没有处理函数，原生侧只能按“未处理”回。
   FairMemoryService.instance.init();
   final sp = await SharedPreferences.getInstance();
+  await AppThemeStyleStore.instance.load();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
   final savedTheme = sp.get(themeModeKey);
@@ -274,55 +276,71 @@ class _FqAppState extends State<FqApp> {
               builder: (context, oled, _) {
                 // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
                 final effectiveMode = eink ? ThemeMode.light : mode;
-                return MaterialApp(
-                  navigatorKey: _navigatorKey,
-                  navigatorObservers: [_audioRoutes],
-                  builder: (context, child) {
-                    final palette = HomePalette.of(context);
-                    final playback = AudioPlaybackScope(
-                      key: _audioScopeKey,
-                      navigatorKey: _navigatorKey,
-                      recentListen: loadRecentListen,
-                      child: child ?? const SizedBox.shrink(),
-                    );
-                    // Routes without an AppBar need a live fallback above the
-                    // Navigator; the covered root route cannot paint its style.
-                    // Reader/video annotations still override this default.
-                    return AnnotatedRegion<SystemUiOverlayStyle>(
-                      value:
-                          (palette.dark
-                                  ? SystemUiOverlayStyle.light
-                                  : SystemUiOverlayStyle.dark)
-                              .copyWith(
-                                statusBarColor: palette.canvas,
-                                systemNavigationBarColor: palette.canvas,
-                                systemNavigationBarDividerColor: palette.canvas,
-                                systemNavigationBarIconBrightness: palette.dark
-                                    ? Brightness.light
-                                    : Brightness.dark,
-                              ),
-                      child: AudioFloatingRouteScope(
-                        routes: _audioRoutes,
-                        child: isWindowsDesktop
-                            ? DesktopAppFrame(child: playback)
-                            : playback,
-                      ),
-                    );
-                  },
-                  title: '什锦铺',
-                  debugShowCheckedModeBanner: false,
-                  // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
-                  theme: _theme(Brightness.light, eink: eink, oled: oled),
-                  darkTheme: _theme(Brightness.dark, eink: eink, oled: oled),
-                  themeMode: effectiveMode,
-                  // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
-                  // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
-                  locale: const Locale('zh', 'CN'),
-                  supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
-                  localizationsDelegates: GlobalMaterialLocalizations.delegates,
-                  home: AppBootstrap(
-                    backendStarter: BackendService.instance.start,
-                    child: const RootShell(),
+                return ValueListenableBuilder<AppThemeStyle>(
+                  valueListenable: AppThemeStyleStore.instance,
+                  builder: (context, style, _) => MaterialApp(
+                    navigatorKey: _navigatorKey,
+                    navigatorObservers: [_audioRoutes],
+                    builder: (context, child) {
+                      final palette = HomePalette.of(context);
+                      final playback = AudioPlaybackScope(
+                        key: _audioScopeKey,
+                        navigatorKey: _navigatorKey,
+                        recentListen: loadRecentListen,
+                        child: child ?? const SizedBox.shrink(),
+                      );
+                      // Routes without an AppBar need a live fallback above the
+                      // Navigator; the covered root route cannot paint its style.
+                      // Reader/video annotations still override this default.
+                      return AnnotatedRegion<SystemUiOverlayStyle>(
+                        value:
+                            (palette.dark
+                                    ? SystemUiOverlayStyle.light
+                                    : SystemUiOverlayStyle.dark)
+                                .copyWith(
+                                  statusBarColor: palette.canvas,
+                                  systemNavigationBarColor: palette.canvas,
+                                  systemNavigationBarDividerColor:
+                                      palette.canvas,
+                                  systemNavigationBarIconBrightness:
+                                      palette.dark
+                                      ? Brightness.light
+                                      : Brightness.dark,
+                                ),
+                        child: AudioFloatingRouteScope(
+                          routes: _audioRoutes,
+                          child: isWindowsDesktop
+                              ? DesktopAppFrame(child: playback)
+                              : playback,
+                        ),
+                      );
+                    },
+                    title: '什锦铺',
+                    debugShowCheckedModeBanner: false,
+                    // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
+                    theme: _theme(
+                      Brightness.light,
+                      eink: eink,
+                      oled: oled,
+                      style: style,
+                    ),
+                    darkTheme: _theme(
+                      Brightness.dark,
+                      eink: eink,
+                      oled: oled,
+                      style: style,
+                    ),
+                    themeMode: effectiveMode,
+                    // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+                    // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+                    locale: const Locale('zh', 'CN'),
+                    supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+                    localizationsDelegates:
+                        GlobalMaterialLocalizations.delegates,
+                    home: AppBootstrap(
+                      backendStarter: BackendService.instance.start,
+                      child: const RootShell(),
+                    ),
                   ),
                 );
               },
@@ -337,7 +355,13 @@ class _FqAppState extends State<FqApp> {
     Brightness brightness, {
     bool eink = false,
     bool oled = false,
-  }) => AppTheme.createTheme(brightness, einkMode: eink, oledMode: oled);
+    AppThemeStyle style = AppThemeStyle.archive,
+  }) => AppTheme.createTheme(
+    brightness,
+    einkMode: eink,
+    oledMode: oled,
+    style: style,
+  );
 }
 
 /// Opens local data before any page can access LibraryStore's boxes. Failed

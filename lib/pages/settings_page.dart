@@ -26,6 +26,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/app_theme.dart';
+import '../services/app_theme_style.dart';
+import '../services/app_style_tokens.dart';
 import '../services/audio_preferences.dart';
 import '../services/desktop_platform.dart';
 import '../services/native_player.dart';
@@ -46,6 +48,7 @@ import 'library_backup_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
 import 'text_replacement_page.dart';
+import 'theme_page.dart';
 import 'ai_reading/settings/ai_settings_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
@@ -57,6 +60,7 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
+    final style = AppStyleTokens.of(context);
     final categories = <SettingsCategory>[
       SettingsCategory(
         icon: SettingsCategoryIcons.appearance,
@@ -73,6 +77,13 @@ class SettingsPage extends StatelessWidget {
             _oledModeItem(),
           if (!isWindowsDesktop) _playerLayoutItem(),
         ],
+      ),
+      SettingsCategory(
+        icon: CupertinoIcons.paintbrush,
+        title: '主题',
+        subtitle: '经典主题、档案主题',
+        pageBuilder: (_) => const ThemePage(),
+        items: const [],
       ),
       SettingsCategory(
         icon: SettingsCategoryIcons.reading,
@@ -206,12 +217,15 @@ class SettingsPage extends StatelessWidget {
             padding: featurePadding(context),
             children: [
               for (var index = 0; index < categories.length; index++) ...[
-                if (index > 0) const SizedBox(height: 14),
+                if (index > 0) SizedBox(height: style.entryGap),
                 FeatureEntry(
                   key: ValueKey('settings-entry-${categories[index].title}'),
                   title: categories[index].title,
                   subtitle: categories[index].subtitle,
                   icon: categories[index].icon,
+                  trailing: categories[index].title == '主题'
+                      ? Text(AppThemeStyleStore.instance.value.label)
+                      : null,
                   onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
