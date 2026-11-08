@@ -260,7 +260,11 @@ class ReaderParagraphMenu extends StatelessWidget {
       showAi: showAi,
     );
     final barWidth = count * _classicItemWidth + _classicMultiPadding * 2;
-    final available = MediaQuery.sizeOf(context).width - 2 * _margin;
+    // The caller anchors the bar against the overlay's local width; the
+    // renderer must use that same available width instead of the window, or a
+    // narrow overlay overflows what `resolvePosition` already clamped.
+    final available =
+        maxWidth ?? MediaQuery.sizeOf(context).width - 2 * _margin;
     return math.max(
       0.0,
       math.min(barWidth, available) - _classicMultiPadding * 2,

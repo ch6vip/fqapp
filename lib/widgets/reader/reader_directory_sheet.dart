@@ -140,10 +140,15 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final extent = math.max(
-      60.0,
-      MediaQuery.textScalerOf(context).scale(15) * 1.35 * 2 + 16,
-    );
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleBudget = scaler.scale(15) * 1.35 * 2 + 16;
+    // Classic stacks the AI and cache markers; budget two lines of 11sp so a
+    // large text scale cannot ask for more height than a fixed row allows.
+    // Archive keeps exactly its previous extent.
+    final markerBudget = AppUiScope.isClassic(context)
+        ? scaler.scale(11) * 1.15 * 2 + 12
+        : 0.0;
+    final extent = math.max(60.0, math.max(titleBudget, markerBudget));
     if (_itemExtent != extent) {
       final position = _scrollController.hasClients
           ? (_scrollController.offset / _itemExtent).floor()
@@ -664,6 +669,17 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     );
   }
 
+  /// Width the classic trailing column may take: the widest marker label at
+  /// the current text scale, capped to a third of the row so the chapter title
+  /// still reads on a 320dp screen.
+  double _classicTrailingWidth(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    // Both marker labels are three CJK glyphs wide.
+    final label = scaler.scale(11) * 3;
+    final cap = MediaQuery.sizeOf(context).width * .3;
+    return (label + 27).clamp(56.0, math.max(56.0, cap));
+  }
+
   Widget _classicCacheWidget(
     ReaderThemePreset preset, {
     bool prominent = false,
@@ -680,12 +696,16 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
         ),
       ),
       const SizedBox(width: 5),
-      Text(
-        '已缓存',
-        style: TextStyle(
-          fontSize: prominent ? 11 : 10,
-          height: 1.1,
-          color: preset.mutedTextColor,
+      Flexible(
+        child: Text(
+          '已缓存',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: prominent ? 11 : 10,
+            height: 1.1,
+            color: preset.mutedTextColor,
+          ),
         ),
       ),
     ],
@@ -733,15 +753,19 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
               : Icon(icon, size: 14, color: color),
         ),
         const SizedBox(width: 5),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            height: 1.15,
-            color: color,
-            fontWeight: status.state == AiChapterCheckState.running
-                ? FontWeight.w500
-                : FontWeight.w400,
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.15,
+              color: color,
+              fontWeight: status.state == AiChapterCheckState.running
+                  ? FontWeight.w500
+                  : FontWeight.w400,
+            ),
           ),
         ),
       ],
@@ -756,7 +780,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     final status = _statusFor(chapter);
     final cached = widget.cachedIds.contains(chapter.itemId);
     final hasStatus = status != null;
-    if (!hasStatus && !cached) return const SizedBox(width: 64);
+    if (!hasStatus && !cached) return const SizedBox.shrink();
     final statusLine = hasStatus ? _classicStatusWidget(preset, status) : null;
     final cacheLine = cached
         ? Tooltip(
@@ -764,17 +788,19 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
             child: _classicCacheWidget(preset, prominent: !hasStatus),
           )
         : null;
-    return SizedBox(
-      width: 64,
-      height: 30,
+    // Intrinsic size instead of a fixed 64x30 box: at 2.0x text scale the old
+    // box overflowed both axes inside ListTile. The Column is allowed to wrap
+    // its labels within the same width the rows budgeted for it.
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: _classicTrailingWidth(context)),
       child: statusLine != null && cacheLine != null
           ? Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [statusLine, cacheLine],
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [statusLine, const SizedBox(height: 2), cacheLine],
             )
           : Align(
-              alignment: Alignment.centerLeft,
+              alignment: Alignment.centerRight,
               child: statusLine ?? cacheLine,
             ),
     );
