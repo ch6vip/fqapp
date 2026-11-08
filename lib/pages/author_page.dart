@@ -69,8 +69,18 @@ class _AuthorPageState extends State<AuthorPage> {
   final _scroll = ScrollController();
 
   /// 经典 ⇄ 档案 swaps the whole tree: keep the visible work (or the section
-  /// header) instead of relying on a recreated ScrollPosition.
-  late final _anchors = ContentAnchorKeeper(_scroll);
+  /// header) instead of relying on a recreated ScrollPosition. A work deep in
+  /// the list is not built after the swap, so its data index locates it first.
+  late final _anchors = ContentAnchorKeeper(_scroll, indexOf: _anchorIndexOf);
+
+  /// Data index of an anchored work row, or null for section anchors.
+  int? _anchorIndexOf(String anchorId) {
+    const prefix = 'works/work:';
+    if (!anchorId.startsWith(prefix)) return null;
+    final id = anchorId.substring(prefix.length);
+    final index = _profile.works.indexWhere((work) => work.id == id);
+    return index < 0 ? null : index;
+  }
 
   @override
   void initState() {

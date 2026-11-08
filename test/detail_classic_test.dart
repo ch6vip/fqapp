@@ -22,6 +22,8 @@ import 'package:fqapp/widgets/detail/detail_chapter_row.dart';
 import 'package:fqapp/widgets/home/home_design.dart';
 import 'package:fqapp/widgets/detail/detail_archive.dart';
 import 'package:fqapp/widgets/detail/detail_hero.dart';
+import 'package:fqapp/widgets/detail/detail_reviews.dart';
+import 'package:fqapp/widgets/home/home_shelf.dart';
 import 'package:fqapp/widgets/detail/detail_states.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
@@ -489,6 +491,108 @@ void main() {
             .byKey(const ValueKey('detail_directory_chapter_chapter-1'))
             .hitTestable(),
         findsOneWidget,
+      );
+    });
+
+    testWidgets('经典书评标题与正文、条目共用同一条 gutter', (tester) async {
+      final store = await _pumpClassic(
+        tester,
+        extras: const DetailExtras(
+          comments: BookCommentPage(
+            comments: [BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲')],
+            totalCount: 1,
+          ),
+        ),
+      );
+      addTearDown(store.dispose);
+
+      final titleX = tester.getTopLeft(find.text('书评')).dx;
+      final bodyX = tester
+          .getTopLeft(find.byKey(const Key('detail_description_text')))
+          .dx;
+      final rowX = tester
+          .getTopLeft(find.byKey(const ValueKey('detail_review_c1')))
+          .dx;
+      // One gutter, exactly like 简介: the header must not stack its own 16dp
+      // on top of the block's.
+      expect(titleX, closeTo(homeGutter, 0.5));
+      expect(titleX, closeTo(bodyX, 0.5));
+      expect(rowX, closeTo(bodyX, 0.5));
+    });
+
+    testWidgets('经典书评 flush 场景同样只有一层 gutter', (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.classic);
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: Scaffold(
+            body: DetailReviews(
+              page: const BookCommentPage(
+                comments: [
+                  BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲'),
+                ],
+                totalCount: 1,
+              ),
+              bookId: 'book',
+              flush: true,
+              onOpenAll: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final titleX = tester.getTopLeft(find.text('书评')).dx;
+      final rowX = tester
+          .getTopLeft(find.byKey(const ValueKey('detail_review_c1')))
+          .dx;
+      expect(titleX, closeTo(0, 0.5));
+      expect(rowX, closeTo(0, 0.5));
+    });
+
+    testWidgets('档案书评 flush 分支仍是零外层 gutter', (tester) async {
+      final store = AppThemeStyleStore();
+      addTearDown(store.dispose);
+      await store.select(AppThemeStyle.archive);
+      await tester.binding.setSurfaceSize(const Size(393, 852));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _host(
+          store: store,
+          home: Scaffold(
+            body: DetailReviews(
+              page: const BookCommentPage(
+                comments: [
+                  BookComment(id: 'c1', text: '很好看的一本书', userName: '读者甲'),
+                ],
+                totalCount: 1,
+              ),
+              bookId: 'book',
+              flush: true,
+              onOpenAll: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('detail_reviews_header')),
+          matching: find.byType(ArchiveSection),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.getTopLeft(find.text('书评')).dx,
+        closeTo(
+          tester.getTopLeft(find.byKey(const ValueKey('detail_review_c1'))).dx,
+          0.5,
+        ),
       );
     });
 

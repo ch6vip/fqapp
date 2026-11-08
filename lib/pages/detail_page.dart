@@ -185,8 +185,26 @@ class _DetailPageState extends State<DetailPage> {
 
   /// Keeps the visible content across 经典 ⇄ 档案: the two layouts are different
   /// widget trees, so the ScrollPosition is recreated and would otherwise
-  /// restart at the top.
-  late final _anchors = ContentAnchorKeeper(_scroll);
+  /// restart at the top. The index resolver lets a row that the incoming
+  /// layout has not built yet be located instead of collapsed to its section.
+  late final _anchors = ContentAnchorKeeper(_scroll, indexOf: _anchorIndexOf);
+
+  /// Data index of an anchored catalogue row, or null for section anchors.
+  int? _anchorIndexOf(String anchorId) {
+    const chapterPrefix = 'directory/chapter:';
+    if (anchorId.startsWith(chapterPrefix)) {
+      final id = anchorId.substring(chapterPrefix.length);
+      final index = _allChapters.indexWhere((chapter) => chapter.itemId == id);
+      return index < 0 ? null : index;
+    }
+    const volumePrefix = 'directory/volume:';
+    if (anchorId.startsWith(volumePrefix)) {
+      final key = anchorId.substring(volumePrefix.length);
+      final index = _volumes.indexWhere((volume) => volume.key == key);
+      return index < 0 ? null : index;
+    }
+    return null;
+  }
 
   bool get _supported => kindLabels.containsKey(widget.item.kind);
   bool get _isVideo => isVideoKind(widget.item.kind);
