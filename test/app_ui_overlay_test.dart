@@ -1386,11 +1386,20 @@ void main() {
 
     expect(find.byType(SettingsScaffold), findsOneWidget);
     expect(find.byType(WenkuPage), findsNothing);
-    expect(find.byKey(const ValueKey('api-status-dot')), findsOneWidget);
-    expect(find.byType(AppGlassSwitch), findsOneWidget);
+    // Classic body: Material switch and the pre-#291 settings cards, not the
+    // archive ContentPanel/AppGlassSwitch vocabulary.
+    expect(find.byType(SettingsGroupCard), findsWidgets);
+    expect(find.byType(AppGlassSwitch), findsNothing);
+    expect(find.byType(Switch), findsWidgets);
+    // The classic feature shell paints its opaque AppBar over the body, so the
+    // first row must start just below it (single header clearance, not the
+    // archive masthead height twice).
     final appBarBottom = tester.getBottomLeft(find.byType(AppBar)).dy;
-    final classicPanel = tester.getTopLeft(find.byType(ContentPanel).first).dy;
-    expect(classicPanel - appBarBottom, closeTo(12, 1.5));
+    final dot = tester
+        .getTopLeft(find.byKey(const ValueKey('api-status-dot')))
+        .dy;
+    expect(dot, greaterThan(appBarBottom));
+    expect(dot - appBarBottom, lessThan(60));
 
     await store.select(AppThemeStyle.archive);
     await tester.pumpAndSettle();

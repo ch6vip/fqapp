@@ -4,8 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/pages/fanqie_history_import_page.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
-import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 /// The 番茄 import page moved onto the Wenku8 archive shell while keeping its
 /// source actions.
@@ -28,7 +28,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: FanqieHistoryImportPage()));
     await tester.pumpAndSettle();
 
-    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    expect(find.byType(SettingsArchivePage), findsOneWidget);
     expect(find.text('书架和进度，一起带回来'), findsOneWidget);
     expect(find.text('选择导入来源'), findsOneWidget);
     expect(find.text('从番茄账号读取'), findsOneWidget);
