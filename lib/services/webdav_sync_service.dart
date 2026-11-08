@@ -137,96 +137,41 @@ class WebDavSyncService with WidgetsBindingObserver {
           .toString();
       for (var attempt = 0; attempt < 3; attempt++) {
         if (!current()) return;
-        final local = await LibraryBackupService().capture();
-        final keys = local.shelf.map((e) => ShelfStore.keyOf(e.item)).toSet();
-        final prior = _state!.get(scope);
-        final previous = prior is Map ? prior : const {};
-        final removed = Map<String, int>.from(
-          previous['removed'] as Map? ?? {},
-        );
-        final now = DateTime.now().millisecondsSinceEpoch;
-        for (final key
-            in (previous['keys'] as List? ?? const []).cast<String>()) {
-          if (!keys.contains(key)) removed[key] = now;
-        }
-        // Save deletions before networking, including when offline.
-        await _state!.put(scope, {
-          'keys': keys.toList(),
-          'removed': removed,
-          if (previous['aiHash'] is String) 'aiHash': previous['aiHash'],
-        });
         final remote = await client.read();
         if (!current()) return;
-        final localDoc = WebDavSyncDocument(local, removed);
-        final remoteDoc = remote.bytes == null
-            ? null
-            : WebDavSyncDocument.decode(remote.bytes!);
-        if (remoteDoc?.backup.aiData case final remoteAi?) {
-          final aiHash = _aiFingerprint(remoteAi);
-          if (aiHash != previous['aiHash']) {
-            await LibraryBackupService().restoreAi(remoteDoc!.backup);
-            if (!current()) return;
-            await _state!.put(scope, {
-              'keys': keys.toList(),
-              'removed': removed,
-              'aiHash': aiHash,
-            });
+        // Only an absent cloud file may be seeded from this device.
+        if (remote.bytes == null) {
+          final local = await LibraryBackupService().capture();
+          if (!current()) return;
+          if (!await client.write(WebDavSyncDocument(local).encode(), null)) {
+            continue;
           }
+          if (current()) status.value = '已建立云端备份 · 书架 ${local.shelf.length} 本';
+          return;
         }
-        final merged = remoteDoc == null ? localDoc : localDoc.merge(remoteDoc);
-        if (!await client.write(merged.encode(), remote.etag)) continue;
-        if (!current()) return;
-
-        // A local edit made during the request must be sent in the next pass.
-        final latest = await LibraryBackupService().capture();
-        String signature(dynamic backup) {
-          final json = jsonDecode(utf8.decode(backup.encode())) as Map;
-          json.remove('createdAt');
-          final ai = json['ai'];
-          if (ai is String) {
-            final aiJson =
-                jsonDecode(
-                      utf8.decode(GZipDecoder().decodeBytes(base64Decode(ai))),
-                    )
-                    as Map;
-            aiJson.remove('createdAt');
-            json['ai'] = jsonEncode(aiJson);
-          }
-          return jsonEncode(json);
-        }
-
-        if (signature(latest) != signature(local)) {
-          if (attempt == 2) {
-            throw const WebDavException('本机数据仍在变化，稍后将重试同步');
-          }
-          continue;
+        final document = WebDavSyncDocument.decode(remote.bytes!);
+        final incoming = document.backup;
+        final prior = _state!.get(scope);
+        final previous = prior is Map ? prior : const {};
+        final aiHash = _aiFingerprint(incoming.aiData);
+        if (incoming.aiData != null && aiHash != previous['aiHash']) {
+          await LibraryBackupService().restoreAi(incoming);
+          if (!current()) return;
         }
         _applying = true;
         try {
-          final incoming = merged.backup;
-          final incomingKeys = incoming.shelf
-              .map((e) => ShelfStore.keyOf(e.item))
-              .toSet();
-          await ShelfStore.instance.applySyncedShelf(
-            before: local.shelf,
-            incoming: incoming.shelf,
-          );
-          await LibraryStore.instance.mergeSyncedHistory(incoming.history);
-          await LibraryStore.instance.mergeBackup(
-            history: [],
+          await ShelfStore.instance.replaceSyncedShelf(incoming.shelf);
+          await LibraryStore.instance.replaceSyncedHistory(
+            history: incoming.history,
             watched: incoming.watched,
           );
-          await _state!.put(scope, {
-            'keys': incomingKeys.toList(),
-            'removed': merged.removedShelf,
-            'aiHash': _aiFingerprint(merged.backup.aiData),
-          });
+          await _state!.put(scope, {'aiHash': aiHash});
         } finally {
           _applying = false;
         }
         if (current()) {
           final stamp = DateTime.now().toLocal().toString().split('.').first;
-          status.value = '同步完成 · 书架 ${merged.backup.shelf.length} 本 · $stamp';
+          status.value = '云端覆盖完成 · 书架 ${incoming.shelf.length} 本 · $stamp';
         }
         return;
       }
