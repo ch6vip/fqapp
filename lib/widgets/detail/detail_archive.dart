@@ -28,6 +28,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/book_detail.dart';
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
 import '../home/home_media_card.dart';
 import '../wenku/src/easy_glass.dart';
 import '../wenku/wenku_ui.dart';
@@ -109,7 +110,9 @@ class DetailArchiveIdentity extends StatelessWidget {
         // cover stays tappable even when the payload has no image URL.
         onTap: () => showDetailCover(context, item),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+          borderRadius: BorderRadius.circular(
+            AppStyleTokens.of(context).coverRadius,
+          ),
           child: SizedBox(
             width: width,
             height: height,
@@ -211,8 +214,10 @@ class DetailArchiveIdentity extends StatelessWidget {
           const SizedBox(height: 8),
           _RankLabel(label: rank),
         ],
-        const SizedBox(height: 12),
-        ArchiveCode(detailArchiveFileCode(item.id), inverse: true),
+        if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+          const SizedBox(height: 12),
+          ArchiveCode(detailArchiveFileCode(item.id), inverse: true),
+        ],
       ],
     );
   }

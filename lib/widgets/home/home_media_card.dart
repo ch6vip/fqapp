@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
 import '../../services/poster_cache.dart';
 import '../cover_tag_chip.dart';
 import '../media_card.dart' show mediaLengthLabel;
@@ -191,13 +192,13 @@ class HomeMediaCard extends StatelessWidget {
   /// 搜索结果需要——长度是判断一本书能不能读下去的关键信息。
   final bool showLength;
 
-  /// 封面圆角。首页档案版式用 3dp；搜索结果等旧版式仍用 12dp。
+  /// 封面圆角。首页传入主题 token；其他页面可保留自己的圆角。
   final double radius;
 
   /// 书名字号。首页 14.5，其他页面保持原来的 15。
   final double titleSize;
 
-  /// 书名下面的一行等宽档案编号；null 时不占位。
+  /// 书名下面的一行等宽档案编号；null 或经典主题时连同间距一起移除。
   final String? archiveCode;
 
   const HomeMediaCard({
@@ -217,7 +218,9 @@ class HomeMediaCard extends StatelessWidget {
     final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final scaler = MediaQuery.textScalerOf(context);
     final meta = _metaText(item, showLength: showLength);
-    final archiveCode = this.archiveCode;
+    final archiveCode = AppStyleTokens.of(context).showDecorativeCodes
+        ? this.archiveCode
+        : null;
     return _CardWidth(
       width: coverWidth,
       builder: (width) => HomePressable(

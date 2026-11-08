@@ -49,73 +49,75 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
   /// L2 工具条：分类 / 计数 / 筛选 / 视图。书架 tab 额外带今日已读胶囊；
   /// 浏览历史不排序不筛来源（design #6），只保留分类；收藏 tab 在工具条
   /// 下方加 video/manju 类型筛选。
-  Widget _toolbar(int count) {
-    final category = ShelfGroupStore.instance.nameOf(_category);
-    final active = _activeFilters;
-    if (_tab == 2) {
+  Widget _toolbar(int count) => LayoutBuilder(
+    builder: (context, constraints) {
+      final category = ShelfGroupStore.instance.nameOf(_category);
+      final active = _activeFilters;
+      if (_tab == 2) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ShelfToolbar(
+              category: category,
+              count: count,
+              activeFilters: active,
+              onCategory: _openCategorySheet,
+              onFilter: _openFilterSheet,
+              onView: () => _openViewSheet(target: ShelfViewTarget.collection),
+              categoryKey: const Key('shelf-category'),
+              filterKey: const Key('shelf-filter'),
+              viewKey: const Key('shelf-view'),
+            ),
+            const SizedBox(height: 10),
+            _CollectionTypeFilter(
+              selected: _collectionFilter,
+              onChanged: (value) => setState(() => _collectionFilter = value),
+            ),
+            _cacheStatus(),
+          ],
+        );
+      }
+      // 360dp 下今日已读胶囊 + 分类 + 计数 + 筛选 + 视图放不进一行；把胶囊
+      // 移到工具条上方，工具条本身仍保持上游的窄屏计数换行规则。
+      final narrow = constraints.maxWidth < 420;
+      final toolbar = ShelfToolbar(
+        category: category,
+        count: count,
+        activeFilters: active,
+        leading: _tab == 0 && !narrow
+            ? ShelfTodayReadingPill(minutes: _todayMinutes)
+            : null,
+        onCategory: _openCategorySheet,
+        onFilter: _tab == 0 ? _openFilterSheet : null,
+        onView: _tab == 0 ? () => _openViewSheet() : null,
+        showFilter: _tab == 0,
+        showView: _tab == 0,
+        categoryKey: const Key('shelf-category'),
+        filterKey: const Key('shelf-filter'),
+        viewKey: const Key('shelf-view'),
+      );
+      // 浏览历史不筛来源，不需要缓存扫描状态。
+      if (_tab != 0) return toolbar;
+      if (!narrow) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [toolbar, _cacheStatus()],
+        );
+      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ShelfToolbar(
-            category: category,
-            count: count,
-            activeFilters: active,
-            onCategory: _openCategorySheet,
-            onFilter: _openFilterSheet,
-            onView: () => _openViewSheet(target: ShelfViewTarget.collection),
-            categoryKey: const Key('shelf-category'),
-            filterKey: const Key('shelf-filter'),
-            viewKey: const Key('shelf-view'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ShelfTodayReadingPill(minutes: _todayMinutes),
           ),
-          const SizedBox(height: 10),
-          _CollectionTypeFilter(
-            selected: _collectionFilter,
-            onChanged: (value) => setState(() => _collectionFilter = value),
-          ),
+          const SizedBox(height: 8),
+          toolbar,
           _cacheStatus(),
         ],
       );
-    }
-    // 360dp 下今日已读胶囊 + 分类 + 计数 + 筛选 + 视图放不进一行；把胶囊
-    // 移到工具条上方，工具条本身仍保持上游的窄屏计数换行规则。
-    final narrow = MediaQuery.sizeOf(context).width < 420;
-    final toolbar = ShelfToolbar(
-      category: category,
-      count: count,
-      activeFilters: active,
-      leading: _tab == 0 && !narrow
-          ? ShelfTodayReadingPill(minutes: _todayMinutes)
-          : null,
-      onCategory: _openCategorySheet,
-      onFilter: _tab == 0 ? _openFilterSheet : null,
-      onView: _tab == 0 ? () => _openViewSheet() : null,
-      showFilter: _tab == 0,
-      showView: _tab == 0,
-      categoryKey: const Key('shelf-category'),
-      filterKey: const Key('shelf-filter'),
-      viewKey: const Key('shelf-view'),
-    );
-    // 浏览历史不筛来源，不需要缓存扫描状态。
-    if (_tab != 0) return toolbar;
-    if (!narrow) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [toolbar, _cacheStatus()],
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: ShelfTodayReadingPill(minutes: _todayMinutes),
-        ),
-        const SizedBox(height: 8),
-        toolbar,
-        _cacheStatus(),
-      ],
-    );
-  }
+    },
+  );
 
   /// 离线缓存扫描状态：完成前提示正在检查，失败时说明筛选暂不可用。
   /// 只有带「来源」筛选的书架 / 收藏 tab 需要它（design §3.5/§7.2）。
@@ -170,6 +172,7 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
   Widget _editBottomBar(BuildContext context) {
     final removing = _tab != 1;
     final scheme = Theme.of(context).colorScheme;
+    final style = AppStyleTokens.of(context);
     return SafeArea(
       top: false,
       child: DecoratedBox(
@@ -180,7 +183,10 @@ mixin _LibraryShelfChrome on _LibraryPageActions {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          padding: EdgeInsets.symmetric(
+            horizontal: style.pageGutter,
+            vertical: 8,
+          ),
           child: Wrap(
             spacing: 16,
             runSpacing: 8,

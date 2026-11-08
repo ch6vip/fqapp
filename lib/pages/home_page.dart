@@ -7,6 +7,8 @@ import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_log.dart';
+import '../services/app_style_tokens.dart';
+import '../services/app_theme_style.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/desktop_platform.dart';
@@ -82,6 +84,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   Timer? _loadMoreTimer;
   bool _visible = false;
 
+  /// Cached slivers capture geometry/props as well as data. Include the
+  /// interpolated radius so AnimatedTheme cannot leave a halfway value cached.
+  (AppThemeStyle, bool, double)? _presentationKey;
+
   /// Item keys whose entrance animation already played. A sliver disposes the
   /// children that leave its cache extent, so without this each scroll back up
   /// the feed replays a fade layer for every card it re-mounts.
@@ -144,6 +150,18 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final tokens = AppStyleTokens.of(context);
+    final presentationKey = (
+      tokens.style,
+      tokens.showDecorativeCodes,
+      tokens.coverRadius,
+    );
+    if (_presentationKey != presentationKey) {
+      _presentationKey = presentationKey;
+      _gridSliver = null;
+      _blocksBody = null;
+      _previewBodies.clear();
+    }
     final visible = TickerMode.valuesOf(context).enabled;
     if (_visible == visible) return;
     _visible = visible;
@@ -600,6 +618,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// One book grid: cover, title, one meta line, nothing else.
   Widget _gridBody(List<MediaItem> entries, double gridWidth) {
     final cardWidth = homeShelfCardWidth(context, gridWidth);
+    final radius = AppStyleTokens.of(context).coverRadius;
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: homeGutter),
       sliver: SliverGrid(
@@ -615,7 +634,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             child: HomeMediaCard(
               item: item,
               coverWidth: cardWidth,
-              radius: homeCoverRadius,
+              radius: radius,
               titleSize: homeCardTitleSize,
               archiveCode: homeFileCode(item),
               onTap: () => _openItem(item),
@@ -653,10 +672,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       SliverToBoxAdapter(child: SizedBox(height: homeBottomClearance(context)));
 
   void _openSearch() {
-    Navigator.push(
-      context,
-      SearchRoute(builder: (_) => const SearchPage()),
-    );
+    Navigator.push(context, SearchRoute(builder: (_) => const SearchPage()));
   }
 
   /// 官方搜索行右上角的「分类」入口（`alx.xml` `i_y`）。官方点它走

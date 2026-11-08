@@ -35,6 +35,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../services/app_style_tokens.dart';
+
 import 'src/app_text.dart';
 import 'src/glass_morph.dart';
 import 'src/glass_overlay_motion.dart';
@@ -407,7 +409,9 @@ class _GlassMenuItemState extends State<GlassMenuItem> {
                 color: selected
                     ? scheme.onSurface.withValues(alpha: .9)
                     : Colors.transparent,
-                borderRadius: BorderRadius.circular(ArchiveDesign.panelRadius),
+                borderRadius: BorderRadius.circular(
+                  AppStyleTokens.of(context).panelRadius,
+                ),
                 border: _focused && widget.enabled
                     // Invert against the fill so the ring stays visible on the
                     // selected row, whose fill is `onSurface`.
