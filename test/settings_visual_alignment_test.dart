@@ -151,7 +151,12 @@ void main() {
     expect(dotColor, scheme.onSurfaceVariant);
     expect(dotColor, isNot(Colors.green), reason: '停止状态不再使用 Material 绿');
     expect(dotColor, isNot(scheme.error), reason: '停止状态不再使用 error 红');
-    expect(find.byType(AppGlassSwitch), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is AppGlassSwitch && widget.semanticLabel == '局域网共享',
+      ),
+      findsOneWidget,
+    );
     // 作为根页面时没有可返回的路由，不渲染返回键。
     expect(find.byTooltip('返回'), findsNothing);
   });
@@ -224,7 +229,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final switchFinder = find.byType(AppGlassSwitch);
+    final switchFinder = find.byWidgetPredicate(
+      (widget) => widget is AppGlassSwitch && widget.semanticLabel == '局域网共享',
+    );
     expect(tester.widget<AppGlassSwitch>(switchFinder).value, isFalse);
 
     await tester.tap(switchFinder);

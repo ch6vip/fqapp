@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:fqapp/services/network_proxy_preferences.dart';
 import 'package:fqapp/services/backend_service.dart';
 import 'package:fqapp/services/backend_transport.dart';
 
@@ -36,6 +38,7 @@ void main() {
   }
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     directory = await Directory.systemTemp.createTemp('fqapp_backend_test_');
   });
 
@@ -235,6 +238,30 @@ void main() {
     expect(transport.listenPort, 18921);
     await backend.stop();
   });
+
+  test(
+    'startup deploys direct routing and restart applies persisted proxy without losing config',
+    () async {
+      final backend = createBackend();
+      await backend.start();
+      final file = File('${directory.path}/backend/config/config.json');
+      Map<String, dynamic> deployed() =>
+          jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      expect(deployed()['network_proxy'], {'enabled': false, 'url': ''});
+      await NetworkProxyPreferences.instance.save(
+        const NetworkProxyConfig(enabled: true, url: 'http://127.0.0.1:7890'),
+      );
+      await backend.restartForConfiguration();
+      expect(deployed()['network_proxy'], {
+        'enabled': true,
+        'url': 'http://127.0.0.1:7890',
+      });
+      expect(deployed()['port'], 18921);
+      await NetworkProxyPreferences.instance.save(const NetworkProxyConfig());
+      await backend.restartForConfiguration();
+      expect(deployed()['network_proxy'], {'enabled': false, 'url': ''});
+    },
+  );
 
   test('a config.json without a usable port leaves the core default', () async {
     final transport = _FakeRustTransport();
