@@ -25,6 +25,7 @@ import '../services/book_txt_export.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/library_store.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/cache/cache_list_anchor.dart';
 import '../widgets/cache/cache_page_widgets.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_widgets.dart';
@@ -70,6 +71,9 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   /// the same content element (and its scroll/export state) between the
   /// classic AppBar shell and the archive header.
   final _contentKey = GlobalKey(debugLabel: 'cached-books-content');
+  final _anchor = CacheListAnchor(debugLabel: 'cached-books');
+  bool? _layoutClassic;
+  bool? _appliedClassic;
 
   @override
   void initState() {
@@ -79,8 +83,42 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final classic = AppUiScope.isClassic(context);
+    final previous = _layoutClassic;
+    _layoutClassic = classic;
+    if (previous == null || previous == classic) return;
+    // Capture the old row before this build replaces the list. Restoring waits
+    // for the new layout, when row heights and maxScrollExtent are known.
+    final content = _contentKey.currentContext;
+    if (content != null) {
+      _anchor.capture(content, _books.map((item) => 'book:${item.book.id}'));
+    }
+    _restoreAnchorAfterLayout();
+  }
+
+  /// The scope notifies before the page rebuilds, so the first post-frame
+  /// callback can still see the old list. Wait until this page has actually
+  /// built the target style, then restore into the new ScrollPosition.
+  void _restoreAnchorAfterLayout() {
+    final target = _layoutClassic;
+    if (target == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _layoutClassic != target) return;
+      if (_appliedClassic != target) {
+        _restoreAnchorAfterLayout();
+        return;
+      }
+      final content = _contentKey.currentContext;
+      if (content != null) _anchor.restore(content);
+    });
+  }
+
+  @override
   void dispose() {
     _store.changes.removeListener(_reload);
+    _anchor.dispose();
     // 离开页面就不该再有后台导出：没有界面报告结果的成功等于骗人。
     _export?.removeListener(_onExportChanged);
     _export?.dispose();
@@ -344,6 +382,14 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     );
   }
 
+  Widget _anchoredBook(CachedBookSummary item, Widget child) => KeyedSubtree(
+    key: _anchor.itemKey('book:${item.book.id}', title: item.book.title),
+    child: KeyedSubtree(
+      key: ValueKey('cached-book-row-${item.book.id}'),
+      child: child,
+    ),
+  );
+
   /// Classic row: the original canvas settings card (38dp icon tile, 15sp
   /// title, 12.5sp subtitle) with the same open/export/delete behaviour.
   Widget _classicBookCard(CachedBookSummary item, HomePalette palette) {
@@ -378,6 +424,22 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     );
   }
 
+  /// The list padding follows the discrete style, not the animated theme
+  /// tokens: a style switch must settle the new indent in the same frame as
+  /// the list, or the post-frame anchor restore would land 8dp off once
+  /// `featurePadding` finishes animating between 20 and 12.
+  EdgeInsets _listPadding(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    final tokens = AppUiScope.presentationOf(context).tokens;
+    final media = MediaQuery.of(context);
+    return EdgeInsets.fromLTRB(
+      tokens.pageGutter,
+      media.padding.top + FrostedHeader.toolbarHeight + (classic ? 12 : 20),
+      tokens.pageGutter,
+      media.padding.bottom + 32,
+    );
+  }
+
   Widget _body(ColorScheme scheme, {required bool classic}) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (classic) {
@@ -399,7 +461,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
       final bytes = _books.fold(0, (sum, item) => sum + item.stats.byteCount);
       return ListView(
         key: const ValueKey('cached-books-scroll'),
-        padding: featurePadding(context),
+        controller: _anchor.scroll,
+        padding: _listPadding(context),
         children: [
           CacheSummaryCard(
             icon: LucideIcons.book_open,
@@ -407,7 +470,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
             subtitle: '占用空间：${formatCacheBytes(bytes)} · 点击可离线续读',
           ),
           const SizedBox(height: 12),
-          for (final item in _books) _classicBookCard(item, palette),
+          for (final item in _books)
+            _anchoredBook(item, _classicBookCard(item, palette)),
         ],
       );
     }
@@ -431,7 +495,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     final deleteColor = _deleteColor(context);
     return ListView(
       key: const ValueKey('cached-books-scroll'),
-      padding: featurePadding(context),
+      controller: _anchor.scroll,
+      padding: _listPadding(context),
       children: [
         ArchiveSection(
           title: '本地存储',
@@ -461,7 +526,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
           )
         else
           for (final item in _books)
-            _archiveBookCard(item, scheme, deleteColor),
+            _anchoredBook(item, _archiveBookCard(item, scheme, deleteColor)),
         if (_books.isEmpty) ...[
           const SizedBox(height: 10),
           AppText(
@@ -480,6 +545,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   @override
   Widget build(BuildContext context) {
     final classic = AppUiScope.isClassic(context);
+    _appliedClassic = classic;
     final scheme = Theme.of(context).colorScheme;
     final body = KeyedSubtree(
       key: _contentKey,

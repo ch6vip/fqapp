@@ -20,6 +20,7 @@ import '../services/chapter_cache_store.dart' show formatCacheBytes;
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/cache/cache_list_anchor.dart';
 import '../widgets/cache/cache_page_widgets.dart';
 import '../widgets/cache/cached_drama_widgets.dart';
 import '../widgets/home/home_design.dart';
@@ -58,6 +59,9 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
   /// the same content element (and expanded cards/scroll) between the classic
   /// AppBar shell and the archive header.
   final _contentKey = GlobalKey(debugLabel: 'cached-dramas-content');
+  final _anchor = CacheListAnchor(debugLabel: 'cached-dramas');
+  bool? _layoutClassic;
+  bool? _appliedClassic;
 
   @override
   void initState() {
@@ -68,8 +72,43 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final classic = AppUiScope.isClassic(context);
+    final previous = _layoutClassic;
+    _layoutClassic = classic;
+    if (previous == null || previous == classic) return;
+    // The classic/archive lists use different episode-card heights. Capture
+    // the first visible stable row before the shell rebuild swaps the list;
+    // the post-frame restore runs after the new maxScrollExtent is known.
+    final content = _contentKey.currentContext;
+    if (content != null) {
+      _anchor.capture(content, _anchorIds(_downloader.value));
+    }
+    _restoreAnchorAfterLayout();
+  }
+
+  /// The scope notifies before the page rebuilds, so the first post-frame
+  /// callback can still see the old list. Wait until this page has actually
+  /// built the target style, then restore into the new ScrollPosition.
+  void _restoreAnchorAfterLayout() {
+    final target = _layoutClassic;
+    if (target == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _layoutClassic != target) return;
+      if (_appliedClassic != target) {
+        _restoreAnchorAfterLayout();
+        return;
+      }
+      final content = _contentKey.currentContext;
+      if (content != null) _anchor.restore(content);
+    });
+  }
+
+  @override
   void dispose() {
     _store.changes.removeListener(_reload);
+    _anchor.dispose();
     _downloader.removeListener(_onTasksChanged);
     super.dispose();
   }
@@ -208,6 +247,49 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     }
   }
 
+  /// The list padding follows the discrete style, not the animated theme
+  /// tokens: a style switch must settle the new indent in the same frame as
+  /// the list, or the post-frame anchor restore would land 8dp off once
+  /// `featurePadding` finishes animating between 20 and 12.
+  EdgeInsets _listPadding(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    final tokens = AppUiScope.presentationOf(context).tokens;
+    final media = MediaQuery.of(context);
+    return EdgeInsets.fromLTRB(
+      tokens.pageGutter,
+      media.padding.top + FrostedHeader.toolbarHeight + (classic ? 12 : 20),
+      tokens.pageGutter,
+      media.padding.bottom + 32,
+    );
+  }
+
+  /// Stable row order shared by the anchor capture and both list builders:
+  /// 目录未落盘的 loose 任务在前，按剧聚合的卡片在后。
+  Iterable<String> _anchorIds(List<DramaDownloadTask> tasks) sync* {
+    for (final task in _looseTasks(tasks)) {
+      yield 'task:${task.itemId}';
+    }
+    for (final item in _dramas) {
+      yield 'drama:${item.drama.id}';
+    }
+  }
+
+  Widget _anchoredTask(DramaDownloadTask task, Widget child) => KeyedSubtree(
+    key: _anchor.itemKey('task:${task.itemId}', title: task.title),
+    child: KeyedSubtree(
+      key: ValueKey('cached-drama-task-${task.itemId}'),
+      child: child,
+    ),
+  );
+
+  Widget _anchoredDrama(CachedDramaSummary item, Widget child) => KeyedSubtree(
+    key: _anchor.itemKey('drama:${item.drama.id}', title: item.drama.title),
+    child: KeyedSubtree(
+      key: ValueKey('cached-drama-row-${item.drama.id}'),
+      child: child,
+    ),
+  );
+
   Widget _body(
     List<DramaDownloadTask> tasks,
     ColorScheme scheme, {
@@ -232,7 +314,8 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
       final bytes = _dramas.fold(0, (sum, item) => sum + item.bytes);
       return ListView(
         key: const ValueKey('cached-dramas-scroll'),
-        padding: featurePadding(context),
+        controller: _anchor.scroll,
+        padding: _listPadding(context),
         children: [
           CacheSummaryCard(
             icon: LucideIcons.clapperboard,
@@ -241,18 +324,24 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
           ),
           const SizedBox(height: 12),
           for (final task in _looseTasks(tasks))
-            DownloadTaskCard(
-              task: task,
-              onRetry: () => _downloader.resume(task.itemId),
+            _anchoredTask(
+              task,
+              DownloadTaskCard(
+                task: task,
+                onRetry: () => _downloader.resume(task.itemId),
+              ),
             ),
           for (final item in _dramas)
-            CachedDramaCard(
-              key: ValueKey('drama-card-${item.drama.id}'),
-              summary: item,
-              tasks: _pendingTasks(item),
-              onDeleteDrama: () => _deleteDrama(item),
-              onDeleteEpisode: _deleteEpisode,
-              onRetry: (task) => _downloader.resume(task.itemId),
+            _anchoredDrama(
+              item,
+              CachedDramaCard(
+                key: ValueKey('drama-card-${item.drama.id}'),
+                summary: item,
+                tasks: _pendingTasks(item),
+                onDeleteDrama: () => _deleteDrama(item),
+                onDeleteEpisode: _deleteEpisode,
+                onRetry: (task) => _downloader.resume(task.itemId),
+              ),
             ),
         ],
       );
@@ -279,7 +368,8 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     final bytes = _dramas.fold(0, (sum, item) => sum + item.bytes);
     return ListView(
       key: const ValueKey('cached-dramas-scroll'),
-      padding: featurePadding(context),
+      controller: _anchor.scroll,
+      padding: _listPadding(context),
       children: [
         ArchiveSection(
           title: '本地存储',
@@ -310,18 +400,24 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
           )
         else ...[
           for (final task in _looseTasks(tasks))
-            DownloadTaskCard(
-              task: task,
-              onRetry: () => _downloader.resume(task.itemId),
+            _anchoredTask(
+              task,
+              DownloadTaskCard(
+                task: task,
+                onRetry: () => _downloader.resume(task.itemId),
+              ),
             ),
           for (final item in _dramas)
-            CachedDramaCard(
-              key: ValueKey('drama-card-${item.drama.id}'),
-              summary: item,
-              tasks: _pendingTasks(item),
-              onDeleteDrama: () => _deleteDrama(item),
-              onDeleteEpisode: _deleteEpisode,
-              onRetry: (task) => _downloader.resume(task.itemId),
+            _anchoredDrama(
+              item,
+              CachedDramaCard(
+                key: ValueKey('drama-card-${item.drama.id}'),
+                summary: item,
+                tasks: _pendingTasks(item),
+                onDeleteDrama: () => _deleteDrama(item),
+                onDeleteEpisode: _deleteEpisode,
+                onRetry: (task) => _downloader.resume(task.itemId),
+              ),
             ),
         ],
         if (_dramas.isEmpty && tasks.isEmpty) ...[
@@ -362,6 +458,7 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
   @override
   Widget build(BuildContext context) {
     final classic = AppUiScope.isClassic(context);
+    _appliedClassic = classic;
     final scheme = Theme.of(context).colorScheme;
     final tasks = _downloader.value;
     final body = KeyedSubtree(

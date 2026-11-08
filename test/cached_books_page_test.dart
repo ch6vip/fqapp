@@ -293,6 +293,59 @@ void main() {
     expect(find.byType(ClassicFeaturePage), findsNothing);
     expect(tester.state(find.byType(CachedBooksPage)), same(state));
   });
+
+  testWidgets('40 条缓存：切主题按同一本书和行内偏移恢复（中段与尾部）', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final cache = await _manyCachedBooks();
+    final styleStore = AppThemeStyleStore()..value = AppThemeStyle.archive;
+    addTearDown(styleStore.dispose);
+    await tester.pumpWidget(
+      AppUiHost(
+        store: styleStore,
+        home: CachedBooksPage(
+          cacheStore: cache,
+          readerStore: MemoryReaderStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final list = find.byKey(const ValueKey('cached-books-scroll'));
+    final scrollable = find
+        .descendant(of: list, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    position.jumpTo(1300);
+    await tester.pump();
+
+    final mid = _firstVisibleBook(tester, list);
+    expect(mid, isNotNull);
+    await styleStore.select(AppThemeStyle.classic);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ClassicFeaturePage), findsOneWidget);
+    final midAfter = _firstVisibleBook(tester, list);
+    expect(midAfter, isNotNull);
+    expect(midAfter!.id, mid!.id);
+    expect(midAfter.offset, closeTo(mid.offset, 1.0));
+
+    // 尾部：第 31 本仍有足够行垫底，能保持同一行内偏移。
+    final tailRow = find.byKey(const ValueKey('cached-book-row-book-30'));
+    await tester.scrollUntilVisible(tailRow, 260, scrollable: scrollable);
+    await tester.ensureVisible(tailRow);
+    await tester.pump();
+    final tail = _firstVisibleBook(tester, list);
+    await styleStore.select(AppThemeStyle.archive);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
+    final tailAfter = _firstVisibleBook(tester, list);
+    expect(tailAfter, isNotNull);
+    expect(tailAfter!.id, tail!.id);
+    expect(tailAfter.offset, closeTo(tail.offset, 1.0));
+  });
 }
 
 Future<_ManagedMemoryCache> _oneCachedBook() async {
@@ -310,6 +363,40 @@ Future<_ManagedMemoryCache> _oneCachedBook() async {
     title: '缓存章节',
     text: '缓存正文',
   );
+  return cache;
+}
+
+({String id, double offset})? _firstVisibleBook(
+  WidgetTester tester,
+  Finder list,
+) {
+  final viewport = tester.getRect(list);
+  final contentTop = viewport.top + kToolbarHeight;
+  for (var index = 0; index < 40; index++) {
+    final finder = find.text('Book ${index + 1}');
+    if (finder.evaluate().isEmpty) continue;
+    final rect = tester.getRect(finder);
+    if (rect.bottom <= contentTop + 0.5) continue;
+    if (rect.top < contentTop - 0.5) continue;
+    if (rect.bottom > viewport.bottom + 0.5) continue;
+    return (id: 'book-$index', offset: contentTop - rect.top);
+  }
+  return null;
+}
+
+Future<_ManagedMemoryCache> _manyCachedBooks() async {
+  final cache = _ManagedMemoryCache();
+  for (var index = 0; index < 40; index++) {
+    final id = 'book-$index';
+    await cache.saveBook(
+      CachedBook(
+        id: id,
+        title: 'Book ${index + 1}',
+        chapters: [Chapter(itemId: '1', title: '缓存章节', volumeName: '')],
+      ),
+    );
+    await cache.write(bookId: id, chapterId: '1', title: '缓存章节', text: '缓存正文');
+  }
   return cache;
 }
 
