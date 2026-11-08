@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/media_item.dart';
@@ -14,6 +15,13 @@ import '../services/desktop_platform.dart';
 import '../services/search_history_store.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_shelf.dart';
+import '../widgets/search/classic_search_content_toolbar.dart';
+import '../widgets/search/classic_search_discovery.dart';
+import '../widgets/search/classic_search_result_row.dart';
+import '../widgets/search/classic_search_scope_bar.dart';
 import '../widgets/search/search_discovery.dart';
 import '../widgets/search/search_media_tile.dart';
 import '../widgets/search/search_score_filter.dart';
@@ -587,6 +595,12 @@ class _SearchPageState extends State<SearchPage> {
     });
   }
 
+  /// 经典 AppBar 的清空按钮：清掉输入框，回到发现区。
+  void _clearSearchInput() {
+    _ctrl.clear();
+    _showHistory();
+  }
+
   Future<void> _loadMore() {
     if (_shuqiSource) {
       return _feeds[0].error != null
@@ -741,6 +755,11 @@ class _SearchPageState extends State<SearchPage> {
   @override
   Widget build(BuildContext context) {
     final feed = _feeds[_tabIndex];
+    // 经典/档案只决定展示树；输入、来源、已加载结果与请求代次都留在同一
+    // State 里，换样式不会重发请求，也不会清掉输入框。
+    if (AppUiScope.isClassic(context)) {
+      return _classicPage(context, feed);
+    }
     return Builder(
       builder: (context) => WenkuPage(
         extraHeight: _tabsHeight(context),
@@ -1167,6 +1186,363 @@ class _SearchPageState extends State<SearchPage> {
           else
             AppText('已经到底了', style: style),
         ],
+      ),
+    );
+  }
+
+  /// 经典搜索页：AppBar 里的实色搜索框 + 范围条 + 内容区。
+  ///
+  /// 数据仍然来自 [_SearchPageState]；这里只重排展示，不新建第二套请求、
+  /// 分页或来源逻辑。
+  Widget _classicPage(BuildContext context, _SearchFeed feed) {
+    final palette = HomePalette.of(context);
+    return Scaffold(
+      backgroundColor: palette.canvas,
+      appBar: AppBar(
+        titleSpacing: 0,
+        backgroundColor: palette.canvas,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: _classicSearchField(palette),
+      ),
+      body: Column(
+        children: [
+          ClassicSearchScopeBar(
+            categories: [for (final category in _categories) category.title],
+            selectedIndex: _tabIndex,
+            shuqi: _shuqiSource,
+            onSelectCategory: _selectTab,
+            onSelectSource: _selectSource,
+          ),
+          Expanded(
+            child: Align(
+              alignment: Alignment.topCenter,
+              // 与首页同一个阅读宽度：非 Windows 压到 840dp 并居中。
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: isWindowsDesktop ? double.infinity : 840,
+                ),
+                child: _classicContent(context, feed),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 旧版搜索框：40 高、圆角 20、浅灰底；右侧清空 + 搜索两个按钮。
+  ///
+  /// 输入仍然走同一个 [_ctrl] 与 [_onQueryChanged]：IME 组合输入、联想
+  /// 防抖、清空回发现区都与档案主题一致。
+  Widget _classicSearchField(HomePalette palette) => Container(
+    constraints: const BoxConstraints(minHeight: 40),
+    margin: const EdgeInsets.only(right: homeGutter),
+    decoration: BoxDecoration(
+      color: palette.searchBar,
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: TextField(
+      key: const Key('search-input'),
+      controller: _ctrl,
+      autofocus: widget.initialQuery == null,
+      textInputAction: TextInputAction.search,
+      style: TextStyle(fontSize: 14, color: palette.ink),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: _shuqiSource ? '搜索书旗书名或作者' : '搜索名称或作品 ID',
+        hintStyle: TextStyle(fontSize: 13.5, color: palette.muted),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 10,
+        ),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        suffixIconConstraints: const BoxConstraints(minWidth: 48),
+        suffixIcon: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _ctrl,
+          builder: (context, value, _) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (value.text.isNotEmpty)
+                IconButton(
+                  tooltip: '清空',
+                  icon: Icon(LucideIcons.x, size: 16, color: palette.muted),
+                  onPressed: _clearSearchInput,
+                ),
+              IconButton(
+                tooltip: '搜索',
+                icon: const Icon(
+                  LucideIcons.search,
+                  size: 17,
+                  color: HomePalette.accent,
+                ),
+                onPressed: () => _search(_ctrl.text),
+              ),
+            ],
+          ),
+        ),
+      ),
+      onChanged: _onQueryChanged,
+      onSubmitted: _search,
+    ),
+  );
+
+  Widget _classicContent(BuildContext context, _SearchFeed feed) {
+    if (_showSuggestions) {
+      return ClassicSearchSuggestionList(
+        suggestions: _suggestions,
+        onSelect: _search,
+      );
+    }
+    // 输入框里的文字还没执行：只留过滤后的历史，不闪回热搜，也不显示
+    // 属于结果区的工具条。
+    if (_refining) {
+      return _classicDiscoveryView(context, showToolbar: false);
+    }
+    if (_query.isEmpty) {
+      return _classicDiscoveryView(context, showToolbar: true);
+    }
+    return _classicResultsView(context, feed);
+  }
+
+  Widget _classicToolbar(BuildContext context) => ClassicSearchContentToolbar(
+    shuqi: _shuqiSource,
+    scoreEnabled: _idQuery == null,
+    minimumScore: _minimumScore,
+    onMinimumScore: _selectMinimumScore,
+    listView: _listView,
+    onToggleLayout: _toggleLayout,
+    showRatingHint: _idQuery == null && !_shuqiSource && _minimumScore > 0,
+  );
+
+  Widget _classicIdHint(BuildContext context) => ClassicSearchIdLookupHint(
+    onKeywordSearch: () => _search(_ctrl.text, asKeyword: true),
+  );
+
+  /// 空查询时的发现区：搜索历史在前、热搜在后（版式在
+  /// [ClassicSearchDiscoveryView]）。工具条只在真正的空查询页出现。
+  Widget _classicDiscoveryView(
+    BuildContext context, {
+    required bool showToolbar,
+  }) => ClassicSearchDiscoveryView(
+    leading: showToolbar ? _classicToolbar(context) : null,
+    hot: _shuqiSource ? HotSearch.empty : _hot,
+    history: _history,
+    historyLoading: _historyLoading,
+    filter: normalizeSearchQuery(_ctrl.text).toLowerCase(),
+    onSearch: _search,
+    onClearHistory: _confirmClearHistory,
+    onRemoveHistory: _removeHistory,
+  );
+
+  Widget _classicResultsView(BuildContext context, _SearchFeed feed) {
+    if (!feed.initialized && feed.loading) {
+      return _classicResultsShell(
+        context,
+        const Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (!feed.initialized && feed.error != null) {
+      return _classicResultsShell(
+        context,
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  feed.error!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                _classicPaginationFooter(context, feed),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    final items = feed.items.where(_matchesScore).toList(growable: false);
+    if (items.isEmpty) {
+      return _classicResultsShell(
+        context,
+        Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_classicEmptyMessage(feed)),
+              if (_idQuery == null && !_shuqiSource && _minimumScore > 0)
+                TextButton(
+                  onPressed: () => _selectMinimumScore(0),
+                  child: const Text('清除评分筛选'),
+                ),
+              if (feed.hasMore || feed.loading || feed.error != null)
+                _classicPaginationFooter(context, feed),
+            ],
+          ),
+        ),
+      );
+    }
+    return _classicResultItems(context, feed, items);
+  }
+
+  /// 结果态的外壳：工具条是内容区第一行，ID 提示行只在结果态出现。
+  /// 空结果 / 首屏加载 / 首屏失败没有可滚动内容，也沿用同一层工具条。
+  Widget _classicResultsShell(BuildContext context, Widget body) => Column(
+    children: [
+      _classicToolbar(context),
+      if (_idQuery != null) _classicIdHint(context),
+      Expanded(child: body),
+    ],
+  );
+
+  String _classicEmptyMessage(_SearchFeed feed) {
+    if (_idQuery != null) {
+      return _feeds.first.items.isEmpty ? '未找到该 ID 对应的作品' : '该分类下没有匹配的作品';
+    }
+    if (!_shuqiSource && _minimumScore > 0) {
+      return '已加载结果中暂无达到评分的作品';
+    }
+    return feed.hasMore ? '当前页暂无匹配结果' : '无结果';
+  }
+
+  Widget _classicResultItems(
+    BuildContext context,
+    _SearchFeed feed,
+    List<MediaItem> items,
+  ) {
+    // 与档案主题共用同一个 PageStorageKey：切换样式后回到同样的已加载
+    // 内容位置，而不是回到顶部。
+    final storageKey = PageStorageKey((
+      'search-results',
+      _requestGeneration,
+      _tabIndex,
+      _shuqiSource,
+      _minimumScore,
+      _listView,
+    ));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 网格与首页同一套：16dp 栏距、12dp 列距、HomeMediaCard。
+        final width = constraints.maxWidth - homeGutter * 2;
+        return CustomScrollView(
+          key: storageKey,
+          controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          slivers: [
+            SliverToBoxAdapter(child: _classicToolbar(context)),
+            if (_idQuery != null)
+              SliverToBoxAdapter(child: _classicIdHint(context)),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(homeGutter, 12, homeGutter, 0),
+              sliver: _listView
+                  ? SliverList.builder(
+                      itemCount: items.length,
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        return ClassicSearchResultRow(
+                          key: ValueKey(('search-row', item.kind, item.id)),
+                          item: item,
+                          onTap: () => _openItem(item),
+                        );
+                      },
+                    )
+                  : SliverGrid(
+                      gridDelegate: homeShelfDelegate(context, width),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final item = items[index];
+                        return HomeMediaCard(
+                          key: ValueKey(('search-grid', item.kind, item.id)),
+                          item: item,
+                          coverWidth: homeShelfCardWidth(context, width),
+                          showLength: true,
+                          titleSize: 15,
+                          onTap: () => _openItem(item),
+                        );
+                      }, childCount: items.length),
+                    ),
+            ),
+            if (_idQuery == null)
+              SliverToBoxAdapter(
+                child: _classicPaginationFooter(context, feed),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 流尾三态：加载中 / 失败可重试 / 没有更多了。文字用次级色，底部让出
+  /// 系统导航栏。
+  Widget _classicPaginationFooter(BuildContext context, _SearchFeed feed) {
+    final palette = HomePalette.of(context);
+    final style = TextStyle(fontSize: 12, height: 1.2, color: palette.muted);
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    if (feed.loading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox.square(
+            dimension: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: palette.muted,
+            ),
+          ),
+        ),
+      );
+    }
+    if (feed.error != null) {
+      return Padding(
+        padding: EdgeInsets.only(top: 16, bottom: 24 + safeBottom),
+        child: GestureDetector(
+          onTap: _loadMore,
+          behavior: HitTestBehavior.opaque,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
+            child: Center(child: Text('加载失败，点击重试', style: style)),
+          ),
+        ),
+      );
+    }
+    if (!feed.hasMore) {
+      return Padding(
+        padding: EdgeInsets.only(top: 16, bottom: 24 + safeBottom),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(width: 12, height: 1, color: palette.muted),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text('没有更多了', style: style),
+              ),
+              Container(width: 12, height: 1, color: palette.muted),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.only(top: 8, bottom: 24 + safeBottom),
+      child: Center(
+        child: TextButton(
+          onPressed: _loadMore,
+          style: TextButton.styleFrom(
+            foregroundColor: palette.muted,
+            minimumSize: const Size(0, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: const Text(
+            '加载更多',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500),
+          ),
+        ),
       ),
     );
   }
