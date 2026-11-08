@@ -20,17 +20,24 @@ import '../models/fanqie_library_capture.dart';
 import '../services/backend_transport.dart';
 import '../services/fanqie_history_import_service.dart';
 import '../services/fanqie_library_capture_service.dart';
+import '../services/app_theme_style.dart';
 import '../services/fanqie_library_import_service.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/data_transfer_widgets.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_adaptive.dart';
 import '../widgets/settings/settings_archive_page.dart';
-import '../widgets/settings/settings_widgets.dart';
+import '../widgets/settings/settings_scroll_anchor.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
 class FanqieHistoryImportPage extends StatefulWidget {
-  const FanqieHistoryImportPage({super.key});
+  const FanqieHistoryImportPage({super.key, this.collector});
+
+  /// Test seam for the capture service. Production leaves it null and uses the
+  /// native login + local backend; the page's progress/cancel wiring is the
+  /// same service API either way.
+  @visibleForTesting
+  final FanqieLibraryCaptureService? collector;
 
   @override
   State<FanqieHistoryImportPage> createState() =>
@@ -39,7 +46,7 @@ class FanqieHistoryImportPage extends StatefulWidget {
 
 class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   final _service = FanqieHistoryImportService();
-  final _collector = FanqieLibraryCaptureService();
+  late final _collector = widget.collector ?? FanqieLibraryCaptureService();
   FanqieLibraryCapture? _capture;
   final _libraryImporter = FanqieLibraryImportService();
   FanqieImportPreview? _libraryPreview;
@@ -50,8 +57,17 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   String _previewSource = '最近采集';
   bool _busy = false;
   String? _message;
+
+  /// Expanded state of the capture details block; the page owns it so a shell
+  /// switch or a scroll-out does not collapse the block.
+  bool _captureExpanded = false;
   final _previewKey = GlobalKey();
   final _messageKey = GlobalKey();
+
+  /// One list for both presentations, so the shell switch keeps the scroll
+  /// position and the visible section can be re-anchored.
+  final _scroll = ScrollController();
+  late final _anchor = SettingsScrollAnchor(_scroll);
 
   @override
   void initState() {
@@ -62,6 +78,8 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   @override
   void dispose() {
     _cancelRead();
+    _anchor.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -256,7 +274,9 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
 
   @override
   Widget build(BuildContext context) {
-    final classic = AppUiScope.isClassic(context);
+    final style = AppUiScope.of(context);
+    final classic = style == AppThemeStyle.classic;
+    _anchor.track(style);
     final scheme = Theme.of(context).colorScheme;
     final palette = HomePalette.of(context);
     final parsed = _libraryPreview;
@@ -275,13 +295,23 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
         '${capture?.received ?? 0} 个响应已保存 · 无需重新登录'
         '${capture != null && capture.stopReason.isNotEmpty ? ' · 部分采集' : ''}';
     final content = <Widget>[
-      const SettingsHeading(
-        icon: LucideIcons.book_open,
-        title: '书架和进度，一起带回来',
-        subtitle: '从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。',
+      KeyedSubtree(
+        key: _anchor.keyFor('heading'),
+        child: const SettingsHeading(
+          icon: LucideIcons.book_open,
+          title: '书架和进度，一起带回来',
+          subtitle: '从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。',
+        ),
       ),
       const SizedBox(height: 24),
-      const SettingsSection(title: '选择导入来源', code: 'MIGRATION / SOURCE'),
+      KeyedSubtree(
+        key: _anchor.keyFor('sources'),
+        child: const SettingsSection(
+          key: ValueKey('fanqie-sources-section'),
+          title: '选择导入来源',
+          code: 'MIGRATION / SOURCE',
+        ),
+      ),
       const SizedBox(height: 14),
       SettingsCard(
         archiveDividers: false,
@@ -337,7 +367,13 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       ],
       if (capture != null) ...[
         const SizedBox(height: 28),
-        const SettingsSection(title: '最近一次采集', code: 'MIGRATION / CAPTURED'),
+        KeyedSubtree(
+          key: _anchor.keyFor('capture'),
+          child: const SettingsSection(
+            title: '最近一次采集',
+            code: 'MIGRATION / CAPTURED',
+          ),
+        ),
         const SizedBox(height: 14),
         SettingsCard(
           classicDividers: false,
@@ -365,13 +401,16 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       ],
       if (parsed != null) ...[
         const SizedBox(height: 28),
-        SettingsSection(
-          key: _previewKey,
-          title: '导入预览 · $_previewSource',
-          code: 'MIGRATION / PREVIEW',
-          subtitle: parsed.records.isEmpty
-              ? ''
-              : '共 ${parsed.records.length} 本',
+        KeyedSubtree(
+          key: _anchor.keyFor('preview'),
+          child: SettingsSection(
+            key: _previewKey,
+            title: '导入预览 · $_previewSource',
+            code: 'MIGRATION / PREVIEW',
+            subtitle: parsed.records.isEmpty
+                ? ''
+                : '共 ${parsed.records.length} 本',
+          ),
         ),
         const SizedBox(height: 14),
         SettingsCard(
@@ -433,100 +472,84 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
         ),
       ],
       const SizedBox(height: 24),
-      Text(
-        '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；'
-        '导出文件不含登录凭证。',
-        style: subtle,
+      KeyedSubtree(
+        key: _anchor.keyFor('footer'),
+        child: Text(
+          '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；'
+          '导出文件不含登录凭证。',
+          style: subtle,
+        ),
       ),
     ];
-    if (classic) {
-      // The pre-#291 page owns a fixed bottom action bar (busy progress or the
-      // primary merge action), which `ClassicFeaturePage` cannot express.
-      return PopScope(
-        canPop: !_busy,
-        child: Scaffold(
-          backgroundColor: palette.canvas,
-          appBar: settingsAppBar(
-            context,
-            title: '导入番茄书架',
-            actions: [_loginActions(enabled)],
-            // A single embedded route (Windows two-pane settings)
-            // must not offer a back affordance.
-            showBack: Navigator.of(context).canPop(),
-          ),
-          body: SafeArea(
-            top: false,
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: ListView(
-                  key: const ValueKey('fanqie-import-scroll'),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  children: content,
-                ),
-              ),
-            ),
-          ),
-          bottomNavigationBar: !_busy && parsed == null && capture == null
-              ? null
-              : SafeArea(
-                  top: false,
-                  child: Container(
-                    color: palette.canvas,
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_busy) ...[
-                          const LinearProgressIndicator(),
-                          const SizedBox(height: 10),
-                          Semantics(
-                            liveRegion: true,
-                            child: Text(
-                              _captureProgress ?? '正在处理，请稍候…',
-                              style: TextStyle(
-                                color: palette.ink,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                          if (_request != null)
-                            TextButton(
-                              onPressed: _cancelRead,
-                              child: const Text('取消读取'),
-                            ),
-                        ] else
-                          DataTransferAction(
-                            label: parsed == null
-                                ? '解析并预览已保存的数据'
-                                : '导入 ${parsed.records.length} 本到书架和历史',
-                            onPressed:
-                                enabled &&
-                                    (parsed == null ||
-                                        parsed.records.isNotEmpty)
-                                ? parsed == null
-                                      ? _prepareLibrary
-                                      : _mergeLibrary
-                                : null,
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-        ),
-      );
-    }
     return PopScope(
       canPop: !_busy,
       child: SettingsArchivePage(
         title: '导入番茄书架',
         code: 'MIGRATION / FANQIE',
         actions: [_loginActions(enabled)],
-        child: ListView(
-          key: const ValueKey('fanqie-import-scroll'),
-          padding: featurePadding(context),
-          children: content,
+        // The pre-#291 page owns a fixed bottom action bar (busy progress or
+        // the primary merge action); the archive keeps them inside the page.
+        classicBottomBar:
+            classic && (_busy || parsed != null || capture != null)
+            ? _classicBottomBar(context, parsed: parsed, enabled: enabled)
+            : null,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: classic ? 640 : 760),
+            child: ListView(
+              key: const ValueKey('fanqie-import-scroll'),
+              controller: _scroll,
+              padding: featurePadding(context),
+              children: content,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Classic fixed action bar: busy progress with cancel, or the primary
+  /// action (parse the saved capture / merge the preview).
+  Widget _classicBottomBar(
+    BuildContext context, {
+    required FanqieImportPreview? parsed,
+    required bool enabled,
+  }) {
+    final palette = HomePalette.of(context);
+    return SafeArea(
+      top: false,
+      child: Container(
+        color: palette.canvas,
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_busy) ...[
+              const LinearProgressIndicator(),
+              const SizedBox(height: 10),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _captureProgress ?? '正在处理，请稍候…',
+                  style: TextStyle(color: palette.ink, fontSize: 13),
+                ),
+              ),
+              if (_request != null)
+                TextButton(onPressed: _cancelRead, child: const Text('取消读取')),
+            ] else
+              DataTransferAction(
+                label: parsed == null
+                    ? '解析并预览已保存的数据'
+                    : '导入 ${parsed.records.length} 本到书架和历史',
+                onPressed:
+                    enabled && (parsed == null || parsed.records.isNotEmpty)
+                    ? parsed == null
+                          ? _prepareLibrary
+                          : _mergeLibrary
+                    : null,
+              ),
+          ],
         ),
       ),
     );
@@ -541,7 +564,10 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     final palette = HomePalette.of(context);
     final scheme = Theme.of(context).colorScheme;
     return SettingsDisclosure(
+      key: const ValueKey('fanqie-capture-details'),
       title: '采集详情与文件',
+      expanded: _captureExpanded,
+      onExpandedChanged: (value) => setState(() => _captureExpanded = value),
       children: [
         if (capture.stopReason.isNotEmpty)
           SettingsMessage(message: capture.stopReason, error: true),

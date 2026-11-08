@@ -359,30 +359,85 @@ class SettingsAction extends StatelessWidget {
 
 /// A collapsible block inside a [SettingsCard].
 ///
+/// The expanded flag is **controlled** by the page State. A local flag would be
+/// lost twice: `SettingsCard` switches between `SettingsGroupCard` and
+/// `ContentPanel` (so the card's children are rebuilt into a new subtree), and a
+/// list item scrolled out of the viewport is disposed entirely. Holding the
+/// flag on the page keeps it across both.
+///
 /// Deliberately not `ExpansionTile`: that wraps a `ListTile`, and Flutter
 /// animates `ListTile` text styles whenever `ListTileTheme` changes. Moving
 /// between the classic theme (which defines one) and the archive `WenkuScope`
 /// theme (which does not) makes `TextStyle.lerp` fail on mismatched `inherit`
-/// values. A plain header keeps the same paddings and chevron in both
-/// presentations and cannot trip that animation.
+/// values.
+///
+/// The height/chevron animation is driven by an explicit controller and
+/// `SizeTransition`, not `AnimatedSize`: inside a list, an `AnimatedSize` whose
+/// child changes height while it is being laid out asserts ("mutated in its own
+/// performLayout"). Duration collapses to zero for reduced motion and e-ink.
 class SettingsDisclosure extends StatefulWidget {
   const SettingsDisclosure({
     super.key,
     required this.title,
+    required this.expanded,
+    required this.onExpandedChanged,
     required this.children,
-    this.initiallyOpen = false,
   });
 
   final String title;
+  final bool expanded;
+  final ValueChanged<bool> onExpandedChanged;
   final List<Widget> children;
-  final bool initiallyOpen;
+
+  static const duration = Duration(milliseconds: 180);
 
   @override
   State<SettingsDisclosure> createState() => _SettingsDisclosureState();
 }
 
-class _SettingsDisclosureState extends State<SettingsDisclosure> {
-  late bool _open = widget.initiallyOpen;
+class _SettingsDisclosureState extends State<SettingsDisclosure>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _size = AnimationController(
+    vsync: this,
+    duration: SettingsDisclosure.duration,
+    value: widget.expanded ? 1 : 0,
+  )..addStatusListener(_onStatus);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _size.duration = _motionDuration;
+  }
+
+  @override
+  void didUpdateWidget(SettingsDisclosure oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.expanded == widget.expanded) return;
+    _size.duration = _motionDuration;
+    if (widget.expanded) {
+      _size.forward();
+    } else {
+      _size.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _size.dispose();
+    super.dispose();
+  }
+
+  /// Rebuild once a collapse finishes so the closed body leaves the tree (and
+  /// the semantics tree) instead of staying clipped at zero height.
+  void _onStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && mounted) setState(() {});
+  }
+
+  Duration get _motionDuration {
+    final reduce =
+        MediaQuery.disableAnimationsOf(context) || HomePalette.of(context).eink;
+    return reduce ? Duration.zero : SettingsDisclosure.duration;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -390,14 +445,25 @@ class _SettingsDisclosureState extends State<SettingsDisclosure> {
     final palette = HomePalette.of(context);
     final scheme = Theme.of(context).colorScheme;
     final muted = classic ? palette.muted : scheme.onSurfaceVariant;
+    final body = Padding(
+      padding: classic
+          ? const EdgeInsets.fromLTRB(16, 0, 16, 12)
+          : EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: widget.children,
+      ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Semantics(
           button: true,
-          expanded: _open,
+          expanded: widget.expanded,
           child: InkWell(
-            onTap: () => setState(() => _open = !_open),
+            // InkWell maps ActivateIntent / ButtonActivateIntent, so Enter and
+            // Space toggle the block once it has focus.
+            onTap: () => widget.onExpandedChanged(!widget.expanded),
             child: Padding(
               // Classic rows own their 16dp gutter; the archive panel already
               // pads its content, so the header stays flush there.
@@ -417,26 +483,28 @@ class _SettingsDisclosureState extends State<SettingsDisclosure> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Icon(
-                    _open ? LucideIcons.chevron_up : LucideIcons.chevron_down,
-                    size: 18,
-                    color: muted,
+                  RotationTransition(
+                    turns: _size.drive(Tween<double>(begin: 0, end: .5)),
+                    child: Icon(
+                      LucideIcons.chevron_down,
+                      size: 18,
+                      color: muted,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
         ),
-        if (_open)
-          Padding(
-            padding: classic
-                ? const EdgeInsets.fromLTRB(16, 0, 16, 12)
-                : EdgeInsets.zero,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: widget.children,
-            ),
+        ClipRect(
+          child: SizeTransition(
+            sizeFactor: _size,
+            alignment: Alignment.topCenter,
+            child: widget.expanded || _size.value > 0
+                ? body
+                : const SizedBox(width: double.infinity),
           ),
+        ),
       ],
     );
   }
