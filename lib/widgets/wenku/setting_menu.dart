@@ -20,6 +20,11 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+
+import '../../services/app_style_tokens.dart';
+import '../settings/classic_settings_icons.dart';
+import '../settings/settings_widgets.dart';
 
 import 'src/app_text.dart';
 import 'wenku_archive.dart';
@@ -95,8 +100,52 @@ class _GlassSettingMenuState<T> extends State<GlassSettingMenu<T>> {
     }
   }
 
+  Future<void> _openClassic() async {
+    if (_saving) return;
+    final selected = await showDialog<T>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text(widget.label),
+        children: [
+          RadioGroup<T>(
+            groupValue: widget.value,
+            onChanged: (value) {
+              if (value != null) Navigator.pop(dialogContext, value);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final option in widget.options.entries)
+                  RadioListTile<T>(
+                    value: option.key,
+                    title: Text(option.value),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null || selected == widget.value) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onChanged(selected);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (AppStyleTokens.of(context).isClassic) {
+      return SettingsRow(
+        icon: classicSettingsIcon(widget.label, widget.icon),
+        iconTile: true,
+        title: widget.label,
+        value: widget.valueLabel ?? widget.options[widget.value] ?? '',
+        onTap: _saving ? null : _openClassic,
+      );
+    }
     final label = ArchivePart(
       start: .18,
       end: .84,

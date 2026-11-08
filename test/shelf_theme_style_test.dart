@@ -8,13 +8,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/library_page.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
+import 'package:fqapp/services/classic_shelf_layout.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_group_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/shelf_view_store.dart';
+import 'package:fqapp/widgets/bookshelf_card.dart';
 import 'package:fqapp/widgets/search/search_media_tile.dart';
 import 'package:fqapp/widgets/shelf/book_collection_tiles.dart';
 import 'package:fqapp/widgets/shelf/shelf_collection_view.dart';
+import 'package:fqapp/widgets/shelf/shelf_design.dart';
 import 'package:fqapp/widgets/shelf/shelf_cover_image.dart';
 import 'package:fqapp/widgets/wenku/book_collection_layout.dart';
 import 'package:fqapp/widgets/wenku/wenku_archive.dart';
@@ -203,6 +206,7 @@ void main() {
     setUp(() async {
       setSingleChapterPrefs({'shelfLayout': 'list'});
       ShelfViewStore.instance.resetForTest();
+      ClassicShelfLayout.instance.resetForTest();
       directory = await Directory.systemTemp.createTemp('fqapp-shelf-theme-');
       Hive.init(directory.path);
       await LibraryStore.instance.init();
@@ -211,6 +215,7 @@ void main() {
     });
 
     tearDown(() async {
+      await ClassicShelfLayout.instance.whenIdle();
       await ShelfGroupStore.instance.whenIdle();
       await Hive.close();
       await directory.delete(recursive: true);
@@ -254,49 +259,74 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('已选择 1 本'), findsOneWidget);
 
-        for (final tokens in [
-          const AppStyleTokens.classic(),
-          const AppStyleTokens.archive(),
-        ]) {
-          style.value = tokens;
-          await tester.pumpAndSettle();
-          expect(tester.state(find.byType(LibraryPage)), same(state));
-          expect(ShelfViewStore.instance.mode, mode);
+        final archiveItem = mode.isGrid
+            ? tester.widget<ShelfBookGridTile>(tile).item
+            : tester.widget<ShelfNovelRow>(tile).item;
+        style.value = const AppStyleTokens.classic();
+        await tester.pumpAndSettle();
+        expect(tester.state(find.byType(LibraryPage)), same(state));
+        expect(ShelfViewStore.instance.mode, mode);
+        expect(ClassicShelfLayout.instance.value, BookshelfLayout.grid);
+        expect(find.byType(ShelfCollectionView), findsNothing);
+        expect(
+          find.byKey(const ValueKey('archive-shelf-carousel')),
+          findsNothing,
+        );
+        expect(find.text('已选择 1 本'), findsOneWidget);
+        final classic = tester.widget<BookshelfGridCard>(
+          find.byKey(const ValueKey('shelf-grid-book:123')),
+        );
+        expect(classic.item, same(archiveItem));
+        expect(classic.editing, isTrue);
+        expect(classic.selected, isTrue);
+        expect(classic.infoText, '第5章 · 共20章');
+        expect(tester.takeException(), isNull);
+
+        style.value = const AppStyleTokens.archive();
+        await tester.pumpAndSettle();
+        expect(tester.state(find.byType(LibraryPage)), same(state));
+        expect(ShelfViewStore.instance.mode, mode);
+        expect(
+          (await SharedPreferences.getInstance()).getString(
+            ShelfViewStore.layoutKey,
+          ),
+          mode.storageValue,
+        );
+        final collection = tester.widget<ShelfCollectionView>(
+          find.byType(ShelfCollectionView),
+        );
+        expect(collection.mode, mode);
+        expect(
+          collection.padding.left,
+          const AppStyleTokens.archive().pageGutter,
+        );
+        expect(
+          find.byKey(const ValueKey('archive-shelf-carousel')),
+          mode.hasShelf ? findsOneWidget : findsNothing,
+        );
+        expect(find.text('已选择 1 本'), findsOneWidget);
+        await tester.ensureVisible(tile);
+        await tester.pumpAndSettle();
+        if (mode.isGrid) {
+          final selected = tester.widget<ShelfBookGridTile>(tile);
+          expect(selected.editing, isTrue);
+          expect(selected.selected, isTrue);
+          expect(selected.item, same(archiveItem));
+        } else {
+          final selected = tester.widget<ShelfNovelRow>(tile);
+          expect(selected.editing, isTrue);
+          expect(selected.selected, isTrue);
+          expect(selected.item, same(archiveItem));
           expect(
-            (await SharedPreferences.getInstance()).getString(
-              ShelfViewStore.layoutKey,
-            ),
-            mode.storageValue,
-          );
-          final collection = tester.widget<ShelfCollectionView>(
-            find.byType(ShelfCollectionView),
-          );
-          expect(collection.mode, mode);
-          expect(collection.padding.left, tokens.pageGutter);
-          expect(
-            find.byKey(const ValueKey('archive-shelf-carousel')),
-            mode.hasShelf ? findsOneWidget : findsNothing,
-          );
-          expect(find.text('已选择 1 本'), findsOneWidget);
-          if (mode.isGrid) {
-            final selected = tester.widget<ShelfBookGridTile>(tile);
-            expect(selected.editing, isTrue);
-            expect(selected.selected, isTrue);
-          } else {
-            final selected = tester.widget<ShelfNovelRow>(tile);
-            expect(selected.editing, isTrue);
-            expect(selected.selected, isTrue);
-            expect(
-              find.descendant(of: tile, matching: find.byType(ArchiveCode)),
-              tokens.showDecorativeCodes ? findsOneWidget : findsNothing,
-            );
-          }
-          expect(
-            find.descendant(of: tile, matching: find.text('第5章 · 共20章')),
+            find.descendant(of: tile, matching: find.byType(ArchiveCode)),
             findsOneWidget,
           );
-          expect(tester.takeException(), isNull);
         }
+        expect(
+          find.descendant(of: tile, matching: find.text('第5章 · 共20章')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       });
     }

@@ -45,7 +45,7 @@ class HomePalette {
     if (eink) return Colors.white;
     if (oled && dark) return Colors.black;
     if (isClassic) {
-      return dark ? const Color(0xFF171719) : const Color(0xFFF7F6F2);
+      return dark ? const Color(0xFF151517) : const Color(0xFFF6F6F6);
     }
     return dark ? const Color(0xFF191919) : const Color(0xFFF4F3EF);
   }
@@ -59,9 +59,13 @@ class HomePalette {
 
   Color get ink => eink
       ? Colors.black
+      : isClassic
+      ? (dark ? const Color(0xFFF5F1EB) : const Color(0xFF262522))
       : (dark ? const Color(0xFFF2F2F2) : const Color(0xFF1C1C1B));
   Color get muted => eink
       ? Colors.black
+      : isClassic
+      ? (dark ? const Color(0xFFA7A39E) : const Color(0xFF706C66))
       : (dark ? const Color(0xFFB7B7B7) : const Color(0xFF6E6D68));
   Color get accentText => eink ? Colors.black : (dark ? accent : accentStrong);
 
@@ -69,7 +73,7 @@ class HomePalette {
     if (eink) return Colors.white;
     if (oled && dark) return const Color(0xFF141417);
     if (isClassic) {
-      return dark ? const Color(0xFF2D2D31) : const Color(0xFFEEEDE9);
+      return dark ? const Color(0xFF202023) : const Color(0xFFF1EEE9);
     }
     return dark ? const Color(0xFF2D2D2D) : const Color(0xFFECE9E2);
   }
@@ -78,7 +82,7 @@ class HomePalette {
     if (eink) return Colors.black;
     if (oled && dark) return const Color(0xFF2E2E34);
     if (isClassic) {
-      return dark ? const Color(0xFF3C3C42) : const Color(0xFFE4E3DE);
+      return dark ? const Color(0xFF333336) : const Color(0xFFE8E4DE);
     }
     return dark ? const Color(0xFF3C3C3C) : const Color(0xFFE1DFD8);
   }

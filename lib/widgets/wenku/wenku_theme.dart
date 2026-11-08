@@ -116,8 +116,8 @@ class WenkuTonalColors extends ThemeExtension<WenkuTonalColors> {
     }
     if (style == AppThemeStyle.classic) {
       final background = dark
-          ? const Color(0xFF171719)
-          : const Color(0xFFF7F6F2);
+          ? const Color(0xFF151517)
+          : const Color(0xFFF6F6F6);
       return WenkuTonalColors(
         pageStart: background,
         pageEnd: background,

@@ -39,6 +39,7 @@ import '../services/library_store.dart';
 import '../widgets/desktop_settings_body.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/settings/classic_settings_icons.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'about_page.dart';
 import 'api_service_page.dart';
@@ -191,9 +192,9 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
+    // Keep the desktop body at one element path while switching themes: its
+    // nested Navigator owns the theme picker and must not be recreated mid-tap.
     if (isWindowsDesktop) {
-      // The desktop body keeps its two-pane workflow; the archive shell only
-      // supplies the shared header and background.
       return WenkuPage(
         header: _header(context),
         child: Padding(
@@ -201,7 +202,44 @@ class SettingsPage extends StatelessWidget {
             top:
                 MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight,
           ),
-          child: DesktopSettingsBody(categories: categories),
+          child: DesktopSettingsBody(
+            categories: style.isClassic
+                ? [
+                    for (final category in categories)
+                      _classicCategory(category),
+                  ]
+                : categories,
+          ),
+        ),
+      );
+    }
+
+    if (style.isClassic) {
+      // Restore the single grouped card from f329399, not rounded archive
+      // FeatureEntry cards. The category models still own all current actions.
+      final classicCategories = [
+        for (final category in categories) _classicCategory(category),
+      ];
+      return SettingsScaffold(
+        title: '设置',
+        body: ListView(
+          key: const PageStorageKey('settings-classic'),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          children: [
+            SettingsGroupCard(
+              children: [
+                for (final category in classicCategories)
+                  SettingsRow(
+                    key: ValueKey('settings-entry-${category.title}'),
+                    icon: category.icon,
+                    iconTile: true,
+                    title: category.title,
+                    subtitle: category.subtitle,
+                    onTap: () => _openCategory(context, category),
+                  ),
+              ],
+            ),
+          ],
         ),
       );
     }
@@ -235,6 +273,16 @@ class SettingsPage extends StatelessWidget {
       ),
     );
   }
+
+  static SettingsCategory _classicCategory(SettingsCategory category) =>
+      SettingsCategory(
+        icon: classicSettingsIcon(category.title, category.icon),
+        title: category.title,
+        subtitle: category.subtitle,
+        items: category.items,
+        itemsBuilder: category.itemsBuilder,
+        pageBuilder: category.pageBuilder,
+      );
 
   /// Settings is opened as a route (the “我的” entry and the Windows rail),
   /// so the upstream tab-style [ArchiveMasthead] needs a way back. The
