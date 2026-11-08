@@ -440,7 +440,14 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
               ),
             ),
             for (final record in parsed.records.take(6))
-              _recordRow(record, classic: classic, muted: subtle),
+              // Every preview row carries its data id. The section header
+              // above scrolls out of the list's build window while the rows
+              // are still on screen, so a header-only anchor cannot restore
+              // the viewport position.
+              KeyedSubtree(
+                key: _anchor.keyFor('preview-book-${_recordKey(record)}'),
+                child: _recordRow(record, classic: classic, muted: subtle),
+              ),
             if (parsed.records.length > 6)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -634,6 +641,13 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     );
   }
 
+  /// Stable identity of one preview record: the imported book id, so a
+  /// rebuilt row keeps its [SettingsScrollAnchor] key. The identity hash only
+  /// covers a record shape without an id; it is stable for the lifetime of the
+  /// parsed list and never collides, so two rows cannot share a [GlobalKey].
+  static String _recordKey(Map<String, dynamic> record) =>
+      '${record['id'] ?? record['bookId'] ?? identityHashCode(record)}';
+
   /// 预览里的一本：经典用 ListTile，档案保持自绘行。
   Widget _recordRow(
     Map<String, dynamic> record, {
@@ -650,6 +664,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
         (record['chapterId'] == null ? '未取得阅读章节' : '打开时重新匹配章节');
     if (classic) {
       return ListTile(
+        key: ValueKey('fanqie-record-${_recordKey(record)}'),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16),
         leading: _cover(record, soft: palette.soft, icon: palette.muted),
         title: Text(
@@ -662,6 +677,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       );
     }
     return Padding(
+      key: ValueKey('fanqie-record-${_recordKey(record)}'),
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
