@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../services/app_theme_style.dart';
+import 'app_ui_scope.dart';
 
 /// A semantic scroll anchor: the piece of content the viewport's top edge was
 /// sitting on, plus how far into it.
@@ -27,8 +28,9 @@ class ContentAnchor {
   /// Content id, e.g. `synopsis` or `directory/chapter:chapter-23`.
   final String id;
 
-  /// How far the anchor's leading edge sat above the viewport's top edge.
-  /// Negative when the anchor started below the top.
+  /// How far the anchor's leading edge sat above the layout's *visible* top
+  /// edge (below a floating archive header, below a classic AppBar). Negative
+  /// when the anchor started below that edge.
   final double offset;
 
   /// The raw scroll offset when captured. Auxiliary only: lazy lists build the
@@ -87,6 +89,7 @@ ContentAnchor? captureContentAnchor(
   BuildContext root,
   ScrollPosition position, {
   int? Function(String anchorId)? indexOf,
+  double visibleInset = 0,
 }) {
   final anchors = <({String id, double reveal, double extent, int order})>[];
   void visit(Element element) {
@@ -120,10 +123,14 @@ ContentAnchor? captureContentAnchor(
     return byReveal != 0 ? byReveal : a.order.compareTo(b.order);
   });
   final pixels = position.pixels;
+  // Content under a floating header is not what the reader is looking at: the
+  // classic shell puts its AppBar above the viewport (inset 0), the archive
+  // keeps the scroll under the glass bar (inset = chrome height).
+  final visibleTop = pixels + visibleInset;
   ({String id, double reveal, double extent, int order})? covering;
   ({String id, double reveal, double extent, int order})? next;
   for (final anchor in anchors) {
-    if (anchor.reveal <= pixels + 0.5) {
+    if (anchor.reveal <= visibleTop + 0.5) {
       covering = anchor;
     } else {
       next = anchor;
@@ -131,16 +138,16 @@ ContentAnchor? captureContentAnchor(
     }
   }
   var chosen = covering ?? next!;
-  // The top edge falls into the gap after [covering] (a grid row or section
-  // margin): keep that gap by anchoring to the next entry instead.
+  // The visible top edge falls into the gap after [covering] (a grid row or
+  // section margin): keep that gap by anchoring to the next entry instead.
   if (covering != null &&
       next != null &&
-      covering.reveal + covering.extent < pixels - 0.5) {
+      covering.reveal + covering.extent < visibleTop - 0.5) {
     chosen = next;
   }
   return ContentAnchor(
     id: chosen.id,
-    offset: pixels - chosen.reveal,
+    offset: visibleTop - chosen.reveal,
     pixels: pixels,
     index: indexOf?.call(chosen.id),
     extent: chosen.extent,
@@ -217,12 +224,38 @@ RenderBox? _findAnchorBox(BuildContext root, Set<String> wanted) {
 /// outgoing layout is still mounted and laid out, and build has not started
 /// (`visitChildElements` is illegal while building).
 class ContentAnchorKeeper {
-  ContentAnchorKeeper(this.controller, {this.indexOf});
+  ContentAnchorKeeper(this.controller, {this.indexOf, this.visibleTopInset});
 
   final ScrollController controller;
 
   /// Data index of an anchor id, or null for section anchors.
   final int? Function(String anchorId)? indexOf;
+
+  /// Distance from the scroll viewport's top edge to the first row that is
+  /// actually visible in a layout built with [AppThemeStyle].
+  ///
+  /// The archive shell keeps its scrollable full-screen and paints the glass
+  /// header over it (`archiveChromeInset`), while the classic shell puts a
+  /// Material AppBar above the body. Both the capture and the restore measure
+  /// the depth from that edge, otherwise an archive restore parks the row under
+  /// the floating header — mounted, off the visible page, not tappable.
+  ///
+  /// The capture runs from the store's notification, *before* the tree is
+  /// rebuilt, so it must be told which style is on screen: reading the live
+  /// scope there would describe the incoming layout and measure the outgoing one
+  /// with the wrong chrome.
+  final double Function(BuildContext context, AppThemeStyle style)?
+  visibleTopInset;
+
+  /// Style the mounted tree was last built with; see [noteLayoutStyle].
+  AppThemeStyle? _layoutStyle;
+
+  /// Records the style the current tree was built with. Call from `build`; the
+  /// capture then measures the outgoing layout with its own chrome inset.
+  void noteLayoutStyle(AppThemeStyle style) => _layoutStyle = style;
+
+  double _inset(BuildContext context, AppThemeStyle style) =>
+      visibleTopInset?.call(context, style) ?? 0.0;
 
   AppThemeStyleStore? _store;
   VoidCallback? _listener;
@@ -267,7 +300,13 @@ class ContentAnchorKeeper {
     }
     final position = controller.hasClients ? controller.position : null;
     if (position == null || !position.hasContentDimensions) return;
-    final anchor = captureContentAnchor(context, position, indexOf: indexOf);
+    final style = _layoutStyle ?? AppUiScope.of(context);
+    final anchor = captureContentAnchor(
+      context,
+      position,
+      indexOf: indexOf,
+      visibleInset: _inset(context, style),
+    );
     if (anchor == null) return;
     _pending = anchor;
     _attempts = 0;
@@ -294,11 +333,14 @@ class ContentAnchorKeeper {
       return;
     }
 
-    // 1. The very content is mounted: put it back at its old depth.
+    final inset = _inset(context, _layoutStyle ?? AppUiScope.of(context));
+
+    // 1. The very content is mounted: put it back at its old depth below the
+    //    visible top edge (not the raw viewport edge).
     final box = findContentAnchorBox(context, anchor.id);
     final reveal = box == null ? null : contentAnchorRevealOffset(box);
     if (box != null && reveal != null) {
-      final target = reveal + _depthFor(anchor, box.size.height);
+      final target = reveal + _depthFor(anchor, box.size.height) - inset;
       if ((position.pixels - target).abs() < 1.5 || _snaps >= 3) {
         _pending = null;
         return;
@@ -315,7 +357,7 @@ class ContentAnchorKeeper {
       final estimate = _estimateReveal(context, anchor);
       if (estimate != null) {
         final before = position.pixels;
-        _moveTo(position, estimate);
+        _moveTo(position, estimate - inset);
         _locates++;
         if ((position.pixels - before).abs() >= 0.5) {
           _schedule(context);
@@ -336,7 +378,7 @@ class ContentAnchorKeeper {
           ? null
           : contentAnchorRevealOffset(section);
       if (sectionReveal != null) {
-        _moveTo(position, sectionReveal);
+        _moveTo(position, sectionReveal - inset);
         _pending = null;
         return;
       }
