@@ -150,12 +150,48 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
     child: Row(
       children: [
         Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: _tab == 2
-                  ? [
+          child: _tab == 0
+              ? LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact =
+                        constraints.maxWidth < 260 ||
+                        MediaQuery.textScalerOf(context).scale(1) > 1.4;
+                    if (compact) {
+                      // Narrow or large-text: keep both controls reachable by
+                      // scrolling instead of pushing the layout segments off.
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _classicTodayPill(palette),
+                            const SizedBox(width: 8),
+                            _classicGroupChip(palette),
+                          ],
+                        ),
+                      );
+                    }
+                    return Row(
+                      children: [
+                        _classicTodayPill(palette),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: _classicGroupChip(palette),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                )
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
                       for (final (value, label) in const [
                         (null, '全部'),
                         ('video', '短剧'),
@@ -172,16 +208,9 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
                               setState(() => _collectionFilter = value),
                         ),
                       ],
-                    ]
-                  : [
-                      _classicTodayPill(palette),
-                      if (_tab == 0) ...[
-                        const SizedBox(width: 8),
-                        _classicGroupChip(palette),
-                      ],
                     ],
-            ),
-          ),
+                  ),
+                ),
         ),
         const SizedBox(width: 8),
         _ClassicLayoutSegments(
