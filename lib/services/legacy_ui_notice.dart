@@ -22,10 +22,21 @@ class LegacyUiNotice {
     // A saved theme means this user already made a choice in the new UI, or
     // already saw the notice and changed it before the notice was marked.
     if (prefs.containsKey(AppThemeStyleStore.storageKey)) return false;
-    final data =
-        hasLocalData ??
-        (ShelfStore.instance.records().isNotEmpty ||
-            LibraryStore.instance.historySnapshot().isNotEmpty);
+    bool data;
+    if (hasLocalData != null) {
+      data = hasLocalData;
+    } else {
+      try {
+        data =
+            ShelfStore.instance.records().isNotEmpty ||
+            LibraryStore.instance.historySnapshot().isNotEmpty;
+      } catch (_) {
+        // A store can be unavailable in a failed/partial bootstrap or widget
+        // test. Do not mark the notice as seen in that case; retry after the
+        // stores are actually ready.
+        return false;
+      }
+    }
     if (!data) {
       // A fresh install is checked before it has any library data. Mark it as
       // skipped now; otherwise the first book added later would make the next
