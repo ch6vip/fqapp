@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce/hive.dart';
 
 import '../models/webdav_sync_document.dart';
+import '../models/library_backup.dart';
 import 'encrypted_hive.dart';
 import 'library_backup_service.dart';
 import 'library_store.dart';
@@ -67,6 +68,7 @@ class WebDavSyncService with WidgetsBindingObserver {
       _attached = true;
       ShelfStore.instance.listenable.addListener(_changed);
       LibraryStore.instance.historyListenable.addListener(_changed);
+      LibraryStore.instance.watchedListenable.addListener(_changed);
       WidgetsBinding.instance.addObserver(this);
     }
     _poll?.cancel();
@@ -80,6 +82,7 @@ class WebDavSyncService with WidgetsBindingObserver {
     if (!_attached) return;
     ShelfStore.instance.listenable.removeListener(_changed);
     LibraryStore.instance.historyListenable.removeListener(_changed);
+    LibraryStore.instance.watchedListenable.removeListener(_changed);
     WidgetsBinding.instance.removeObserver(this);
     _attached = false;
   }
@@ -137,22 +140,100 @@ class WebDavSyncService with WidgetsBindingObserver {
           .toString();
       for (var attempt = 0; attempt < 3; attempt++) {
         if (!current()) return;
+        final prior = _state!.get(scope);
+        final previous = prior is Map ? prior : const {};
+        final localSnapshot = await LibraryBackupService().capture(
+          includeAi: false,
+        );
+        final localKeys = _snapshotKeys(localSnapshot);
+        final pending = <String, Set<String>>{};
+        for (final type in localKeys.keys) {
+          final baseline = (previous[type] as List? ?? const []).cast<String>();
+          pending[type] = {
+            ...(previous['pending_$type'] as List? ?? const []).cast<String>(),
+            ...baseline.where((key) => !localKeys[type]!.contains(key)),
+          };
+        }
+        // Persist before I/O: a failed connection must not forget removals.
+        await _state!.put(scope, {
+          ...previous,
+          for (final type in pending.keys)
+            'pending_$type': pending[type]!.toList(),
+        });
         final remote = await client.read();
         if (!current()) return;
         // Only an absent cloud file may be seeded from this device.
         if (remote.bytes == null) {
+          if (previous.containsKey('history')) {
+            throw const WebDavException('云端同步文件已消失，已停止自动重建，避免恢复已删除的数据');
+          }
           final local = await LibraryBackupService().capture();
           if (!current()) return;
           if (!await client.write(WebDavSyncDocument(local).encode(), null)) {
             continue;
           }
+          await _state!.put(scope, _snapshotKeys(local));
           if (current()) status.value = '已建立云端备份 · 书架 ${local.shelf.length} 本';
           return;
         }
         final document = WebDavSyncDocument.decode(remote.bytes!);
-        final incoming = document.backup;
-        final prior = _state!.get(scope);
-        final previous = prior is Map ? prior : const {};
+        var incoming = document.backup;
+        if (pending.values.any((keys) => keys.isNotEmpty)) {
+          final deletedHistory = pending['history']!;
+          final deletedIds = deletedHistory
+              .map((key) => key.substring(key.indexOf(':') + 1))
+              .toSet();
+          incoming = LibraryBackup.capture(
+            shelf: incoming.shelf
+                .where(
+                  (record) => !pending['shelf']!.contains(
+                    ShelfStore.keyOf(record.item),
+                  ),
+                )
+                .toList(),
+            history: incoming.history
+                .where(
+                  (record) => !deletedHistory.contains(_historyKey(record)),
+                )
+                .toList(),
+            watched: {
+              for (final entry in incoming.watched.entries)
+                if (!pending['watched']!.contains(entry.key) &&
+                    !deletedIds.contains(entry.key))
+                  entry.key: entry.value,
+            },
+            aiData: incoming.aiData,
+            groups: incoming.groups,
+          );
+          if (!await client.write(
+            WebDavSyncDocument(incoming, document.removedShelf).encode(),
+            remote.etag,
+          )) {
+            continue;
+          }
+          if (!current()) return;
+        }
+        // A delete while the request was in flight needs another pass, before
+        // the cloud snapshot can restore that row on screen.
+        final latestKeys = _snapshotKeys(
+          await LibraryBackupService().capture(includeAi: false),
+        );
+        if (localKeys.keys.any(
+          (type) =>
+              localKeys[type]!.any((key) => !latestKeys[type]!.contains(key)),
+        )) {
+          await _state!.put(scope, {
+            ...previous,
+            for (final type in pending.keys)
+              'pending_$type': {
+                ...pending[type]!,
+                ...localKeys[type]!.where(
+                  (key) => !latestKeys[type]!.contains(key),
+                ),
+              }.toList(),
+          });
+          continue;
+        }
         final aiHash = _aiFingerprint(incoming.aiData);
         if (incoming.aiData != null && aiHash != previous['aiHash']) {
           await LibraryBackupService().restoreAi(incoming);
@@ -165,7 +246,10 @@ class WebDavSyncService with WidgetsBindingObserver {
             history: incoming.history,
             watched: incoming.watched,
           );
-          await _state!.put(scope, {'aiHash': aiHash});
+          await _state!.put(scope, {
+            ..._snapshotKeys(incoming),
+            'aiHash': aiHash,
+          });
         } finally {
           _applying = false;
         }
@@ -190,6 +274,17 @@ class WebDavSyncService with WidgetsBindingObserver {
       busy.value = false;
     }
   }
+
+  static String _historyKey(Map<String, dynamic> record) =>
+      '${record['kind']}:${record['id']}';
+
+  static Map<String, List<String>> _snapshotKeys(LibraryBackup backup) => {
+    'shelf': backup.shelf
+        .map((record) => ShelfStore.keyOf(record.item))
+        .toList(),
+    'history': backup.history.map(_historyKey).toList(),
+    'watched': backup.watched.keys.toList(),
+  };
 
   static String? _aiFingerprint(String? encoded) {
     if (encoded == null) return null;
