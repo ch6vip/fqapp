@@ -36,6 +36,7 @@ fn pool_json(n: usize) -> String {
             use_count: i as i64,
             cdid: format!("cdid-{i}"),
             openudid: format!("{i:016}"),
+            registered_version_code: String::new(),
         })
         .collect();
     serde_json::to_string(&PoolFile {
