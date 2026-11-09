@@ -76,6 +76,42 @@ class SettingsScaffold extends StatelessWidget {
   }
 }
 
+/// A surface panel: `surface` fill, a 0.6dp `line` border and the shared
+/// corner radius.
+///
+/// It is the shell behind [SettingsGroupCard] and the AI reading info cards,
+/// so a panel looks the same wherever it appears. The fill is a `Material`
+/// rather than a `Container`: that is what gives the panel correct ink and
+/// clipping behaviour, and it keeps every panel on one shape.
+class SurfacePanel extends StatelessWidget {
+  const SurfacePanel({
+    super.key,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+    this.radius = SettingsGroupCard.radius,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  /// Corner radius; the shared token by default.
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return Material(
+      color: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius),
+        side: BorderSide(color: palette.line, width: 0.6),
+      ),
+      child: Padding(padding: padding, child: child),
+    );
+  }
+}
+
 /// 设置分组卡片：surface 底 + 0.6dp line 描边 + 唯一圆角 token。
 ///
 /// [children] 之间自动插入一条缩进 68dp 的分隔线（与 38dp 图标砖 +
@@ -99,13 +135,7 @@ class SettingsGroupCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Material(
-      color: palette.surface,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radius),
-        side: BorderSide(color: palette.line, width: 0.6),
-      ),
+    return SurfacePanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
