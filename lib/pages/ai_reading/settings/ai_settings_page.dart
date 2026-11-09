@@ -591,7 +591,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
           icon: Icons.text_fields,
           title: '去屏蔽词',
           subtitle:
-              '根据上下文还原星号、拼音和谐音替换词；不确定时保留原文。'
+              '根据上下文推测补全星号，并还原拼音和谐音替换词；修改可审核、撤销。'
               '对新校对生效，已有结果需重新校对。',
           trailing: SettingsSwitch(
             value: global.restoreCensoredWords,

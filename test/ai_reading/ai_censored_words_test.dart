@@ -1,4 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fqapp/services/ai_reading/ai_chapter_snapshot.dart';
+import 'package:fqapp/services/ai_reading/ai_protocol.dart';
+import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/ai_reading/ai_models.dart';
 import 'package:fqapp/services/ai_reading/ai_prompt.dart';
 
@@ -35,7 +38,7 @@ void main() {
       );
       expect(recovery.text, startsWith(plain.text));
       expect(recovery.text, contains(kAiRestoreCensoredWordsPrompt));
-      expect(recovery.text, contains('无法确定原词时保留原文'));
+      expect(recovery.text, contains('允许根据上下文推测'));
       expect(recovery.text, contains('wcnm'));
       expect(recovery.text, contains('我踏马'));
       expect(recovery.text, contains('不要因包含粗口而擅自净化'));
@@ -43,6 +46,26 @@ void main() {
       expect(recovery.promptId, isNot(plain.promptId));
       expect(recovery.source, plain.source);
     }
+  });
+
+  test('repeated stars can be located and replaced using adjacent context', () {
+    final snapshot = AiChapterSnapshotBuilder.fromContent(
+      ChapterContent(
+        blocks: [const ChapterParagraph('他打开*****发消息。她看着*****发呆。')],
+      ),
+      '',
+    );
+    final result = const AiValidator().validateContent(
+      '{"edits":[{"original":"打开*****发消息","replacement":"打开微信发消息","category":"屏蔽词还原","reason":"根据上下文推测还原"}]}',
+      snapshot,
+    );
+    expect(result.valid, isTrue);
+    expect(result.spans.single.replacement, '打开微信发消息');
+    final ambiguous = const AiValidator().validateContent(
+      '{"edits":[{"original":"*****","replacement":"微信","category":"屏蔽词还原","reason":"根据上下文推测还原"}]}',
+      snapshot,
+    );
+    expect(ambiguous.valid, isFalse);
   });
 
   test('disabled option preserves built-in prompt exactly', () {
