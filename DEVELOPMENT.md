@@ -932,3 +932,13 @@ ChapterContent 原文、legacyText、缓存和导入文件保持原语义。Read
 阅读器首次加载、预取补图/时间轴刷新及规则变化共用转换服务，以章节、原文版本和 generation 拒绝迟到结果；规则与刷新并发时以最新原文重新生成。原始标题去除只执行一次，避免正文被替换成标题后再次被误删。系统 TTS 首章与后续章节均从原文转换，固定同一会话快照；规则保存时关闭旧会话并清理高亮，需重新启动。真人录音不变。
 
 验证：运行 flutter analyze --no-pub 与 flutter test；重点套件为 text_replacement_*、reader_text_replacement、reader_paragraph_actions、reader_chapter_layout、reader_pagination、reader_illustrations、offline_reader 和 system_tts。Android/Windows 的构建与真机超时终止行为仍须在对应环境验收；Linux 主机单测不代表设备或 AOT 验收完成。
+
+### 开发者测试台
+
+AI 设置 → 高级 → 开发者模式 → 开发者测试台。开关仅保存在本机，默认关闭。
+可输入样例正文，以本次测试开关对比去屏蔽词效果，查看提示词与输出协议，
+通过现有 AI 试验请求流程获取修改建议、替换预览、耗时及错误；测试不会写入
+正式章节校对缓存，但联网请求会消耗额度，仍受正文传输授权和预算限制。
+可取消测试；离开页面也会取消请求。还支持离线粘贴 JSON，校验结构、定位与
+重叠错误，并预览替换结果。WebDAV 区域仅显示状态和同步规则，不显示密码，
+不会触发远程写入。设备实际 AI 服务和 WebDAV 端到端行为需另行验证。
