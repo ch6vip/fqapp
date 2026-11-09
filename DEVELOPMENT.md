@@ -217,13 +217,18 @@ Rust 核心库由 `scripts/build_rust_backend.*` 生成；C 库由下一步 APK 
 ```powershell
 cd fqapp
 flutter pub get
-# 当前 Rust 核心只提供 arm64-v8a，构建时显式指定目标 ABI
+# 演示只出 arm64 调试包；正式出包是双 ABI 分包，见下方说明
 flutter build apk --debug --target-platform android-arm64
 flutter build apk --release --target-platform android-arm64
 ```
 
-生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
-对应 ABI 交叉编译并打包 `libfqapi_core.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
+镜像环境（`PUB_HOSTED_URL` 指向 pub.flutter-io.cn 等）下，上面每条命令都会隐式执行 `pub get`
+并把 `pubspec.lock` 的全部 `url:` 改写成镜像地址；本地 Flutter 版本与生成该锁的版本不一致时，
+还会顺带移动几十个包的版本。提交前核对 `git diff pubspec.lock`，必要时 `git checkout -- pubspec.lock`。
+
+Rust 核心按 `arm64-v8a` 与 `armeabi-v7a` 两个 ABI 产出（`scripts/build_rust_backend.sh` /
+`.ps1` 的 `aarch64-linux-android` + `armv7-linux-androideabi`），CI 因此用
+`--target-platform android-arm,android-arm64 --split-per-abi` 出两个分包；x86/x86_64 设备不提供。
 
 > **release 构建不要加 `--no-pub`**：`integration_test` 在 `dev_dependencies` 里，`flutter test` 会把
 > 它写进 Android 插件注册表；随后用 `--no-pub` 构建 release，Gradle 会报
@@ -944,9 +949,26 @@ curl http://127.0.0.1:18080/health
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
 - [x] Release 签名配置与 R8 混淆
 - [x] 整本 TXT 导出（离线缓存页每行「导出 TXT」→ 系统「下载」；重取最新目录与每章正文，按后端 `/api/download` 同形组装）
-- [ ] **按职责整理 `lib/widgets/video_player_chrome.dart`**：修改相关功能时，评估横屏顶栏/底栏、
-      「下一集」卡、右侧面板、抽屉与手势是否适合独立到 `lib/widgets/player/`；仅在减少耦合或
-      提高可读性时拆分，不设目标行数，不为体量统计额外重构。
+- [ ] **按职责整理 `lib/widgets/video_player_chrome.dart`**（实测 5004 行，其中
+      `_VideoPlayerChromeState` 一个类占 4580 行（311–4890），`part` 只切出一份 22 行的横屏进度条）。
+      拆的是**职责**不是行数：每一块都改成「传值 + 回调」的无状态 widget，留在同一个 State
+      里的只有播放器接线。按「改动收益 ÷ 风险」排序，一次只搬一块，搬完跑相关套件。
+
+      下表的行数是**定义体的实测跨度**（从声明行到方法体结束，命名参数列表与嵌套
+      括号不计入），可用 `python` 扫一遍括号配平复核：
+
+      | 顺序 | 目标文件 | 搬什么（实测方法体行数） | 依赖 |
+      |---|---|---|---|
+      | 1 | `lib/widgets/player/next_episode_card.dart` | `_nextEpisodeCard`（152） | 只读 `widget.*` 与已算好的尺寸 |
+      | 2 | `lib/widgets/player/split_layout.dart` | `_buildSplit`（195）、`_splitDivider`（53） | 布局几何，不含播放状态；`_splitCollapsed` 是一对 1 行 getter / 7 行 setter，跟着布局走 |
+      | 3 | `lib/widgets/player/side_panels.dart` | `_showSideSettings`（38）、`_sheetSwitch`（21） | 面板选择/档位，需回调上抛；`_rateChipLabel` 只是 1 行的顶层文案函数 |
+      | 4 | `lib/widgets/player/gesture_hud.dart` | `_gestureHudOverlay`（72）、`_applyGestureLevel`（35）、`_GestureHudState`/`_GestureKind` | 亮度/音量归一化，纯展示 + 回调 |
+      | 5 | `lib/widgets/player/landscape_bar.dart` | `_landscapeBar`（132）、`_topBar`（75）、`_lockButton`（56）、`_landscapeTitle`（38）、`_landText`（25） | 顶/底栏与锁定钮，读多写少 |
+      | 6 | `lib/widgets/player/info_panels.dart` | `_information`（75）、`_catalogBar`（69）、`_originalBookCard`（60） | 剧集信息与原著卡，纯展示 |
+      | 7（最后） | 原地保留 | `_scheduleHide`（38）、`_positionVideo`（36）、`_listenToPosition`（17）、`_ensurePagerOnCurrent`（14） | 播放器接线：位置流、分页、自动隐藏定时器，跨块共享状态，收益最低 |
+
+      判定标准：搬完后 **该类不再直接读被搬块的私有字段**，且对应测试（`player_*`、
+      `video_player_chrome_test`、`playlet_*`）不改断言即通过。达不到就是没降耦合，应回退。
 
 
 ## 正文替换（#120）
