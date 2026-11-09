@@ -141,6 +141,8 @@ class LibraryStore implements ReaderStore {
   /// writes; hidden pages defer their snapshots until the next visit.
   bool get isInitialized => EncryptedHive.isBoxOpen(Hive, _histBoxName);
   ValueListenable<Box<dynamic>> get historyListenable => _histBox.listenable();
+  ValueListenable<Box<dynamic>> get watchedListenable =>
+      _watchedBox.listenable();
   ValueListenable<Box<dynamic>> get readTimeListenable =>
       _readTimeBox.listenable();
 

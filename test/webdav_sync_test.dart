@@ -267,6 +267,7 @@ void main() {
     Uint8List? remote;
     var version = 0;
     var conflict = false;
+    var offline = false;
     setUp(() async {
       FlutterSecureStorage.setMockInitialValues({});
       SharedPreferences.setMockInitialValues({});
@@ -277,10 +278,12 @@ void main() {
       remote = null;
       version = 0;
       conflict = false;
+      offline = false;
       service = WebDavSyncService(
         createClient: (settings) => WebDavClient(
           settings,
           client: MockClient((request) async {
+            if (offline) throw http.ClientException('offline');
             if (request.method == 'GET') {
               return remote == null
                   ? http.Response('', 404)
@@ -431,6 +434,184 @@ void main() {
           await LibraryStore.instance.historyEntry('remote-resume'),
           isNotNull,
         );
+      },
+    );
+
+    test(
+      'single and batch history deletions reach cloud and do not return',
+      () async {
+        remote = WebDavSyncDocument(
+          backup(
+            history: [
+              {'id': 'one', 'kind': 'book', 'time': 1},
+              {'id': 'two', 'kind': 'audio', 'time': 2},
+              {'id': 'keep', 'kind': 'book', 'time': 3},
+            ],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await LibraryStore.instance.removeHistoryEntry('one', 'book');
+        await LibraryStore.instance.removeHistoryEntries([
+          (contentId: 'two', kind: 'audio'),
+        ]);
+        await service.sync();
+        expect(
+          WebDavSyncDocument.decode(remote!).backup.history.single['id'],
+          'keep',
+        );
+        await service.sync();
+        expect(await LibraryStore.instance.historyEntry('one'), isNull);
+        expect(await LibraryStore.instance.historyEntry('audio:two'), isNull);
+      },
+    );
+
+    test(
+      'offline clear is retained and empty history is uploaded on retry',
+      () async {
+        remote = WebDavSyncDocument(
+          backup(
+            history: [
+              {'id': 'one', 'kind': 'book', 'time': 1},
+            ],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await LibraryStore.instance.clearHistory();
+        offline = true;
+        await expectLater(service.sync(), throwsA(isA<WebDavException>()));
+        offline = false;
+        await service.sync();
+        expect(WebDavSyncDocument.decode(remote!).backup.history, isEmpty);
+        expect(await LibraryStore.instance.historyEntry('one'), isNull);
+      },
+    );
+
+    test('pending offline deletions survive service restart', () async {
+      remote = WebDavSyncDocument(
+        backup(
+          history: [
+            {'id': 'one', 'kind': 'book', 'time': 1},
+          ],
+        ),
+      ).encode();
+      version++;
+      await service.sync();
+      await LibraryStore.instance.clearHistory();
+      offline = true;
+      await expectLater(service.sync(), throwsA(isA<WebDavException>()));
+      await service.dispose();
+      offline = false;
+      service = WebDavSyncService(
+        createClient: (settings) => WebDavClient(
+          settings,
+          client: MockClient((request) async {
+            if (request.method == 'GET')
+              return http.Response.bytes(
+                remote!,
+                200,
+                headers: {'etag': '"$version"'},
+              );
+            expect(request.headers['if-match'], '"$version"');
+            remote = request.bodyBytes;
+            version++;
+            return http.Response('', 204);
+          }),
+        ),
+      );
+      await service.configure(config);
+      await service.sync();
+      expect(WebDavSyncDocument.decode(remote!).backup.history, isEmpty);
+      expect(await LibraryStore.instance.historyEntry('one'), isNull);
+    });
+
+    test(
+      'shelf removal propagates, including source-qualified identities',
+      () async {
+        final book = MediaItem(
+          id: 'remote',
+          kind: 'book',
+          title: '书旗',
+          cover: '',
+          author: '',
+          badge: '',
+          ep: '',
+          source: 'shuqi',
+        );
+        remote = WebDavSyncDocument(
+          backup(
+            shelf: [ShelfRecord(item: book, addedAt: DateTime(2025))],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await ShelfStore.instance.removeKeys([ShelfStore.keyOf(book)]);
+        await service.sync();
+        expect(WebDavSyncDocument.decode(remote!).backup.shelf, isEmpty);
+        expect(ShelfStore.instance.records(), isEmpty);
+      },
+    );
+
+    test(
+      'conditional conflict retains pending deletion and remote additions',
+      () async {
+        remote = WebDavSyncDocument(
+          backup(
+            history: [
+              {'id': 'one', 'kind': 'book', 'time': 1},
+            ],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await LibraryStore.instance.removeHistoryEntry('one', 'book');
+        conflict = true;
+        await service.sync();
+        final history = WebDavSyncDocument.decode(remote!).backup.history;
+        expect(history.single['id'], 'second-device');
+        expect(await LibraryStore.instance.historyEntry('one'), isNull);
+      },
+    );
+
+    test(
+      'forgetting watched episodes propagates without deleting unrelated history',
+      () async {
+        remote = WebDavSyncDocument(
+          LibraryBackup.capture(
+            shelf: [],
+            history: [
+              {'id': 'show', 'kind': 'video', 'time': 1},
+            ],
+            watched: {
+              'show': {'ep1': 1},
+            },
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await LibraryStore.instance.forgetWatchedEpisodes('show');
+        await service.sync();
+        expect(WebDavSyncDocument.decode(remote!).backup.watched, isEmpty);
+        expect(await LibraryStore.instance.historyEntry('show'), isNotNull);
+      },
+    );
+
+    test(
+      'a vanished established cloud file is not recreated from stale local state',
+      () async {
+        remote = WebDavSyncDocument(
+          backup(
+            history: [
+              {'id': 'one', 'kind': 'book', 'time': 1},
+            ],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        remote = null;
+        await expectLater(service.sync(), throwsA(isA<WebDavException>()));
+        expect(remote, isNull);
       },
     );
 
