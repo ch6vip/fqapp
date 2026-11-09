@@ -156,6 +156,16 @@ pub struct Device {
     /// the device is registered again.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub openudid: String,
+    /// The upstream `version_code` this device was registered with.
+    ///
+    /// It is what makes a changed identity observable: the pool retires the
+    /// devices that were registered under the previous version instead of
+    /// handing them out for a version they never claimed. `serde(default)`
+    /// keeps pools written before this field existed loadable; those devices
+    /// carry an empty value, which is treated as "unknown" and kept (see
+    /// `DevicePool::build`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub registered_version_code: String,
 }
 
 /// The on-disk JSON shape (mirrors device_pool.json).

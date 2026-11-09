@@ -432,6 +432,52 @@ bash scripts/test_quick.sh home
 3. 从 Flutter 资源清单枚举并部署 `assets/filters/` 下的文件（含清单中的嵌套文件）到 `backend/filters/`。内容变更时替换旧资源。
 4. 运行时资源不含任何可执行后端二进制；Rust 核心以 `libfqapi_core.so` 随 APK 打包，在进程内加载。
 
+`config.json` 里还有一个可选的 `upstream` 段（`version_name`、`version_code`、
+`manifest_version_code`、`update_version_code`、`user_agent`）：**设备注册**用的 UA 与版本号从
+这里读，UA 支持 `{manifest_version_code}`（别名 `{version_code}`，两者取同一个值）、
+`{os_version}`、`{device_type}` 三个占位符。字段留空即用改动前硬编码的值，所以不写这一段
+行为完全不变。
+
+范围只说一次，免得误解：**这一段只作用于设备注册的第一步 `device_register`**。同一流程里
+`activate_premium` 仍写死 `version_code=61532&version_name=6.1.5.32`，`register_key` 写死
+`version_code=6.1.5.32` 且 UA 是光秃秃的 `com.dragon.read`，`sdk_version` 与 `package` 也是常量；
+正文 / 目录 / 搜索 / 短剧端点的查询串（`rust/src/endpoints/*.rs`）与通用请求的 UA
+（`rust/src/upstream/client.rs` 的 `DEFAULT_USER_AGENT`）同理。上游要动这些仍然得改代码。
+
+类型上：数字、布尔、`null` 都会被转成字符串（`null` 视作留空，走默认值）；数字写成 `71332`
+或 `"71332"` 等价，整数值的浮点写法（`71332.0`、`1e3`）也等价于 `71332`，真正的分数
+（`7.1`）保留小数。
+
+形状上：**整段必须是 JSON 对象**。数组、字符串、数字都会让 `Config::load` 失败、后端起不来
+——这一点不是多余的：serde 默认会把结构体按位置从数组反序列化，`"upstream": [1, 2]` 会被读成
+`version_name = "1"`、`version_code = "2"`，一个看起来合法、实则完全错误的身份会被悄悄发给
+上游。整段写成 `null` 视作「未配置」，等同于不写这一段。
+
+**段内的字段名也必须写对**：多写或拼错一个字段名（例如 `useragent` 而不是 `user_agent`）
+同样是配置错误，会让 `Config::load` 失败。否则拼错的字段会被静默忽略——UA 保持内置模板，
+改配置的人只会看到「改了没效果」，而没有任何报错提示。
+
+**`version_name` 和 `version_code` 必须一起写**：只写其中一个同样是配置错误（理由见下）。
+
+一致性上：三个 `*_version_code` 是同一个上游版本的不同视图。**显式填的字段一定生效，没填的
+跟随 `version_code`**（而不是退回内置默认值），所以只改一个 `version_code` 时，注册头里的
+manifest / update code 会一起跟着走，不会出现新旧版本号并存的设备身份；四个字段都没填才回到
+改动前的硬编码值。
+
+`version_name`（`7.1.3.32`）和 `version_code`（`71332`）是同一个版本的两种写法，但**两者之间
+没有可推导的规则**——去掉点号对多数版本成立（`6.5.1.32` → `65132`），对少数不成立
+（`15.8.0` → `150800`，不是 `1580`）。所以后端**不做任何推导**，也**不接受只填一个**：
+只写 `version_name` 或只写 `version_code`，和数组、拼错的字段名一样，是**配置错误**，
+`Config::load` 失败、后端起不来。
+
+这样处理而不是「警告一下继续跑」，有两个原因：一是猜出来的版本号是一个看起来对、实则错的上游
+身份，比直接报错更糟；二是桌面构建不安装 logger（`log` 宏是 no-op），警告在 Windows 上根本
+看不见，而配置错误在所有平台上都能报出来。**要改版本，四个字段一起改。**
+
+注意两点：`config.json` 是随包发布的资源，`BackendService._deploy` 每次启动都用包内副本覆盖
+`files/backend/config/config.json`，所以手改设备上的那份不生效；身份参数在后端每次启动时重新
+读取（`stop()`+`start()` 也会重读），但要换配置仍需重新打包并重启 App。
+
 ### 废弃的 HTML 插件资产（#252）
 
 `assets/plugins/player.html` 没有产品调用方，按历史残留移除，不作为待接入功能保留；同时移除 `pubspec.yaml` 的目录声明和 `BackendService._deploy` 的插件部署入口。播放器继续使用现有 `NativePlayer` 平台实现，漫画阅读继续走 Flutter 页面；Rust 的通用静态文件服务不是这些 HTML 的调用方，不作改动。
