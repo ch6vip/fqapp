@@ -507,12 +507,13 @@ void main() {
         createClient: (settings) => WebDavClient(
           settings,
           client: MockClient((request) async {
-            if (request.method == 'GET')
+            if (request.method == 'GET') {
               return http.Response.bytes(
                 remote!,
                 200,
                 headers: {'etag': '"$version"'},
               );
+            }
             expect(request.headers['if-match'], '"$version"');
             remote = request.bodyBytes;
             version++;
