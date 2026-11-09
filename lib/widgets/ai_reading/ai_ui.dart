@@ -363,13 +363,8 @@ class AiInfoCard extends StatelessWidget {
         palette.eink ? Colors.black : const Color(0xFF9C3D33),
       AiStatusTone.neutral => palette.muted,
     };
-    return Container(
+    return SurfacePanel(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(SettingsGroupCard.radius),
-        border: Border.all(color: palette.line, width: 0.6),
-      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
