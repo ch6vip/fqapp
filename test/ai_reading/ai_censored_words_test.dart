@@ -36,6 +36,9 @@ void main() {
       expect(recovery.text, startsWith(plain.text));
       expect(recovery.text, contains(kAiRestoreCensoredWordsPrompt));
       expect(recovery.text, contains('无法确定原词时保留原文'));
+      expect(recovery.text, contains('wcnm'));
+      expect(recovery.text, contains('我踏马'));
+      expect(recovery.text, contains('不要因包含粗口而擅自净化'));
       expect(recovery.hash, isNot(plain.hash));
       expect(recovery.promptId, isNot(plain.promptId));
       expect(recovery.source, plain.source);
