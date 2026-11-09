@@ -36,6 +36,7 @@ try {
         Invoke-Checked $flutter $testArgs
         Invoke-Checked 'cargo' @('test', '--manifest-path', 'rust/Cargo.toml', '--locked', '--lib')
     }
+    & (Join-Path $PSScriptRoot 'prepare_windows_media.ps1')
     Invoke-Checked $flutter @('build', 'windows', '--release', '--no-pub')
     Invoke-Checked 'python' @('scripts/verify_windows_media.py')
     Invoke-Checked (Join-Path $FlutterRoot 'bin\dart.bat') @('compile', 'exe', 'scripts/verify_windows_player.dart', '-o', 'build/verify_windows_player.exe')
