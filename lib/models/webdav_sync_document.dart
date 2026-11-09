@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../services/shelf_store.dart';
 import 'library_backup.dart';
+import 'shelf_identity.dart';
 
 /// Bookmarks/progress use the portable backup allowlist. Shelf removals carry
 /// tombstones so an offline device cannot resurrect a removed favourite.
@@ -38,9 +39,11 @@ class WebDavSyncDocument {
       if (removed.length > 10000) throw const FormatException('移除记录过多');
       final tombstones = <String, int>{};
       for (final entry in removed.entries) {
-        if (!RegExp(
-              r'^shelf_v1:(book|audio|manga|video|manju):[a-zA-Z0-9_-]{1,128}$',
-            ).hasMatch(entry.key) ||
+        if (!entry.key.startsWith(ShelfIdentity.storagePrefix) ||
+            ShelfIdentity.parseContentKey(
+                  entry.key.substring(ShelfIdentity.storagePrefix.length),
+                ) ==
+                null ||
             entry.value is! int ||
             entry.value < 0 ||
             entry.value > 8640000000000000) {
