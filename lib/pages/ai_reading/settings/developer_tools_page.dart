@@ -27,7 +27,8 @@ class DeveloperToolsPage extends StatefulWidget {
 class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
   static const _bookId = '__developer_ai_sandbox__';
   final _input = TextEditingController(
-    text: '“wcnm！”他气得拍了一下桌子。\n“我踏马真是服了。”他叹了口气。\n她说：“啊，原来如此。”\n信纸上的***被墨水遮住了。',
+    text:
+        '“wcnm！”他气得拍了一下桌子。\n“我踏马真是服了。”他叹了口气。\n她说：“啊，原来如此。”\n他拿出手机，打开*****给朋友发消息。\n“你这个*****！”他指着背叛自己的朋友骂道。',
   );
   final _json = TextEditingController(text: '{"edits":[]}');
   bool _restore = true;
