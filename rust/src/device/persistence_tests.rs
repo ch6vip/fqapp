@@ -289,6 +289,160 @@ async fn a_full_pool_hands_out_devices_while_maintenance_is_running() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A changed upstream identity retires the devices that were registered under
+/// the previous version, so the app never hands out a device that claims a
+/// version it was not registered with.
+#[tokio::test]
+async fn devices_registered_under_another_version_are_retired() {
+    let dir = temp_dir("version-retire");
+    let path = dir.join("device_pool.json");
+    // Two devices under the old version, one under the current one.
+    let mut android: Vec<Device> = (0..3)
+        .map(|i| Device {
+            device_id: format!("{i:016}"),
+            install_id: format!("{}", 9_000_000_000_000_000_000u64 + i as u64),
+            secret_key: format!("{i:032x}"),
+            platform: "android".to_string(),
+            status: "active".to_string(),
+            created_time: "2026-01-01 00:00:00".to_string(),
+            last_used: format!("2026-01-01 00:00:0{i}"),
+            use_count: i as i64,
+            cdid: format!("cdid-{i}"),
+            openudid: format!("{i:016}"),
+            registered_version_code: "65132".to_string(),
+        })
+        .collect();
+    android[1].registered_version_code = "71332".to_string();
+    let body = serde_json::to_string(&PoolFile {
+        android,
+        last_update: "2026-01-01 00:00:00".to_string(),
+    })
+    .expect("pool json");
+    tokio::fs::write(&path, body).await.expect("seed pool");
+
+    // The identity in force says "71332", so the two "65132" devices must go
+    // and the "71332" one must stay.
+    let pool = DevicePool::build_with_version(&path, None, "71332".to_string())
+        .await
+        .expect("pool");
+    let kept: Vec<String> = {
+        let s = pool.state.lock().await;
+        s.devices.iter().map(|d| d.device_id.clone()).collect()
+    };
+    assert_eq!(
+        kept,
+        vec!["0000000000000001".to_string()],
+        "only the device registered under the current version may survive"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A pool written before the version was recorded carries no version. Those
+/// devices are kept: an app upgrade must not wipe the pool and trigger a
+/// burst of registrations against the upstream.
+#[tokio::test]
+async fn devices_without_a_recorded_version_are_kept() {
+    let dir = temp_dir("version-unknown");
+    let path = dir.join("device_pool.json");
+    tokio::fs::write(&path, pool_json(MIN_POOL_SIZE))
+        .await
+        .expect("seed pool");
+
+    let pool = DevicePool::build_with_version(&path, None, "71332".to_string())
+        .await
+        .expect("pool");
+    let count = pool.state.lock().await.devices.len();
+    assert_eq!(
+        count, MIN_POOL_SIZE,
+        "a pool that does not record a version must not be wiped"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An empty identity (no upstream section configured) retires nothing.
+#[tokio::test]
+async fn no_configured_version_retires_nothing() {
+    let dir = temp_dir("version-empty");
+    let path = dir.join("device_pool.json");
+    let mut android: Vec<Device> = (0..2)
+        .map(|i| Device {
+            device_id: format!("{i:016}"),
+            install_id: format!("{}", 9_000_000_000_000_000_000u64 + i as u64),
+            secret_key: format!("{i:032x}"),
+            platform: "android".to_string(),
+            status: "active".to_string(),
+            created_time: "2026-01-01 00:00:00".to_string(),
+            last_used: format!("2026-01-01 00:00:0{i}"),
+            use_count: i as i64,
+            cdid: format!("cdid-{i}"),
+            openudid: format!("{i:016}"),
+            registered_version_code: "65132".to_string(),
+        })
+        .collect();
+    android[1].registered_version_code = "71332".to_string();
+    let body = serde_json::to_string(&PoolFile {
+        android,
+        last_update: "2026-01-01 00:00:00".to_string(),
+    })
+    .expect("pool json");
+    tokio::fs::write(&path, body).await.expect("seed pool");
+
+    let pool = DevicePool::build_with_version(&path, None, String::new())
+        .await
+        .expect("pool");
+    let count = pool.state.lock().await.devices.len();
+    assert_eq!(count, 2, "an unset version must not retire anything");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A pool whose devices were all registered under another version ends up
+/// empty, and an empty pool is refilled - otherwise the app would have no
+/// device to serve requests with after the identity changed.
+#[tokio::test]
+async fn a_pool_emptied_by_retirement_is_refilled() {
+    let dir = temp_dir("version-refill");
+    let path = dir.join("device_pool.json");
+    // Every device was registered under the old version.
+    let android: Vec<Device> = (0..MIN_POOL_SIZE)
+        .map(|i| Device {
+            device_id: format!("{i:016}"),
+            install_id: format!("{}", 9_000_000_000_000_000_000u64 + i as u64),
+            secret_key: format!("{i:032x}"),
+            platform: "android".to_string(),
+            status: "active".to_string(),
+            created_time: "2026-01-01 00:00:00".to_string(),
+            last_used: format!("2026-01-01 00:00:0{i}"),
+            use_count: i as i64,
+            cdid: format!("cdid-{i}"),
+            openudid: format!("{i:016}"),
+            registered_version_code: "65132".to_string(),
+        })
+        .collect();
+    let body = serde_json::to_string(&PoolFile {
+        android,
+        last_update: "2026-01-01 00:00:00".to_string(),
+    })
+    .expect("pool json");
+    tokio::fs::write(&path, body).await.expect("seed pool");
+
+    let pool = DevicePool::build_with_version(&path, None, "71332".to_string())
+        .await
+        .expect("pool");
+    assert_eq!(
+        pool.state.lock().await.devices.len(),
+        0,
+        "every device was registered under the previous version"
+    );
+    // An empty pool counts as missing devices, so the next maintenance pass
+    // knows it has to register new ones.
+    assert_eq!(
+        pool.missing_devices().await,
+        MIN_POOL_SIZE,
+        "an emptied pool must ask for new devices"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Usage counters are rotation hints, so they are kept in memory and
 /// written back on a timer instead of on every pick; a structural change
 /// still commits them immediately.

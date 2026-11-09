@@ -237,6 +237,19 @@ impl DevicePool {
         file: impl AsRef<Path>,
         mock_origin: Option<String>,
     ) -> Result<Arc<Self>, String> {
+        Self::build_with_version(file, mock_origin, register::current_version_code()).await
+    }
+
+    /// The version the pool's devices must have been registered with.
+    ///
+    /// It is a parameter rather than a read of the process-wide identity cell
+    /// so that the retirement rule can be exercised without mutating global
+    /// state that other tests share.
+    async fn build_with_version(
+        file: impl AsRef<Path>,
+        mock_origin: Option<String>,
+        current_version: String,
+    ) -> Result<Arc<Self>, String> {
         let file = file.as_ref().to_path_buf();
         let mut devices = Vec::new();
         if let Ok(data) = tokio::fs::read(&file).await {
@@ -299,6 +312,32 @@ impl DevicePool {
             }
         }
         devices.truncate(MAX_POOL_SIZE);
+        // A changed upstream identity retires the devices that were registered
+        // under the previous version: handing them out would make the app
+        // report a version they never claimed.
+        //
+        // Only devices that *say* which version they were registered with are
+        // retired. A pool written before this field existed carries no
+        // version, and those devices are kept: an app upgrade must not wipe
+        // the pool and trigger a burst of registrations against the upstream.
+        // They are replaced one by one as they are used.
+        //
+        // An empty `current_version` means "nothing to compare against", which
+        // is not the same as the default version: the default is spelled out
+        // by the identity itself, so it is never empty.
+        if !current_version.is_empty() {
+            let before = devices.len();
+            devices.retain(|d| {
+                d.registered_version_code.is_empty() || d.registered_version_code == current_version
+            });
+            let retired = before - devices.len();
+            if retired > 0 {
+                log::warn!(
+                    "retired {retired} device(s) registered under a different upstream version \
+                     (now {current_version})"
+                );
+            }
+        }
         Ok(Arc::new(DevicePool {
             file,
             state: Arc::new(Mutex::new(PoolState {
