@@ -30,6 +30,18 @@ const String kAiDefaultBehaviorPrompt = '''
 只有明确存在问题时才提出修改。
 ''';
 
+/// Optional context-based recovery, using the same validated edit protocol.
+const String kAiRestoreCensoredWordsPrompt = '''
+【去屏蔽词】
+在完成文字校对的同时，检查正文中被屏蔽、谐音或拼音替换而影响理解的词。
+仅在上下文明确且高度确定时，还原“＊”“*”“口口”“□□”“XX”等占位符，
+以及明显为规避屏蔽而使用的拼音、谐音或拆字；普通拼音、英文、姓名和正常用词不要修改。
+只替换被遮蔽的最小词语片段，不直接删除占位符，不扩写句子或补充情节。
+无法确定原词时保留原文，不猜测；不要把模型生成的还原结果声称为作者原稿。
+此类修改的 category 使用“屏蔽词还原”，reason 简短说明上下文依据。
+所有还原都必须遵守 original 精确匹配和局部替换协议，作为可审核、可撤销的修改建议输出。
+''';
+
 /// Program-owned edit contract. Appended to every proofreading request for
 /// both output modes; it is never part of the editable behaviour prompt.
 const String kAiEditContract = '''
@@ -127,8 +139,12 @@ class AiResolvedPrompt {
 AiResolvedPrompt aiResolvePrompt({
   required String? bookPrompt,
   required String? globalPrompt,
+  bool restoreCensoredWords = false,
 }) {
-  final text = bookPrompt ?? globalPrompt ?? kAiDefaultBehaviorPrompt;
+  final base = bookPrompt ?? globalPrompt ?? kAiDefaultBehaviorPrompt;
+  final text = restoreCensoredWords
+      ? '$base\n$kAiRestoreCensoredWordsPrompt'
+      : base;
   final source = bookPrompt != null
       ? 'book'
       : globalPrompt != null

@@ -587,6 +587,20 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     return SettingsGroupCard(
       children: [
         SettingsRow(
+          icon: Icons.text_fields,
+          title: '去屏蔽词',
+          subtitle:
+              '根据上下文还原星号、拼音和谐音替换词；不确定时保留原文。'
+              '对新校对生效，已有结果需重新校对。',
+          trailing: SettingsSwitch(
+            value: global.restoreCensoredWords,
+            onChanged: (value) => _saveGlobal(
+              _settings.global.copyWith(restoreCensoredWords: value),
+            ),
+            semanticLabel: '去屏蔽词',
+          ),
+        ),
+        SettingsRow(
           icon: Icons.article_outlined,
           title: '提示词',
           value: global.behaviorPrompt == null ? '默认（保守校对）' : '自定义',
