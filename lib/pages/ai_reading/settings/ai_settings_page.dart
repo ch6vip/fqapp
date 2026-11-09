@@ -22,6 +22,7 @@ import 'ai_provider_page.dart';
 import 'ai_rate_page.dart';
 import 'ai_settings_widgets.dart';
 import 'ai_usage_page.dart';
+import 'developer_tools_page.dart';
 
 /// Global AI reading settings: consent, provider, display, prompt, prefetch
 /// and budget. Book-level overrides live in [AiBookSettingsPage].
@@ -854,6 +855,36 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     final consented = _settings.device.cloudConsent;
     return SettingsGroupCard(
       children: [
+        SettingsRow(
+          icon: Icons.developer_mode,
+          title: '开发者模式',
+          subtitle: '仅本机开启，提供 AI 样例测试和同步诊断',
+          trailing: SettingsSwitch(
+            semanticLabel: '开发者模式',
+            value: _settings.device.developerMode,
+            onChanged: (value) async {
+              try {
+                await _settings.saveDevice(
+                  _settings.device.copyWith(developerMode: value),
+                );
+              } catch (_) {
+                if (context.mounted) aiShowSnack(context, '开发者模式保存失败');
+              }
+            },
+          ),
+        ),
+        if (_settings.device.developerMode)
+          SettingsRow(
+            icon: Icons.science_outlined,
+            title: '开发者测试台',
+            subtitle: '去屏蔽词、JSON 校验、提示词预览与 WebDAV 状态',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const DeveloperToolsPage(),
+              ),
+            ),
+          ),
         SettingsRow(
           icon: Icons.cloud_outlined,
           title: '云端正文传输',
