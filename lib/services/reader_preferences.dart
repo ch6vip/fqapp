@@ -5,7 +5,7 @@ import 'reader_tap_zones.dart';
 
 part 'reader_preferences_codec.dart';
 
-enum ReaderThemePreset { light, eyeCare, parchment, dark, eink }
+enum ReaderThemePreset { light, eyeCare, parchment, dark, eink, mistBlue }
 
 enum ReaderTitleAlignment { start, center }
 

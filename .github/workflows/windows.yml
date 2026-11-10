@@ -71,7 +71,15 @@ jobs:
           path: |
             build/windows/x64/runner/Release
             rust/target/release/fqapi_core.dll
-          key: windows-3.47.9-rust1.99.1-${{ runner.arch }}-v1-${{ hashFiles('lib/**', 'pubspec.*', 'rust/Cargo.*', 'rust/src/**', 'rust/assets/**', 'rust/build.rs', 'native/**', 'assets/**', 'windows/runner/**', 'windows/CMakeLists.txt', 'windows/flutter/CMakeLists.txt', 'third_party/**') }}
+          key: windows-3.47.9-rust1.99.1-${{ runner.arch }}-v1-${{ hashFiles('lib/**', 'pubspec.*', 'rust/Cargo.*', 'rust/src/**', 'rust/assets/**', 'rust/build.rs', 'native/**', 'assets/**', 'windows/runner/**', 'windows/CMakeLists.txt', 'windows/flutter/CMakeLists.txt', 'third_party/**', 'scripts/prepare_windows_media.ps1', 'scripts/build_windows.ps1', '.github/workflows/windows.yml') }}
+      - name: Verify native archive download recovery
+        if: steps.bundle-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/test_prepare_windows_media.ps1
+      - name: Download and verify Windows media archives
+        if: steps.bundle-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/prepare_windows_media.ps1
       - name: Build Windows release
         if: steps.bundle-cache.outputs.cache-hit != 'true'
         run: flutter build windows --release --target lib/main.dart
