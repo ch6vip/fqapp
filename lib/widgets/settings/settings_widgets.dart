@@ -102,6 +102,64 @@ class SettingsScaffold extends StatelessWidget {
   }
 }
 
+/// A surface panel: `surface` fill, a 0.6dp `line` border and the shared
+/// corner radius.
+///
+/// It is the shell behind [SettingsGroupCard] and the AI reading info cards,
+/// so a panel looks the same wherever it appears.
+///
+/// Two shells share the one visual definition. With `ink` (the default for
+/// [SettingsGroupCard]) the fill is a `Material` with `Clip.antiAlias`, so
+/// `InkWell` ripples are hosted and clipped to the rounded shape. Without it
+/// the fill is a plain `DecoratedBox` — visually identical, but with no clip
+/// layer and no ink host, which keeps the per-frame repaint of the whole page
+/// cheap while the keyboard animation relayouts it (a `Material` here cost
+/// about twice the paint/build work of the decorated box on the same page).
+/// Cards without an interactive ink child should stay on the default.
+class SurfacePanel extends StatelessWidget {
+  const SurfacePanel({
+    super.key,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+    this.radius = SettingsGroupCard.radius,
+    this.ink = false,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  /// Corner radius; the shared token by default.
+  final double radius;
+
+  /// Host `InkWell` ink and clip it to the shape.
+  final bool ink;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final body = Padding(padding: padding, child: child);
+    if (!ink) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: palette.line, width: 0.6),
+        ),
+        child: body,
+      );
+    }
+    return Material(
+      color: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius),
+        side: BorderSide(color: palette.line, width: 0.6),
+      ),
+      child: body,
+    );
+  }
+}
+
 /// 设置分组卡片：surface 底 + 0.6dp line 描边 + 唯一圆角 token。
 ///
 /// [children] 之间自动插入一条缩进 68dp 的分隔线（与 38dp 图标砖 +
@@ -125,13 +183,8 @@ class SettingsGroupCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Material(
-      color: palette.surface,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radius),
-        side: BorderSide(color: palette.line, width: 0.6),
-      ),
+    return SurfacePanel(
+      ink: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
