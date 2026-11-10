@@ -1,18 +1,16 @@
-// Upstream source: Wenku8_Flutter rev ebcd7f1
-//   lib/updates/update_page.dart (AppUpdatePage: ArchiveFeaturePage shell,
-//     ArchiveSection title block, ContentPanel rows, GlassTextButton)
-//   lib/feature_pages.dart (FeatureEntry/featurePadding vocabulary)
-// Mechanical substitutions:
-// - fqapp has no update service or account module: the version line stays the
-//   static `AboutPage.versionText` (never bumped here), update checking links
-//   to the GitHub release page, and the open-source licence entry keeps
-//   `showLicensePage` with the Wenku8 notices registered by
-//   `lib/services/third_party_licenses.dart` (assets/licenses/wenku8).
-// - `SettingsGroupCard`/`SettingsRow` are replaced by the archive
-//   `ContentPanel` + an upstream-styled row. The sponsor card and the WeChat
-//   reward dialog are fqapp-only and remain unchanged.
-// - Logo plate / heading / intro copy are preserved so the existing About
-//   contract (version copy, licence route, e-ink shadow) is unchanged.
+// Two presentations, one about page.
+//
+// Archive keeps the Wenku8 rev ebcd7f1 shell from #291
+// (`ArchiveFeaturePage` + `ArchiveSection` + `ContentPanel`); classic restores
+// the pre-#291 `SettingsScaffold` layout from fqapp-backup@f329399
+// (`SettingsGroupCard` + `SettingsRow`). Both go through `SettingsArchivePage`,
+// so the Windows right pane keeps its content instead of popping itself blank.
+//
+// Upstream content is unchanged: the static version line, the GPL-3.0 licence
+// route with the Wenku8 notices registered by
+// `lib/services/third_party_licenses.dart` (assets/licenses/wenku8), the same
+// GitHub links, and the fqapp-only sponsor card with the WeChat reward dialog
+// (赞赏) stay on both presentations.
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
@@ -21,13 +19,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/settings/classic_settings_icons.dart';
+import '../widgets/settings/settings_adaptive.dart';
+import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
-/// About page in the Wenku8 archive shell: centered logo/name header, a short
-/// intro paragraph, then archive panel rows (version, updates, licenses,
-/// source code, feedback, ...).
+/// About page in the selected presentation: centered logo/name header, a short
+/// intro paragraph, then the version / updates / licences / source / feedback
+/// rows and the support card.
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
 
@@ -54,8 +56,9 @@ class AboutPage extends StatelessWidget {
     final theme = Theme.of(context);
     final palette = HomePalette.of(context);
     final scheme = theme.colorScheme;
+    final classic = AppUiScope.isClassic(context);
 
-    return ArchiveFeaturePage(
+    return SettingsArchivePage(
       title: '关于',
       code: 'SYSTEM / ABOUT',
       child: ListView(
@@ -74,79 +77,15 @@ class AboutPage extends StatelessWidget {
               height: 1.7,
             ),
           ),
-          const SizedBox(height: 24),
-          const ArchiveSection(title: '应用信息', code: 'FQAPP / ABOUT'),
-          const SizedBox(height: 14),
-          ContentPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _InfoRow(
-                  icon: LucideIcons.badge_check,
-                  title: '当前版本',
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        versionText,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Icon(
-                        LucideIcons.copy,
-                        size: 15,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ],
-                  ),
-                  onTap: () => _copyVersion(context),
-                ),
-                _InfoRow(
-                  icon: LucideIcons.square_arrow_out_up_right,
-                  title: '检查更新',
-                  subtitle: '前往 GitHub 发布页查看新版本',
-                  onTap: () => _launchExternalUrl(
-                    context,
-                    'https://github.com/ch6vip/fqapp/releases',
-                  ),
-                ),
-                _InfoRow(
-                  icon: LucideIcons.scale,
-                  title: '开源许可',
-                  subtitle: 'GPL-3.0 与第三方组件许可',
-                  onTap: () => showLicensePage(
-                    context: context,
-                    applicationName: '什锦铺',
-                    applicationVersion: versionText,
-                    applicationLegalese:
-                        '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。'
-                        'Wenku8 Flutter 界面来源与许可文本见 assets/licenses/wenku8。',
-                  ),
-                ),
-                _InfoRow(
-                  icon: LucideIcons.code_xml,
-                  title: '源代码',
-                  subtitle: 'github.com/ch6vip/fqapp',
-                  onTap: () => _launchExternalUrl(
-                    context,
-                    'https://github.com/ch6vip/fqapp',
-                  ),
-                ),
-                _InfoRow(
-                  icon: LucideIcons.message_square,
-                  title: '问题反馈',
-                  subtitle: '前往 GitHub Issues 提交',
-                  onTap: () => _launchExternalUrl(
-                    context,
-                    'https://github.com/ch6vip/fqapp/issues',
-                  ),
-                ),
-              ],
-            ),
-          ),
+          const SizedBox(height: 12),
+          // The archive page labels its info panel; the pre-#291 page put the
+          // grouped card straight under the intro paragraph.
+          if (!classic) ...[
+            const SizedBox(height: 12),
+            const SettingsSection(title: '应用信息', code: 'FQAPP / ABOUT'),
+            const SizedBox(height: 14),
+          ],
+          const _AboutInfoCard(),
           const SizedBox(height: 20),
           const _SupportCard(),
           const SizedBox(height: 24),
@@ -212,8 +151,130 @@ class AboutPage extends StatelessWidget {
   }
 }
 
-/// Archive-style information row: leading icon, title/subtitle and an optional
-/// trailing value. The whole row is the tap target.
+/// 信息卡：版本（点按复制）、检查更新、开源许可、源码与反馈。
+class _AboutInfoCard extends StatelessWidget {
+  const _AboutInfoCard();
+
+  /// Fixed chrome around the version row: card gutters, the 38dp icon tile (or
+  /// the 21dp archive glyph), the gaps and the trailing copy glyph/chevron.
+  static const _classicChrome = 16 + 16 + 38 + 12 + 12 + 6 + 15;
+  static const _archiveChrome = 16 + 16 + 21 + 12 + 8 + 8 + 14 + 6 + 15;
+
+  static double _textWidth(BuildContext context, String text, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final classic = AppUiScope.isClassic(context);
+    final scheme = Theme.of(context).colorScheme;
+    final palette = HomePalette.of(context);
+    final versionStyle = const TextStyle(fontSize: 13);
+    final titleStyle = const TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
+    );
+    final muted = classic ? palette.muted : scheme.onSurfaceVariant;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Keep the version inline while it and the row title fit; otherwise
+        // move it to the subtitle so 320dp / 2× text cannot overflow the row
+        // (the trailing row has natural width and cannot shrink).
+        final chrome = classic ? _classicChrome : _archiveChrome;
+        final needed =
+            chrome +
+            _textWidth(context, '当前版本', titleStyle) +
+            _textWidth(context, AboutPage.versionText, versionStyle);
+        final inline = constraints.maxWidth >= needed;
+        final copyIcon = Icon(
+          LucideIcons.copy,
+          size: 15,
+          color: classic ? palette.muted : scheme.onSurfaceVariant,
+        );
+        final rows = <Widget>[
+          _InfoRow(
+            icon: LucideIcons.badge_check,
+            title: '当前版本',
+            subtitle: inline ? null : AboutPage.versionText,
+            trailing: inline
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        AboutPage.versionText,
+                        style: TextStyle(fontSize: 13, color: muted),
+                      ),
+                      const SizedBox(width: 6),
+                      copyIcon,
+                    ],
+                  )
+                : copyIcon,
+            onTap: () => AboutPage._copyVersion(context),
+          ),
+          _InfoRow(
+            icon: LucideIcons.square_arrow_out_up_right,
+            title: '检查更新',
+            subtitle: '前往 GitHub 发布页查看新版本',
+            onTap: () => _launchExternalUrl(
+              context,
+              'https://github.com/ch6vip/fqapp/releases',
+            ),
+          ),
+          _InfoRow(
+            icon: LucideIcons.scale,
+            title: '开源许可',
+            subtitle: 'GPL-3.0 与第三方组件许可',
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: '什锦铺',
+              applicationVersion: AboutPage.versionText,
+              applicationLegalese:
+                  '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。'
+                  'Wenku8 Flutter 界面来源与许可文本见 assets/licenses/wenku8。',
+            ),
+          ),
+          _InfoRow(
+            icon: LucideIcons.code_xml,
+            title: '源代码',
+            subtitle: 'github.com/ch6vip/fqapp',
+            onTap: () =>
+                _launchExternalUrl(context, 'https://github.com/ch6vip/fqapp'),
+          ),
+          _InfoRow(
+            icon: LucideIcons.message_square,
+            title: '问题反馈',
+            subtitle: '前往 GitHub Issues 提交',
+            onTap: () => _launchExternalUrl(
+              context,
+              'https://github.com/ch6vip/fqapp/issues',
+            ),
+          ),
+        ];
+        if (classic) return SettingsGroupCard(children: rows);
+        return ContentPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: rows,
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Information row: leading icon, title/subtitle and an optional trailing
+/// value. The whole row is the tap target.
+///
+/// Classic renders the pre-#291 `SettingsRow` (soft icon tile, 38dp square);
+/// archive keeps the Wenku8 inline row.
 class _InfoRow extends StatelessWidget {
   const _InfoRow({
     required this.icon,
@@ -231,6 +292,16 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (AppUiScope.isClassic(context)) {
+      return SettingsRow(
+        icon: classicSettingsIcon(title, icon),
+        iconTile: true,
+        title: title,
+        subtitle: subtitle,
+        trailing: trailing,
+        onTap: onTap,
+      );
+    }
     final scheme = Theme.of(context).colorScheme;
     final content = Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),

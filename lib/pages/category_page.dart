@@ -220,7 +220,8 @@ class _CategoryPageState extends State<CategoryPage> {
       _ => SearchCategory.book,
     };
     Navigator.of(context).push(
-      SearchRoute<void>(
+      SearchRoute.open<void>(
+        context,
         builder: (_) =>
             SearchPage(initialQuery: query, initialCategory: category),
       ),

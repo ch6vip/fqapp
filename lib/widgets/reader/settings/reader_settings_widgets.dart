@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/reader_preferences.dart';
+import '../../app_ui/app_ui_scope.dart';
 import '../../wenku/wenku_ui.dart';
 import '../reader_theme.dart';
 
@@ -159,47 +160,66 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
         )
       : child;
 
-  Widget _header(BuildContext context, ReaderThemePreset preset) => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Container(
-        margin: const EdgeInsets.only(top: 10, bottom: 4),
-        width: 36,
-        height: 4,
-        decoration: BoxDecoration(
-          color: preset.mutedTextColor.withValues(alpha: 0.25),
-          borderRadius: BorderRadius.circular(2),
+  /// Classic keeps the pre-#291 Material header (19sp title, plain close
+  /// icon); archive keeps the Wenku8 title row with its glass close button.
+  /// The outer frame, scroll view and content State are identical in both, so
+  /// an open sheet keeps its input and offset across a style switch.
+  Widget _header(BuildContext context, ReaderThemePreset preset) {
+    final classic = AppUiScope.isClassic(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 10, bottom: 4),
+          width: 36,
+          height: 4,
+          decoration: BoxDecoration(
+            color: preset.mutedTextColor.withValues(alpha: 0.25),
+            borderRadius: BorderRadius.circular(2),
+          ),
         ),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 8, 4),
-        child: Row(
-          children: [
-            const SizedBox(width: 2),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: preset.textColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
+        Padding(
+          padding: classic
+              ? const EdgeInsets.fromLTRB(20, 0, 8, 2)
+              : const EdgeInsets.fromLTRB(14, 0, 8, 4),
+          child: Row(
+            children: [
+              if (!classic) const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: preset.textColor,
+                    fontSize: classic ? 19 : 18,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
-            ...actions,
-            GlassIconButton(
-              icon: CupertinoIcons.xmark,
-              label: closeTooltip,
-              onPressed: () {
-                onClose?.call();
-                Navigator.pop(context);
-              },
-            ),
-          ],
+              ...actions,
+              if (classic)
+                IconButton(
+                  tooltip: closeTooltip,
+                  onPressed: () {
+                    onClose?.call();
+                    Navigator.pop(context);
+                  },
+                  icon: Icon(LucideIcons.x, size: 20, color: preset.textColor),
+                )
+              else
+                GlassIconButton(
+                  icon: CupertinoIcons.xmark,
+                  label: closeTooltip,
+                  onPressed: () {
+                    onClose?.call();
+                    Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 /// 一行设置：短标签 + 控件。标签允许换行，不截断。
@@ -257,18 +277,43 @@ class ReaderSettingsChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
-    return GlassControls.chip(
-      context,
+    final label = Text(
+      this.label,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: selected ? preset.accentColor : preset.mutedTextColor,
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+      ),
+    );
+    if (!AppUiScope.isClassic(context)) {
+      return GlassControls.chip(
+        context,
+        selected: selected,
+        onPressed: onTap,
+        tint: preset.panelColor,
+        child: label,
+      );
+    }
+    // Classic: the old flat Material chip, no lens or press morph.
+    return Semantics(
       selected: selected,
-      onPressed: onTap,
-      tint: preset.panelColor,
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: selected ? preset.accentColor : preset.mutedTextColor,
-          fontSize: 12,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+      button: true,
+      child: Material(
+        color: selected
+            ? preset.accentColor.withValues(alpha: 0.14)
+            : preset.fieldColor,
+        borderRadius: BorderRadius.circular(90),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 34),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Center(widthFactor: 1, heightFactor: 1, child: label),
+            ),
+          ),
         ),
       ),
     );
@@ -349,16 +394,19 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
               ),
             ),
           ),
-          GlassControls.toggle(
-            context,
-            value: value,
-            onChanged: onChanged,
-            accentColor: preset.accentColor,
-            trackColor: preset.borderColor,
-            thumbColor: preset.isDark ? preset.textColor : Colors.white,
-            tint: preset.panelColor,
-            plainFallback: true,
-          ),
+          if (AppUiScope.isClassic(context))
+            Switch(value: value, onChanged: onChanged)
+          else
+            GlassControls.toggle(
+              context,
+              value: value,
+              onChanged: onChanged,
+              accentColor: preset.accentColor,
+              trackColor: preset.borderColor,
+              thumbColor: preset.isDark ? preset.textColor : Colors.white,
+              tint: preset.panelColor,
+              plainFallback: true,
+            ),
         ],
       ),
     );

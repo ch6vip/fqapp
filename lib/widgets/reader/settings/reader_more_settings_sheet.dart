@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/reader_preferences.dart';
+import '../../app_ui/app_ui_scope.dart';
 import '../reader_tap_zone_sheet.dart';
 import '../reader_theme.dart';
 import 'reader_settings_state.dart';
@@ -31,6 +32,7 @@ Future<ReaderMoreSettingsResult?> showReaderMoreSettings({
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
+    barrierColor: AppUiScope.isClassic(context) ? null : Colors.transparent,
     clipBehavior: Clip.antiAlias,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),

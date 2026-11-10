@@ -7,8 +7,13 @@
 // Mechanical substitutions: shared Wenku8 controls replace upstream app_ui;
 // GlassOverlaySurface is the shared port and uses the reader's Theme.
 // Arrow tips are omitted, as in the upstream selection toolbar.
-import 'package:flutter/cupertino.dart';
+import 'dart:math' as math;
 
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
+
+import '../app_ui/app_ui_scope.dart';
 import '../wenku/wenku_ui.dart';
 
 /// What the reader can do with a long-pressed paragraph.
@@ -42,6 +47,23 @@ class ReaderParagraphMenu extends StatelessWidget {
   static const _arrowHeight = 8.0;
 
   static const _margin = 10.0;
+
+  /// Classic bar metrics (官方 wt.xml / selection/m.java, the pre-#291 bar):
+  /// 60x48 items with a 24dp icon over a 10sp label, 10dp side padding, 4dp
+  /// vertical padding and a 15x8 arrow. The archive bar keeps the Wenku8
+  /// 100x44 icon+label item.
+  static const _classicItemWidth = 60.0;
+  static const _classicItemHeight = 48.0;
+  static const _classicIconSize = 24.0;
+  static const _classicLabelTopGap = 2.0;
+  static const _classicLabelSize = 10.0;
+  static const _classicMultiPadding = 10.0;
+  static const _classicVerticalPadding = 4.0;
+  static const _classicArrowWidth = 15.0;
+  static const _classicRadius = 8.0;
+  static const _classicBarColor = Color(0xFF303030);
+  static const _classicBarColorDark = Color(0xFF1C1C1C);
+  static const _classicForeground = Color(0xFFFFFFFF);
 
   final bool underlined;
   final bool isDark;
@@ -112,6 +134,7 @@ class ReaderParagraphMenu extends StatelessWidget {
     bool showBookmark = false,
     bool showAi = false,
     double avoidBottom = 0,
+    bool classic = false,
   }) {
     const flipClearance = 10.0;
     final count = itemCount(
@@ -121,11 +144,21 @@ class ReaderParagraphMenu extends StatelessWidget {
       showBookmark: showBookmark,
       showAi: showAi,
     );
-    final barWidth = (count * _itemWidth + _multiPadding * 2).clamp(
-      0.0,
-      (view.width - _margin * 2).clamp(0.0, double.infinity),
-    );
-    final barHeight = _itemHeight + _arrowHeight;
+    // The classic bar's arrow takes layout space and its items are narrower
+    // and shorter; both numbers must match what the widget renders or the bar
+    // lands off its anchor.
+    final barWidth = classic
+        ? (count * _classicItemWidth + _classicMultiPadding * 2).clamp(
+            0.0,
+            (view.width - _margin * 2).clamp(0.0, double.infinity),
+          )
+        : (count * _itemWidth + _multiPadding * 2).clamp(
+            0.0,
+            (view.width - _margin * 2).clamp(0.0, double.infinity),
+          );
+    final barHeight = classic
+        ? _classicVerticalPadding * 2 + _classicItemHeight + _arrowHeight
+        : _itemHeight + _arrowHeight;
 
     final minLeft = _margin;
     final maxLeft = (view.width - barWidth - _margin).clamp(
@@ -149,62 +182,266 @@ class ReaderParagraphMenu extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    constraints: BoxConstraints(
-      maxWidth: maxWidth ?? MediaQuery.sizeOf(context).width - _margin * 2,
-    ),
-    child: GlassOverlaySurface(
-      key: const ValueKey('reader-selection-glass-bar'),
-      preserveOptics: true,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: _multiPadding),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (paragraphScoped && showListening)
+  Widget build(BuildContext context) {
+    if (AppUiScope.isClassic(context)) return _buildClassic(context);
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: maxWidth ?? MediaQuery.sizeOf(context).width - _margin * 2,
+      ),
+      child: GlassOverlaySurface(
+        key: const ValueKey('reader-selection-glass-bar'),
+        preserveOptics: true,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: _multiPadding),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (paragraphScoped && showListening)
+                  _Item(
+                    key: const ValueKey('reader-action-listen'),
+                    icon: CupertinoIcons.headphones,
+                    label: '从本段听',
+                    onTap: () => onAction(ReaderParagraphAction.listen),
+                  ),
                 _Item(
-                  key: const ValueKey('reader-action-listen'),
-                  icon: CupertinoIcons.headphones,
-                  label: '从本段听',
-                  onTap: () => onAction(ReaderParagraphAction.listen),
+                  key: const ValueKey('reader-action-copy'),
+                  icon: CupertinoIcons.doc_on_doc,
+                  label: '复制',
+                  onTap: () => onAction(ReaderParagraphAction.copy),
                 ),
-              _Item(
-                key: const ValueKey('reader-action-copy'),
-                icon: CupertinoIcons.doc_on_doc,
-                label: '复制',
-                onTap: () => onAction(ReaderParagraphAction.copy),
-              ),
-              if (showBookmark)
+                if (showBookmark)
+                  _Item(
+                    key: const ValueKey('reader-action-bookmark'),
+                    icon: CupertinoIcons.bookmark,
+                    label: '书签',
+                    onTap: () => onAction(ReaderParagraphAction.bookmark),
+                  ),
+                if (showAi)
+                  _Item(
+                    key: const ValueKey('reader-action-missed'),
+                    icon: CupertinoIcons.sparkles,
+                    label: '漏改了',
+                    onTap: () => onAction(ReaderParagraphAction.missedChange),
+                  ),
                 _Item(
-                  key: const ValueKey('reader-action-bookmark'),
-                  icon: CupertinoIcons.bookmark,
-                  label: '书签',
-                  onTap: () => onAction(ReaderParagraphAction.bookmark),
+                  key: const ValueKey('reader-action-underline'),
+                  icon: underlined
+                      ? CupertinoIcons.delete
+                      : CupertinoIcons.pencil,
+                  label: underlined
+                      ? (paragraphScoped ? '取消划线' : '删除划线')
+                      : '划线',
+                  onTap: () => onAction(
+                    underlined
+                        ? ReaderParagraphAction.removeUnderline
+                        : ReaderParagraphAction.underline,
+                  ),
                 ),
-              if (showAi)
-                _Item(
-                  key: const ValueKey('reader-action-missed'),
-                  icon: CupertinoIcons.sparkles,
-                  label: '漏改了',
-                  onTap: () => onAction(ReaderParagraphAction.missedChange),
-                ),
-              _Item(
-                key: const ValueKey('reader-action-underline'),
-                icon: underlined
-                    ? CupertinoIcons.delete
-                    : CupertinoIcons.pencil,
-                label: underlined ? (paragraphScoped ? '取消划线' : '删除划线') : '划线',
-                onTap: () => onAction(
-                  underlined
-                      ? ReaderParagraphAction.removeUnderline
-                      : ReaderParagraphAction.underline,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Color get _classicBackground =>
+      isDark ? _classicBarColorDark : _classicBarColor;
+
+  /// Total width of the classic action row before clamping to the viewport.
+  double _classicItemsWidth(BuildContext context) {
+    final count = itemCount(
+      underlined: underlined,
+      paragraphScoped: paragraphScoped,
+      showListening: showListening,
+      showBookmark: showBookmark,
+      showAi: showAi,
+    );
+    final barWidth = count * _classicItemWidth + _classicMultiPadding * 2;
+    // The caller anchors the bar against the overlay's local width; the
+    // renderer must use that same available width instead of the window, or a
+    // narrow overlay overflows what `resolvePosition` already clamped.
+    final available =
+        maxWidth ?? MediaQuery.sizeOf(context).width - 2 * _margin;
+    return math.max(
+      0.0,
+      math.min(barWidth, available) - _classicMultiPadding * 2,
+    );
+  }
+
+  /// The pre-#291 bar: flat dark Material block, one arrow tip facing the
+  /// paragraph, icon-over-label items. Narrow screens scroll the row instead
+  /// of clipping the last action.
+  Widget _buildClassic(BuildContext context) => Material(
+    key: const ValueKey('reader-selection-classic-bar'),
+    color: Colors.transparent,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (belowAnchor)
+          _ClassicArrow(pointingUp: true, color: _classicBackground)
+        else
+          const SizedBox.shrink(),
+        Container(
+          height: _classicItemHeight + _classicVerticalPadding * 2,
+          padding: const EdgeInsets.symmetric(
+            horizontal: _classicMultiPadding,
+            vertical: _classicVerticalPadding,
+          ),
+          decoration: BoxDecoration(
+            color: _classicBackground,
+            borderRadius: BorderRadius.circular(_classicRadius),
+          ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: _classicItemsWidth(context)),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (paragraphScoped && showListening)
+                    _ClassicItem(
+                      key: const ValueKey('reader-action-listen'),
+                      icon: LucideIcons.headphones,
+                      label: '从本段听',
+                      onTap: () => onAction(ReaderParagraphAction.listen),
+                    ),
+                  _ClassicItem(
+                    key: const ValueKey('reader-action-copy'),
+                    icon: LucideIcons.copy,
+                    label: '复制',
+                    onTap: () => onAction(ReaderParagraphAction.copy),
+                  ),
+                  _ClassicItem(
+                    key: const ValueKey('reader-action-underline'),
+                    icon: underlined
+                        ? LucideIcons.eraser
+                        : LucideIcons.highlighter,
+                    label: underlined
+                        ? (paragraphScoped ? '取消划线' : '删除划线')
+                        : '划线',
+                    onTap: () => onAction(
+                      underlined
+                          ? ReaderParagraphAction.removeUnderline
+                          : ReaderParagraphAction.underline,
+                    ),
+                  ),
+                  if (showBookmark)
+                    _ClassicItem(
+                      key: const ValueKey('reader-action-bookmark'),
+                      icon: LucideIcons.bookmark_plus,
+                      label: '书签',
+                      onTap: () => onAction(ReaderParagraphAction.bookmark),
+                    ),
+                  if (showAi)
+                    _ClassicItem(
+                      key: const ValueKey('reader-action-missed'),
+                      icon: LucideIcons.sparkles,
+                      label: '漏改了',
+                      onTap: () => onAction(ReaderParagraphAction.missedChange),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (!belowAnchor)
+          _ClassicArrow(pointingUp: false, color: _classicBackground)
+        else
+          const SizedBox.shrink(),
+      ],
+    ),
+  );
+}
+
+/// The 15x8 tip that ties the classic bar to the touched line (`wr.xml`).
+class _ClassicArrow extends StatelessWidget {
+  const _ClassicArrow({required this.pointingUp, required this.color});
+
+  final bool pointingUp;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    size: const Size(
+      ReaderParagraphMenu._classicArrowWidth,
+      ReaderParagraphMenu._arrowHeight,
+    ),
+    painter: _ClassicArrowPainter(color: color, pointingUp: pointingUp),
+  );
+}
+
+class _ClassicArrowPainter extends CustomPainter {
+  const _ClassicArrowPainter({required this.color, required this.pointingUp});
+
+  final Color color;
+  final bool pointingUp;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path();
+    if (pointingUp) {
+      path
+        ..moveTo(size.width / 2, 0)
+        ..lineTo(size.width, size.height)
+        ..lineTo(0, size.height);
+    } else {
+      path
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(size.width / 2, size.height);
+    }
+    path.close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_ClassicArrowPainter old) =>
+      old.color != color || old.pointingUp != pointingUp;
+}
+
+/// One icon-over-label item; geometry from `res/layout/wt.xml`.
+class _ClassicItem extends StatelessWidget {
+  const _ClassicItem({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(8),
+    child: SizedBox(
+      width: ReaderParagraphMenu._classicItemWidth,
+      height: ReaderParagraphMenu._classicItemHeight,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: ReaderParagraphMenu._classicIconSize,
+            color: ReaderParagraphMenu._classicForeground,
+          ),
+          const SizedBox(height: ReaderParagraphMenu._classicLabelTopGap),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            style: const TextStyle(
+              color: ReaderParagraphMenu._classicForeground,
+              fontSize: ReaderParagraphMenu._classicLabelSize,
+              height: 1.0,
+            ),
+          ),
+        ],
       ),
     ),
   );

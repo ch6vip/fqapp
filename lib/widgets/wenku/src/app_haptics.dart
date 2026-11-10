@@ -93,6 +93,12 @@ abstract final class AppHaptics {
 /// Only an explicit barrier dismissal clicks. Route transitions, timer closes
 /// and buttons inside a dialog retain their own feedback owner.
 mixin AppHapticModalBarrier<T> on ModalRoute<T> {
+  /// Barrier colour for this build. Routes whose appearance can change while
+  /// open override this to read live state from [context]; a route that only
+  /// needs a fixed colour keeps the [barrierColor] getter.
+  @protected
+  Color? barrierColorOf(BuildContext context) => barrierColor;
+
   @override
   Widget buildModalBarrier() => Builder(
     builder: (context) {
@@ -102,7 +108,7 @@ mixin AppHapticModalBarrier<T> on ModalRoute<T> {
         navigator?.maybePop();
       }
 
-      final color = barrierColor;
+      final color = barrierColorOf(context);
       if (color != null && color.a != 0 && !offstage) {
         return AnimatedModalBarrier(
           color: animation!.drive(

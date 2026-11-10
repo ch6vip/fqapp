@@ -4,6 +4,7 @@ import 'services/native_player.dart';
 import 'services/desktop_platform.dart';
 import 'services/platform_capabilities.dart';
 import 'services/platform_channel.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
@@ -21,6 +22,7 @@ import 'pages/cached_books_page.dart';
 import 'pages/drama_page.dart';
 import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
+import 'pages/theme_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
 import 'services/app_theme_style.dart';
@@ -44,6 +46,7 @@ import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
 import 'services/haptic_preferences.dart';
 import 'services/library_store.dart';
+import 'services/legacy_ui_notice.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
 import 'services/short_series_font_scale.dart';
@@ -55,6 +58,7 @@ import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
+import 'widgets/app_ui/app_ui_scope.dart';
 import 'widgets/shell_dock.dart';
 import 'widgets/unsupported_feature_page.dart';
 import 'widgets/home/home_design.dart';
@@ -246,13 +250,30 @@ Future<void> _initializeLocalData() async {
 }
 
 class FqApp extends StatefulWidget {
-  const FqApp({super.key});
+  const FqApp({
+    super.key,
+    this.initializer,
+    this.backendStarter,
+    this.styleStore,
+  });
+
+  /// Test seams for the real production tree. Production leaves them null:
+  /// startup uses [_initializeLocalData] and the real backend, and appearance
+  /// reads the device-wide [AppThemeStyleStore.instance].
+  @visibleForTesting
+  final Future<void> Function()? initializer;
+  @visibleForTesting
+  final Future<void> Function()? backendStarter;
+  @visibleForTesting
+  final AppThemeStyleStore? styleStore;
 
   @override
   State<FqApp> createState() => _FqAppState();
 }
 
 class _FqAppState extends State<FqApp> {
+  AppThemeStyleStore get _styleStore =>
+      widget.styleStore ?? AppThemeStyleStore.instance;
   // Official tabbar + 18dp applies on every page. Our floating dock is 64
   // high with an 8px gap; the desktop shell has no bottom bar.
   final _audioRoutes = AudioFloatingRoutes(
@@ -285,7 +306,7 @@ class _FqAppState extends State<FqApp> {
                 // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
                 final effectiveMode = eink ? ThemeMode.light : mode;
                 return ValueListenableBuilder<AppThemeStyle>(
-                  valueListenable: AppThemeStyleStore.instance,
+                  valueListenable: _styleStore,
                   builder: (context, style, _) => MaterialApp(
                     navigatorKey: _navigatorKey,
                     navigatorObservers: [_audioRoutes],
@@ -297,29 +318,38 @@ class _FqAppState extends State<FqApp> {
                         recentListen: loadRecentListen,
                         child: child ?? const SizedBox.shrink(),
                       );
-                      // Routes without an AppBar need a live fallback above the
-                      // Navigator; the covered root route cannot paint its style.
-                      // Reader/video annotations still override this default.
-                      return AnnotatedRegion<SystemUiOverlayStyle>(
-                        value:
-                            (palette.dark
-                                    ? SystemUiOverlayStyle.light
-                                    : SystemUiOverlayStyle.dark)
-                                .copyWith(
-                                  statusBarColor: palette.canvas,
-                                  systemNavigationBarColor: palette.canvas,
-                                  systemNavigationBarDividerColor:
-                                      palette.canvas,
-                                  systemNavigationBarIconBrightness:
-                                      palette.dark
-                                      ? Brightness.light
-                                      : Brightness.dark,
-                                ),
-                        child: AudioFloatingRouteScope(
-                          routes: _audioRoutes,
-                          child: isWindowsDesktop
-                              ? DesktopAppFrame(child: playback)
-                              : playback,
+                      // One live presentation scope above the root Navigator,
+                      // so pushed routes, nested Navigators and every Overlay
+                      // entry read the same discrete style. It is installed in
+                      // the builder (not in a page) on purpose; see
+                      // [AppUiScope].
+                      return AppUiScope(
+                        store: _styleStore,
+                        child: AnnotatedRegion<SystemUiOverlayStyle>(
+                          // Routes without an AppBar need a live fallback above
+                          // the Navigator; the covered root route cannot paint
+                          // its style. Reader/video annotations still override
+                          // this default.
+                          value:
+                              (palette.dark
+                                      ? SystemUiOverlayStyle.light
+                                      : SystemUiOverlayStyle.dark)
+                                  .copyWith(
+                                    statusBarColor: palette.canvas,
+                                    systemNavigationBarColor: palette.canvas,
+                                    systemNavigationBarDividerColor:
+                                        palette.canvas,
+                                    systemNavigationBarIconBrightness:
+                                        palette.dark
+                                        ? Brightness.light
+                                        : Brightness.dark,
+                                  ),
+                          child: AudioFloatingRouteScope(
+                            routes: _audioRoutes,
+                            child: isWindowsDesktop
+                                ? DesktopAppFrame(child: playback)
+                                : playback,
+                          ),
                         ),
                       );
                     },
@@ -346,8 +376,11 @@ class _FqAppState extends State<FqApp> {
                     localizationsDelegates:
                         GlobalMaterialLocalizations.delegates,
                     home: AppBootstrap(
-                      backendStarter: BackendService.instance.start,
-                      child: const RootShell(),
+                      backendStarter:
+                          widget.backendStarter ??
+                          BackendService.instance.start,
+                      initializer: widget.initializer,
+                      child: RootShell(backendStarter: widget.backendStarter),
                     ),
                   ),
                 );
@@ -487,6 +520,7 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _index = 0;
   bool _backendReady = false;
+  bool _legacyNoticeScheduled = false;
 
   /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
   final ScrollController _homeScroll = ScrollController();
@@ -541,6 +575,7 @@ class _RootShellState extends State<RootShell> {
       await (widget.backendStarter ?? BackendService.instance.start)();
       if (mounted) {
         setState(() => _backendReady = true);
+        _scheduleLegacyUiNotice();
       }
     } catch (e) {
       if (mounted) {
@@ -549,6 +584,44 @@ class _RootShellState extends State<RootShell> {
         });
       }
     }
+  }
+
+  void _scheduleLegacyUiNotice() {
+    if (_legacyNoticeScheduled) return;
+    _legacyNoticeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_maybeShowLegacyUiNotice());
+    });
+  }
+
+  Future<void> _maybeShowLegacyUiNotice() async {
+    if (!mounted || !await LegacyUiNotice.shouldShow()) return;
+    if (!mounted) return;
+    // Mark before showing: if the process is killed while the dialog is on
+    // screen, the next launch must not show it again.
+    await LegacyUiNotice.markSeen();
+    if (!mounted) return;
+    final goToTheme = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('界面UI已升级'),
+        content: const Text('新版默认使用档案界面。想继续使用经典界面，可以到「设置 → 主题」切换。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('知道了'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('去设置'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || goToTheme != true) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const ThemePage()));
   }
 
   Future<void> _retryWithDirectConnection() async {
