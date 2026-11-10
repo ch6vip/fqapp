@@ -2,6 +2,9 @@ import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
 
+import 'app_style_tokens.dart';
+import 'app_theme_style.dart';
+
 /// Persisted theme-mode preference key: 'theme_mode' = 'light'|'dark'|'system'.
 /// 墨水屏是第四种外观，单独存 [einkModeKey]。
 const themeModeKey = 'theme_mode';
@@ -201,6 +204,19 @@ class AppTheme {
         thickness: 0.6,
         space: 1,
       ),
+      // The popup menu is a surface like any other; on e-ink that means white
+      // with a black hairline, and it keeps the light theme's rounding so the
+      // control does not change shape between devices.
+      popupMenuTheme: const PopupMenuThemeData(
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(16)),
+          side: BorderSide(color: Colors.black, width: 0.6),
+        ),
+      ),
       listTileTheme: const ListTileThemeData(
         contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 2),
         dense: false,
@@ -224,8 +240,12 @@ class AppTheme {
     Brightness brightness, {
     bool einkMode = false,
     bool oledMode = false,
+    AppThemeStyle style = AppThemeStyle.archive,
   }) {
-    if (einkMode) return _createEinkTheme();
+    final tokens = AppStyleTokens.forStyle(style);
+    if (einkMode) {
+      return _createEinkTheme().copyWith(extensions: [tokens]);
+    }
     final isDark = brightness == Brightness.dark;
     // OLED 纯黑只在深色下成立；浅色模式忽略该开关。
     final oled = oledMode && isDark;
@@ -235,6 +255,8 @@ class AppTheme {
     // 深色 / OLED / 墨水屏本来就与 HomePalette.canvas 一致。
     final canvas = oled
         ? Colors.black
+        : tokens.isClassic
+        ? (isDark ? const Color(0xFF151517) : const Color(0xFFF6F6F6))
         : (isDark ? const Color(0xFF191919) : const Color(0xFFF4F3EF));
     final surface = oled
         ? const Color(0xFF0C0C0E)
@@ -302,6 +324,7 @@ class AppTheme {
     );
 
     return ThemeData(
+      extensions: [tokens],
       colorScheme: scheme,
       useMaterial3: true,
       scaffoldBackgroundColor: canvas,
@@ -355,6 +378,21 @@ class AppTheme {
         dragHandleSize: const Size(36, 4),
       ),
       dividerTheme: DividerThemeData(color: line, thickness: 0.6, space: 1),
+      // `PopupMenuButton` reads its shape from here, so the popup menus take
+      // the same fill, hairline and corner radius as the cards around them.
+      // `DropdownButton` does not: it draws its own menu with a 2dp radius and
+      // no theme lookup at all, which is why the dropdowns need the shared
+      // `AppDropdown` wrapper instead of a theme entry.
+      popupMenuTheme: PopupMenuThemeData(
+        color: surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: line, width: 0.6),
+        ),
+      ),
       listTileTheme: ListTileThemeData(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
         dense: false,

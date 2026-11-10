@@ -53,7 +53,7 @@
 
 ## 三、提交代码
 
-单人维护，直接推 `master` 即可，提交信息跟现有历史保持一致（如 `feat(search): persist the rating threshold (#90)`），提交前跑一下 `flutter analyze --no-pub` 和 `flutter test`，改了 `rust/` 再跑 `cargo test --manifest-path rust/Cargo.toml --locked`。唯一请别做的是手改 `rust/src/frb_generated.rs`、`lib/src/rust/` 这两个 codegen 产物，或者改 `rust/testdata/`、`test/fixtures/` 的期望值去凑测试通过。
+单人维护，直接推 `master` 即可，提交信息跟现有历史保持一致（如 `feat(search): persist the rating threshold (#90)`），提交前跑一下 `flutter analyze --no-pub` 和 `flutter test`，改了 `rust/` 再跑 `cargo test --manifest-path rust/Cargo.toml --locked`。镜像环境（`PUB_HOSTED_URL` 非 pub.dev）下这些命令会顺手改写 `pubspec.lock` 的 url，提交前核对一下，必要时 `git checkout -- pubspec.lock`。唯一请别做的是手改 `rust/src/frb_generated.rs`、`lib/src/rust/` 这两个 codegen 产物，或者改 `rust/testdata/`、`test/fixtures/` 的期望值去凑测试通过。
 
 ---
 

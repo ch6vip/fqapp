@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../services/app_style_tokens.dart';
+
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -59,7 +61,7 @@ const int homeShelfWideMinColumns = 6;
 int homeShelfColumns(BuildContext context, double width) {
   final scaler = MediaQuery.textScalerOf(context);
   if (scaler.scale(15) > 22 && width < 640) return 2;
-  if (width < 324) return 2;
+  if (width < (AppStyleTokens.of(context).isClassic ? 360 : 324)) return 2;
   if (width < 640) return 3;
   if (width < 900) return 4;
   // 大字号把目标卡宽一起放大：190dp 里塞 2.4 倍的字会挤成竖条。
@@ -87,24 +89,23 @@ SliverGridDelegate homeShelfDelegate(BuildContext context, double width) {
   );
 }
 
-/// 网格卡片的字号。卡片本身和 [homeCardExtent] 必须一起改，否则书名会被
-/// 网格裁掉一行。
-///
-/// Cover (5:7) + 8dp + two title lines + 5dp + one code line + 2dp +
-/// one meta line.
+/// Cover (5:7), two title lines, and metadata. Classic uses the original
+/// 15sp title and no code row; archive keeps its existing typography.
 double homeCardExtent(
   BuildContext context,
   double cardWidth,
   TextScaler scaler,
-) =>
-    cardWidth * 1.4 +
-    8 +
-    scaler.scale(homeCardTitleSize) * 1.35 * 2 +
-    5 +
-    scaler.scale(homeCardCodeSize) * 1.35 +
-    2 +
-    scaler.scale(homeCardMetaSize) * 1.3 +
-    2;
+) {
+  final classic = AppStyleTokens.of(context).isClassic;
+  return cardWidth * 1.4 +
+      8 +
+      scaler.scale(classic ? 15 : homeCardTitleSize) * 1.35 * 2 +
+      (!classic && AppStyleTokens.of(context).showDecorativeCodes
+          ? 5 + scaler.scale(homeCardCodeSize) * 1.35 + 2
+          : 4) +
+      scaler.scale(homeCardMetaSize) * 1.3 +
+      2;
+}
 
 /// A section title on the shelf: 19sp, tight tracking, no accent bar, no icon.
 ///
