@@ -217,13 +217,18 @@ Rust 核心库由 `scripts/build_rust_backend.*` 生成；C 库由下一步 APK 
 ```powershell
 cd fqapp
 flutter pub get
-# 当前 Rust 核心只提供 arm64-v8a，构建时显式指定目标 ABI
+# 演示只出 arm64 调试包；正式出包是双 ABI 分包，见下方说明
 flutter build apk --debug --target-platform android-arm64
 flutter build apk --release --target-platform android-arm64
 ```
 
-生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
-对应 ABI 交叉编译并打包 `libfqapi_core.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
+镜像环境（`PUB_HOSTED_URL` 指向 pub.flutter-io.cn 等）下，上面每条命令都会隐式执行 `pub get`
+并把 `pubspec.lock` 的全部 `url:` 改写成镜像地址；本地 Flutter 版本与生成该锁的版本不一致时，
+还会顺带移动几十个包的版本。提交前核对 `git diff pubspec.lock`，必要时 `git checkout -- pubspec.lock`。
+
+Rust 核心按 `arm64-v8a` 与 `armeabi-v7a` 两个 ABI 产出（`scripts/build_rust_backend.sh` /
+`.ps1` 的 `aarch64-linux-android` + `armv7-linux-androideabi`），CI 因此用
+`--target-platform android-arm,android-arm64 --split-per-abi` 出两个分包；x86/x86_64 设备不提供。
 
 > **release 构建不要加 `--no-pub`**：`integration_test` 在 `dev_dependencies` 里，`flutter test` 会把
 > 它写进 Android 插件注册表；随后用 `--no-pub` 构建 release，Gradle 会报
@@ -406,7 +411,85 @@ bash scripts/test_quick.sh home
 
 验证结束恢复 `wm size` 为 720x1280、`font_scale` 为未设置、首页「推荐榜」NO.001 / 共 16 本，保留安装的新包与原应用数据；未卸载、清空数据或改装调试包。
 
+#### 2026-11-10 #301 / #300 公共 CI 修复
+
+#301 run `42600437041` 的本地书分类残留对应删除顺序：旧路径等文件删除返回后才移除分类归属。成功移出书架后现改为先批量清理本地书归属，再逐本删除文件；归属失败记录日志且不阻止后续文件清理，非本地书移出仍保留分类。旧用例短等待在本机普通运行中未稳定复现，不以单次诊断运行推断因果。
+
+MuMu 实例 `0` / Android 12 / `127.0.0.1:16385` 已在公共修复包 `a9e68a0d9188d4eac6922914d733cc1e9c9a7121d80bfe185a31168ebfa3d49d` 验证导入 TXT、分配分类、移出、撤销恢复同一 ID 后显示未分类。结束书架 0、历史 3、已看 0，历史逐字段未变；临时书、分类与输入文件已清理。该包来自 #306，不包含本分支 Rust 身份配置改动，不能作为本分支其他功能验收。
+
+用户同时授权 #300 的定向测试隔离，故同步现有 `library_shelf_test.dart` 的环境修复：安全存储通道显式不可用并逐项重置，书架导航用例不初始化无关的划线存储，退出恢复原状态；不新增用例或更改生产安全存储策略。同源代码整份 41 项诊断完成，VM 断点等待超过 30 秒冷却后三个续读用例也能顺序完成。为避免新一轮合并检查引入启动超时，同步 `origin/master` 的 `16ee87b` 并给新增振动通道加 2 秒失败降级；保留 Rust 身份配置，不把本 PR 合并回主线、不改工作流或增加依赖。原 head 为 `696eca30e75fab1767fe48b4ec7686a6ce8fc777`，远程 CI 只认推送后新 head。证据保存在仓库外 `%TEMP%\fqapp-ci-repair-20261110`，不提交用户备份。
+
+#### 2026-11-10 Android 振动反馈开关（#303）
+
+基于 `c29b279`，在“设置 → 外观”增加默认开启的“振动反馈”；经典与档案主题共用 `haptics_enabled`，冷启动在交互页面挂载前读取。统一触感组件和书架/播放手势的直接调用都读取该偏好，Android 的 activity decor view 同时拦住 Flutter 控件自带的长按振动；不改系统振动或键盘设置。iOS 暂不显示此开关。
+
+本次由 MuMuManager 查询得到实例 `0` / Android 12 / `127.0.0.1:16385`，720x1280、字体比例 1.0、x86_64 经 ARM 转译运行 arm64 release。Flutter 3.47.9 / Dart 3.13.7，应用版本保持 `1.0.201+206`（arm64 split versionCode `2206`）；安装后设备侧 APK SHA-256 与本地产物一致：`c7778e081a31757ba4909475450e0009db3b0bee30c114b47e3546958bdc1132`。
+
+| 真实路径 | 观察结果 |
+|---|---|
+| 升级后进入档案主题的外观设置 | 开关默认开启，语义树 `checked=true`；按钮操作在 `dumpsys vibrator_manager` 中产生本应用的 `TEXTURE_TICK` 记录 |
+| 关闭后返回、重新进入外观、打开/关闭主题模式菜单 | 开关显示关闭，操作前后本应用的振动记录完全一致，没有新增 |
+| 关闭后强制停止进程并冷启动，再进入外观 | 语义树仍为 `checked=false`；启动及后续导航没有新增本应用振动记录 |
+| 从档案切换为经典主题，再长按书架中的浏览历史条目 | 两主题共用关闭状态；长按正常进入“已选择 1 本”，没有新增振动记录，随后退出编辑未删除数据 |
+| 经典主题重新开启后重复同一长按 | 正常进入编辑，系统服务新增本应用 `CLICK` 记录（15:12:23.158）；切回档案后按钮恢复 `TEXTURE_TICK` |
+| 点击设置行关闭再开启，随后冷启动 | 整行点击也生效；重启后的开关为 `checked=true` |
+
+补充检查：受影响的 10 个 Dart 文件定向分析无诊断；使用 `build_rust_backend.ps1 -SkipCodegen` 构建 ARM64/ARMv7 核心，随后 `flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi` 成功；arm64 APK 的正式签名校验成功且与原安装包一致。未新增、修改或运行测试。
+
+结束时恢复档案主题、跟随系统、沉浸式播放布局和振动开启，返回首页并保留新包；系统 `haptic_feedback_enabled` / `sound_effects_enabled` 均保持 1，分辨率和字体比例不变。未卸载、清空数据或改装调试包。截图、语义树、振动记录、日志与原包备份位于仓库外 `%TEMP%\fqapp-haptics-20261110`。
+
+这些记录证明界面、持久化与 Android 振动请求开关，不证明实体振动马达的触感或噪声；ARMv7 仅构建，未在设备上运行；视频倍速与听书定位的具体播放路径未实操。最终进程的 logcat 未见匹配的崩溃或振动通道初始化错误。iOS 构建与物理设备性能未验证。
+
 ### 分层跑测试
+
+#### 2026-11-10 书旗书架来源修复（#270）
+
+基于主线 `16ee87b` 独立处理，不包含 #304 的只读边界改动。书旗详情进入阅读器时传入 `ShuqiBook.toMediaItem()`，阅读菜单加入本机书架使用 `source=shuqi` 和原始数字 ID，不再把阅读会话 ID `shuqi:<id>` 当作番茄书籍。书旗仍不写阅读历史、阅读时长或章节缓存。
+
+`ShelfStore` 初始化时只迁移符合旧阅读器输出形状的 `shelf_v1:book:shuqi:<数字 ID>` 记录：保留全部元数据及 `addedAt`，写入 `shelf_v1:shuqi/book:<数字 ID>` 并落盘后才删除旧键；已有有效目标记录不覆盖，无法确定身份的记录不改。旧错误键不符合分组标识校验，不能经现有分组入口产生有效归属；本次不扩大分组或备份协议的接受范围，也不保留双读别名。
+
+MuMuManager 确认实例 `0` / Android 12 / `127.0.0.1:16385`，x86_64 经 ARM 转译运行正式签名 arm64 split release，版本保持 `1.0.201+206` / versionCode `2206`。首轮验证包 SHA-256 为 `fd53fd36e6bfec96749ef05c249152f631de661fd7c8a5f8ce009e3c185d349a`；审查后收紧已有目标记录的身份校验，重建最终包 SHA-256 为 `7d428147423d68b2ca86495c939592447416f84697e7394ea55b0620e47cb27c`。两次覆盖安装后设备侧均核对一致。未改动 Rust，原生库复用与当前主线源码相同的已构建产物。
+
+| 真实路径 | 观察结果 |
+|---|---|
+| 旧包搜索书旗 → 打开正文 → 阅读菜单加入书架 → 从书架打开 | 样本 `9136773` 误进番茄详情，显示 `shuqi:9136773`，详情加载失败 |
+| 保留错误条目覆盖升级 → 书架打开 | 同一本书仍为 1 条，正确显示书旗详情、1493 章目录及首章正文；菜单识别为“已在书架” |
+| 终止进程、重新启动并从书架打开 | 条目仍存在且进入书旗详情；MuMu 的启动命令有一次需再次前置任务，不以命令返回值代替界面验收 |
+| 阅读菜单移出 → 再加入 → 书架重新打开 | 仍只有 1 条，可正常打开，作者字段随新条目保存 |
+| 应用内导出迁移后备份 | `id=9136773`、`source=shuqi`、原加入时间保留；旧包误排除的 1 条变为正常导出，未放宽备份校验 |
+| 保留正确条目、旧包再次加入同书 → 覆盖最终包 | 旧包确实产生 2 条；最终包收敛为 1 条并可打开正文，前后导出的正确条目逐字段一致（含作者和加入时间），旧错误项不再被备份排除 |
+| 仅移除本轮临时书籍后再次导出 | 书架恢复 0、历史 3、已看 0；历史、已看及分组与本轮操作前导出一致 |
+
+辅助检查：两个改动 Dart 文件格式化无变化、定向分析及 `flutter analyze --no-pub lib` 无诊断，`flutter build apk --release --target-platform android-arm64 --split-per-abi` 成功。未新增、修改或运行测试；KGP 插件未来兼容警告（#205）仍存在。
+
+截图、UI XML、应用导出及构建日志保存在仓库外 `%TEMP%\fqapp-issue270-20261110`，不上传用户数据。未卸载或清空数据。迁移目标已存在的分支已走实际旧包/新包升级路径；损坏记录和落盘中断未进行故障注入。Windows、ARMv7 及 Xiaomi/HyperOS 真机未验证。
+
+#### 2026-11-10 CI 失败定位与生产路径修复（#306 / #301）
+
+本轮基于 #306 的 `78be475`，没有修改工作流、依赖或版本。初轮不改冻结测试；用户随后明确授权提交推送，并只对 #300 异步隔离和 #304 失效契约作定向例外，不新增测试。两个生产改动：
+
+- `HapticPreferences._applyPlatform` 给可选的 Android 振动通道调用增加 2 秒响应上限，超时返回失败，启动按既有可选初始化策略继续；不把平台未应用当作成功，也不阻止后续加载重试。#306 的 run `42802056525` 和主线 run `42778150152` 均有 7 项启动等待超时。Dart VM 断点确认书架与分组已经就绪，未完成的是 `HapticPreferences._loading` 内无回复的 `setEnabled` 调用，不是主题值解析。
+- `LibraryPage._removeFromShelf` 在书架删除成功后，先批量清理本地导入书的分类归属，再逐本删除文件；目录解析或文件删除不能挡住前面的归属清理。归属清理失败仍记录日志并继续文件清理，普通非本地书移出仍保留分类。该顺序对应 #301 run `42600437041` 的本地书分类残留；旧用例的短等待在本机普通运行中未稳定复现，不能仅凭诊断运行认定修复。
+
+MuMu 实例 `0` / Android 12 / `127.0.0.1:16385`，720x1280、字体比例 1.0，x86_64 经 ARM 转译运行正式签名 arm64 split release。Flutter 3.47.9 / Dart 3.13.7，版本保持 `1.0.201+206` / versionCode `2206`。最终 APK SHA-256 为 `a9e68a0d9188d4eac6922914d733cc1e9c9a7121d80bfe185a31168ebfa3d49d`，覆盖安装后设备侧一致；Rust 未改，复用已有同源原生库。
+
+| 真实路径 | 观察结果 |
+|---|---|
+| 旧包关闭振动反馈，保留数据覆盖升级 | 首页正常进入，外观页仍显示关闭 |
+| 开启振动反馈，终止进程后冷启动 | 首页正常进入，外观页仍显示开启 |
+| 导入临时 TXT，建分类并分配，再移出书架 | 界面从 1 本变为 0 本；操作前分类弹层确认临时分类已选中 |
+| 移出后在撤销窗口恢复同一条目，再检查分类 | 弹层选中“未分类”，不是重新导入的新 ID；撤销只恢复书架记录，本轮不声称已删除的 TXT 正文也被恢复 |
+| 删除本轮条目及临时分类，再导出备份 | 书架 0、历史 3、已看 0；书架、历史、已看和可导出分组与操作前一致，AI 资产解压后仅导出时间变化 |
+
+已清理临时导入文件，恢复档案主题、系统外观、沉浸式布局与振动开启，返回首页。最终进程日志未见匹配的崩溃、ANR、未处理 Flutter 或 Hive 错误。没有卸载、清空数据或操作实体手机；MuMu 不证明物理马达触感。通道永不回复及文件 I/O 挂起未在设备上注入故障。
+
+辅助检查：固定工具链下两个 Dart 文件格式化无变化，完整 `flutter analyze --no-pub` 无诊断，arm64 release 构建成功。只运行既有冻结用例作定位：改动后 7 项启动等待不再超时，相关初始化和书架分类诊断未报错；这些结果不代替上表的实际用户路径。KGP 未来兼容警告（#205）仍在。证据仅保存在仓库外 `%TEMP%\fqapp-ci-repair-20261110`，原始备份和日志不上传。
+
+定向隔离与其他分支：
+
+- #300 run `42583363579` 的 `dart-gate` 在 30 分钟取消。首次失败是 `library_shelf_test.dart` 的首页缓存续读用例结束时仍有 10 秒虚拟计时器，堆栈为 `SecureKeyProvider -> EncryptedHive -> ReaderUnderlineStore`，随后用例持续超时。相关代码与当前相同。在 VM 断点等待安全存储失败的 30 秒冷却到期后继续，复现了相同断言；继续定位还确认划线存储单例队列会残留上一用例的虚拟时钟任务。只改该现有测试文件的环境：安全存储通道明确模拟不可用并逐项重置，书架导航用例不初始化无关的划线存储，退出恢复原状态；原有导航断言全部保留。没有修改生产安全存储超时、冷却或重试。改后整份 41 项诊断完成；同一 VM 断点等待到失败时间已过去 77 秒后，首页续读、书架续读、关闭直读三个用例也顺序完成。
+- #304 的只读契约修正在该 PR 独立工作树处理，不带入本分支；公共生产修复和 #300 隔离同步过去。账号/上游写入旧测试按用户例外授权收窄或移除，保留公开读取及本机来源限制，不恢复废弃接口，也不跳过门禁。
+- APK 和完整静态分析已验证；远程 CI 以各 PR 推送后对应新 head 的实际状态为准，不能沿用旧 run 或本地诊断结果。Windows、ARMv7 与物理设备未在本机复验。
 
 测试按「秒级模块 → 收尾全量 → CI 兜底」三层跑，日常迭代不要每次都付全量的成本：
 
@@ -431,6 +514,60 @@ bash scripts/test_quick.sh home
 2. 首次启动时用示例初始化 `device_pool.json`；以后保留后端注册并保存的实际设备池。
 3. 从 Flutter 资源清单枚举并部署 `assets/filters/` 下的文件（含清单中的嵌套文件）到 `backend/filters/`。内容变更时替换旧资源。
 4. 运行时资源不含任何可执行后端二进制；Rust 核心以 `libfqapi_core.so` 随 APK 打包，在进程内加载。
+
+`config.json` 里还有一个可选的 `upstream` 段（`version_name`、`version_code`、
+`manifest_version_code`、`update_version_code`、`user_agent`）：**设备注册**用的 UA 与版本号从
+这里读，UA 支持 `{manifest_version_code}`（别名 `{version_code}`，两者取同一个值）、
+`{os_version}`、`{device_type}` 三个占位符。字段留空即用改动前硬编码的值，所以不写这一段
+行为完全不变。
+
+范围只说一次，免得误解：**这一段只作用于设备注册的第一步 `device_register`**。同一流程里
+`activate_premium` 仍写死 `version_code=61532&version_name=6.1.5.32`，`register_key` 写死
+`version_code=6.1.5.32` 且 UA 是光秃秃的 `com.dragon.read`，`sdk_version` 与 `package` 也是常量；
+正文 / 目录 / 搜索 / 短剧端点的查询串（`rust/src/endpoints/*.rs`）与通用请求的 UA
+（`rust/src/upstream/client.rs` 的 `DEFAULT_USER_AGENT`）同理。上游要动这些仍然得改代码。
+
+类型上：数字、布尔、`null` 都会被转成字符串（`null` 视作留空，走默认值）；数字写成 `71332`
+或 `"71332"` 等价，整数值的浮点写法（`71332.0`、`1e3`）也等价于 `71332`，真正的分数
+（`7.1`）保留小数。
+
+形状上：**整段必须是 JSON 对象**。数组、字符串、数字都会让 `Config::load` 失败、后端起不来
+——这一点不是多余的：serde 默认会把结构体按位置从数组反序列化，`"upstream": [1, 2]` 会被读成
+`version_name = "1"`、`version_code = "2"`，一个看起来合法、实则完全错误的身份会被悄悄发给
+上游。整段写成 `null` 视作「未配置」，等同于不写这一段。
+
+**段内的字段名也必须写对**：多写或拼错一个字段名（例如 `useragent` 而不是 `user_agent`）
+同样是配置错误，会让 `Config::load` 失败。否则拼错的字段会被静默忽略——UA 保持内置模板，
+改配置的人只会看到「改了没效果」，而没有任何报错提示。
+
+**`version_name` 和 `version_code` 必须一起写**：只写其中一个同样是配置错误（理由见下）。
+
+一致性上：三个 `*_version_code` 是同一个上游版本的不同视图。**显式填的字段一定生效，没填的
+跟随 `version_code`**（而不是退回内置默认值），所以只改一个 `version_code` 时，注册头里的
+manifest / update code 会一起跟着走，不会出现新旧版本号并存的设备身份；四个字段都没填才回到
+改动前的硬编码值。
+
+`version_name`（`7.1.3.32`）和 `version_code`（`71332`）是同一个版本的两种写法，但**两者之间
+没有可推导的规则**——去掉点号对多数版本成立（`6.5.1.32` → `65132`），对少数不成立
+（`15.8.0` → `150800`，不是 `1580`）。所以后端**不做任何推导**，也**不接受只填一个**：
+只写 `version_name` 或只写 `version_code`，和数组、拼错的字段名一样，是**配置错误**，
+`Config::load` 失败、后端起不来。
+
+这样处理而不是「警告一下继续跑」，有两个原因：一是猜出来的版本号是一个看起来对、实则错的上游
+身份，比直接报错更糟；二是桌面构建不安装 logger（`log` 宏是 no-op），警告在 Windows 上根本
+看不见，而配置错误在所有平台上都能报出来。**要改版本，四个字段一起改。**
+
+注意两点：`config.json` 是随包发布的资源，`BackendService._deploy` 每次启动都用包内副本覆盖
+`files/backend/config/config.json`，所以手改设备上的那份不生效；身份参数在后端每次启动时重新
+读取（`stop()`+`start()` 也会重读），但要换配置仍需重新打包并重启 App。
+关于设备池：每个设备在注册时**记下当时的 `version_code`**（`device_pool.json` 的
+`registered_version_code`）。后端启动时，**用别的版本号注册的设备会被退役**——不会把一个
+声称了旧版本的设备发出去。退役的设备会在需要时重新注册。
+
+一个例外，也是有意的：**这个字段是后加的**，所以在这之前写入的设备池文件里没有它。那些设备
+**不会被清空**——一次 App 升级不应该把整个设备池掏空、对着上游来一轮集中注册。它们会随着
+使用逐个被替换掉。
+
 
 ### 废弃的 HTML 插件资产（#252）
 
@@ -890,9 +1027,26 @@ curl http://127.0.0.1:18080/health
 - [x] 发现类入口：搜索联想词与热搜、作者主页、排行榜、书评回复、章节试读预览
 - [x] Release 签名配置与 R8 混淆
 - [x] 整本 TXT 导出（离线缓存页每行「导出 TXT」→ 系统「下载」；重取最新目录与每章正文，按后端 `/api/download` 同形组装）
-- [ ] **按职责整理 `lib/widgets/video_player_chrome.dart`**：修改相关功能时，评估横屏顶栏/底栏、
-      「下一集」卡、右侧面板、抽屉与手势是否适合独立到 `lib/widgets/player/`；仅在减少耦合或
-      提高可读性时拆分，不设目标行数，不为体量统计额外重构。
+- [ ] **按职责整理 `lib/widgets/video_player_chrome.dart`**（实测 5004 行，其中
+      `_VideoPlayerChromeState` 一个类占 4580 行（311–4890），`part` 只切出一份 22 行的横屏进度条）。
+      拆的是**职责**不是行数：每一块都改成「传值 + 回调」的无状态 widget，留在同一个 State
+      里的只有播放器接线。按「改动收益 ÷ 风险」排序，一次只搬一块，搬完跑相关套件。
+
+      下表的行数是**定义体的实测跨度**（从声明行到方法体结束，命名参数列表与嵌套
+      括号不计入），可用 `python` 扫一遍括号配平复核：
+
+      | 顺序 | 目标文件 | 搬什么（实测方法体行数） | 依赖 |
+      |---|---|---|---|
+      | 1 | `lib/widgets/player/next_episode_card.dart` | `_nextEpisodeCard`（152） | 只读 `widget.*` 与已算好的尺寸 |
+      | 2 | `lib/widgets/player/split_layout.dart` | `_buildSplit`（195）、`_splitDivider`（53） | 布局几何，不含播放状态；`_splitCollapsed` 是一对 1 行 getter / 7 行 setter，跟着布局走 |
+      | 3 | `lib/widgets/player/side_panels.dart` | `_showSideSettings`（38）、`_sheetSwitch`（21） | 面板选择/档位，需回调上抛；`_rateChipLabel` 只是 1 行的顶层文案函数 |
+      | 4 | `lib/widgets/player/gesture_hud.dart` | `_gestureHudOverlay`（72）、`_applyGestureLevel`（35）、`_GestureHudState`/`_GestureKind` | 亮度/音量归一化，纯展示 + 回调 |
+      | 5 | `lib/widgets/player/landscape_bar.dart` | `_landscapeBar`（132）、`_topBar`（75）、`_lockButton`（56）、`_landscapeTitle`（38）、`_landText`（25） | 顶/底栏与锁定钮，读多写少 |
+      | 6 | `lib/widgets/player/info_panels.dart` | `_information`（75）、`_catalogBar`（69）、`_originalBookCard`（60） | 剧集信息与原著卡，纯展示 |
+      | 7（最后） | 原地保留 | `_scheduleHide`（38）、`_positionVideo`（36）、`_listenToPosition`（17）、`_ensurePagerOnCurrent`（14） | 播放器接线：位置流、分页、自动隐藏定时器，跨块共享状态，收益最低 |
+
+      判定标准：搬完后 **该类不再直接读被搬块的私有字段**，且对应测试（`player_*`、
+      `video_player_chrome_test`、`playlet_*`）不改断言即通过。达不到就是没降耦合，应回退。
 
 
 ## 正文替换（#120）

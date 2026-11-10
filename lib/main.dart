@@ -42,6 +42,7 @@ import 'services/drama_downloader.dart';
 import 'services/fair_memory.dart';
 import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
+import 'services/haptic_preferences.dart';
 import 'services/library_store.dart';
 import 'services/legacy_ui_notice.dart';
 import 'services/rank_cache.dart';
@@ -138,6 +139,8 @@ Future<void> _initializeLocalData() async {
   }
 
   await Future.wait<void>([
+    // Load before interactive pages mount, so a saved opt-out applies at launch.
+    optional(HapticPreferences.instance.load),
     LibraryStore.instance.init(),
     // The 加入书架 collection is optional data: a failure here must not block
     // startup, which is why it shares the retryable bootstrap with the history.

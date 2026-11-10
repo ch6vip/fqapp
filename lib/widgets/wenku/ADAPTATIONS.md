@@ -25,8 +25,12 @@ Non-identical mechanical substitutions:
   gradient and plateau.
 - `app_text.dart` returns Chinese input unchanged; the upstream locale lookup,
   OpenCC conversion, and language persistence are intentionally absent.
-- `app_haptics.dart` maps the upstream cues to Flutter `HapticFeedback`; the
-  upstream persisted haptics settings service is intentionally absent.
+- `app_haptics.dart` maps the upstream cues to Flutter `HapticFeedback`, gated
+  by fqapp's `HapticPreferences` (`haptics_enabled`, default on). On Android,
+  both UI styles share Settings -> Appearance -> Haptic feedback. It also gates
+  the activity decor view so implicit Material long presses respect the choice;
+  system keyboard feedback is unchanged. The upstream settings service is not
+  imported.
 - `wenku_archive.dart` uses fqapp's existing
   `assets/images/app_logo.webp`.
 - `WenkuPage` owns the page scaffold and overlays the upstream frosted header.

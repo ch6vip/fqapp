@@ -25,9 +25,9 @@ part 'detail/shuqi_detail_classic.dart';
 /// 档案主题沿用上游 `DetailPage`（revision ebcd7f1）：磨砂头栏、档案分区、
 /// 行内目录和底部玻璃操作坞；经典主题走 `detail/shuqi_detail_classic.dart`
 /// 的旧版式（Material AppBar、封面头部、简介与目录行），两者共用同一个
-/// `_ShuqiDetailPageState` 和同一批 loader。书旗仍是一条**只读**链路：不写书架、
-/// 不写阅读历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过番茄那套目录
-/// 同步与磁盘缓存；阅读器内部的进度/阅读时长写入则靠注入 [_ReadOnlyReaderStore]
+/// `_ShuqiDetailPageState` 和同一批 loader。书旗只读取上游内容，支持加入本机
+/// 书架，但不写阅读历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过
+/// 番茄那套目录同步与磁盘缓存；进度/阅读时长写入靠 [_ReadOnlyReaderStore]
 /// 丢弃。
 ///
 /// 书旗 bookId 与番茄同为纯数字，所以在阅读器里加 `shuqi:` 前缀，避免两套 id
@@ -182,6 +182,7 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
           bookId: 'shuqi:${widget.bookId}',
           title: book.name,
           cover: book.coverUrl,
+          shelfItem: book.toMediaItem(),
           chapters: toc.toReaderChapters(),
           startIndex: start,
           localOnly: true,

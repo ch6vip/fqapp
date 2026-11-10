@@ -204,6 +204,19 @@ class AppTheme {
         thickness: 0.6,
         space: 1,
       ),
+      // The popup menu is a surface like any other; on e-ink that means white
+      // with a black hairline, and it keeps the light theme's rounding so the
+      // control does not change shape between devices.
+      popupMenuTheme: const PopupMenuThemeData(
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(16)),
+          side: BorderSide(color: Colors.black, width: 0.6),
+        ),
+      ),
       listTileTheme: const ListTileThemeData(
         contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 2),
         dense: false,
@@ -365,6 +378,21 @@ class AppTheme {
         dragHandleSize: const Size(36, 4),
       ),
       dividerTheme: DividerThemeData(color: line, thickness: 0.6, space: 1),
+      // `PopupMenuButton` reads its shape from here, so the popup menus take
+      // the same fill, hairline and corner radius as the cards around them.
+      // `DropdownButton` does not: it draws its own menu with a 2dp radius and
+      // no theme lookup at all, which is why the dropdowns need the shared
+      // `AppDropdown` wrapper instead of a theme entry.
+      popupMenuTheme: PopupMenuThemeData(
+        color: surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: line, width: 0.6),
+        ),
+      ),
       listTileTheme: ListTileThemeData(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
         dense: false,
