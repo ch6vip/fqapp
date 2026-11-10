@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -94,13 +96,22 @@ Future<int?> showAiIntDialog(
   String? helper,
 }) async {
   final controller = TextEditingController(text: initial?.toString() ?? '');
+  // showDialog's future resolves the moment the pop starts, while the exit
+  // animation is still playing; resolve only after the host unmounts so the
+  // caller's box write and full-page rebuild stay out of the animation frames.
+  final removed = Completer<void>();
   final result = await showDialog<int>(
     context: context,
     builder: (dialogContext) {
-      final palette = HomePalette.of(dialogContext);
       String? error;
-      return StatefulBuilder(
+      return AiDialogHost(
+        onDispose: () {
+          controller.dispose();
+          removed.complete();
+        },
         builder: (dialogContext, setState) {
+          final palette = HomePalette.of(dialogContext);
+
           void submit() {
             final parsed = int.tryParse(controller.text.trim());
             if (parsed == null) {
@@ -141,7 +152,7 @@ Future<int?> showAiIntDialog(
       );
     },
   );
-  controller.dispose();
+  await removed.future;
   return result;
 }
 
@@ -162,14 +173,24 @@ Future<({int tokens, int requests})?> showAiLimitDialog(
 }) async {
   final token = TextEditingController(text: tokenInitial.toString());
   final request = TextEditingController(text: requestInitial.toString());
+  // showDialog's future resolves the moment the pop starts, while the exit
+  // animation is still playing; resolve only after the host unmounts so the
+  // caller's box write and full-page rebuild stay out of the animation frames.
+  final removed = Completer<void>();
   final result = await showDialog<({int tokens, int requests})>(
     context: context,
     builder: (dialogContext) {
-      final palette = HomePalette.of(dialogContext);
       String? tokenError;
       String? requestError;
-      return StatefulBuilder(
+      return AiDialogHost(
+        onDispose: () {
+          token.dispose();
+          request.dispose();
+          removed.complete();
+        },
         builder: (dialogContext, setState) {
+          final palette = HomePalette.of(dialogContext);
+
           void submit() {
             final tokens = int.tryParse(token.text.trim());
             final requests = int.tryParse(request.text.trim());
@@ -234,8 +255,7 @@ Future<({int tokens, int requests})?> showAiLimitDialog(
       );
     },
   );
-  token.dispose();
-  request.dispose();
+  await removed.future;
   return result;
 }
 
@@ -252,13 +272,22 @@ Future<({bool saved, double? value})> showAiCostDialog(
   final controller = TextEditingController(
     text: initial == null ? '' : initial.toString(),
   );
+  // showDialog's future resolves the moment the pop starts, while the exit
+  // animation is still playing; resolve only after the host unmounts so the
+  // caller's box write and full-page rebuild stay out of the animation frames.
+  final removed = Completer<void>();
   final result = await showDialog<({bool saved, double? value})>(
     context: context,
     builder: (dialogContext) {
-      final palette = HomePalette.of(dialogContext);
       String? error;
-      return StatefulBuilder(
+      return AiDialogHost(
+        onDispose: () {
+          controller.dispose();
+          removed.complete();
+        },
         builder: (dialogContext, setState) {
+          final palette = HomePalette.of(dialogContext);
+
           void submit() {
             final text = controller.text.trim();
             if (text.isEmpty) {
@@ -303,7 +332,7 @@ Future<({bool saved, double? value})> showAiCostDialog(
       );
     },
   );
-  controller.dispose();
+  await removed.future;
   return result ?? (saved: false, value: null);
 }
 
@@ -316,36 +345,46 @@ Future<String?> showAiSecretDialog(
   String? helper,
 }) async {
   final controller = TextEditingController();
+  // showDialog's future resolves the moment the pop starts, while the exit
+  // animation is still playing; resolve only after the host unmounts so the
+  // caller's box write and full-page rebuild stay out of the animation frames.
+  final removed = Completer<void>();
   final result = await showDialog<String>(
     context: context,
-    builder: (dialogContext) {
-      final palette = HomePalette.of(dialogContext);
-      return AlertDialog(
-        backgroundColor: palette.surface,
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          obscureText: true,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: InputDecoration(hintText: hint, helperText: helper),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
+    builder: (dialogContext) => AiDialogHost(
+      onDispose: () {
+        controller.dispose();
+        removed.complete();
+      },
+      builder: (dialogContext, setState) {
+        final palette = HomePalette.of(dialogContext);
+        return AlertDialog(
+          backgroundColor: palette.surface,
+          title: Text(title),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(hintText: hint, helperText: helper),
           ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('保存'),
-          ),
-        ],
-      );
-    },
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    ),
   );
-  controller.dispose();
+  await removed.future;
   return result;
 }
 

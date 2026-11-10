@@ -266,10 +266,14 @@ class SettingsPage extends StatelessWidget {
                 FeatureEntry(
                   key: ValueKey('settings-entry-${categories[index].title}'),
                   title: categories[index].title,
-                  subtitle: categories[index].title == '主题'
-                      ? AppThemeStyleStore.instance.value.label
-                      : categories[index].subtitle,
+                  subtitle: categories[index].subtitle,
                   icon: categories[index].icon,
+                  // The current theme is a value, not a control: it belongs
+                  // next to the chevron, and the chevron has to land in the
+                  // same place as every other row's.
+                  trailingText: categories[index].title == '主题'
+                      ? AppThemeStyleStore.instance.value.label
+                      : null,
                   onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
