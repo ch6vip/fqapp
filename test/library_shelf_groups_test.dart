@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -144,8 +145,20 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.runAsync(() async {
-      await tester.tap(find.byKey(const Key('shelf-remove-action')));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final removed = Completer<void>();
+      void onChanged() {
+        if (!removed.isCompleted) removed.complete();
+      }
+
+      final changes = ShelfGroupStore.instance.listenable;
+      changes.addListener(onChanged);
+      try {
+        await tester.tap(find.byKey(const Key('shelf-remove-action')));
+        // The assignment changes only after its Hive write and flush finish.
+        await removed.future;
+      } finally {
+        changes.removeListener(onChanged);
+      }
     });
     await tester.pumpAndSettle();
     expect(ShelfStore.instance.records(), isEmpty);

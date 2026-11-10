@@ -224,6 +224,18 @@ void main() {
   });
 
   group('layout', () {
+    testWidgets('mist blue is selectable in the reader background row', (
+      tester,
+    ) async {
+      final changed = await _openSheet(tester);
+      await openReaderSettingsCategory(tester, 'theme');
+      final blue = find.byKey(const ValueKey('reader-theme-mistBlue'));
+      await tester.ensureVisible(blue);
+      await tester.tap(blue);
+      await tester.pumpAndSettle();
+      expect(changed.last.themePreset, ReaderThemePreset.mistBlue);
+      expect(tester.takeException(), isNull);
+    });
     for (final layout in [
       (name: 'portrait', size: const Size(390, 844), scale: 1.0),
       (name: 'narrow large text', size: const Size(280, 600), scale: 2.0),
