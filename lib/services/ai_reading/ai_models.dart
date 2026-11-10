@@ -679,27 +679,35 @@ class AiDeviceSettings {
   const AiDeviceSettings({
     this.cloudConsent = false,
     this.deviceDisabled = false,
+    this.developerMode = false,
   });
 
   final bool cloudConsent;
   final bool deviceDisabled;
+  final bool developerMode;
 
   Map<String, dynamic> toJson() => {
     'cloudConsent': cloudConsent,
     'deviceDisabled': deviceDisabled,
+    'developerMode': developerMode,
   };
 
-  AiDeviceSettings copyWith({bool? cloudConsent, bool? deviceDisabled}) =>
-      AiDeviceSettings(
-        cloudConsent: cloudConsent ?? this.cloudConsent,
-        deviceDisabled: deviceDisabled ?? this.deviceDisabled,
-      );
+  AiDeviceSettings copyWith({
+    bool? cloudConsent,
+    bool? deviceDisabled,
+    bool? developerMode,
+  }) => AiDeviceSettings(
+    cloudConsent: cloudConsent ?? this.cloudConsent,
+    deviceDisabled: deviceDisabled ?? this.deviceDisabled,
+    developerMode: developerMode ?? this.developerMode,
+  );
 
   static AiDeviceSettings fromJson(Object? raw) {
     final map = _mapOrNull(raw);
     return AiDeviceSettings(
       cloudConsent: map?['cloudConsent'] == true,
       deviceDisabled: map?['deviceDisabled'] == true,
+      developerMode: map?['developerMode'] == true,
     );
   }
 }
@@ -712,6 +720,7 @@ class AiGlobalSettings {
     this.modelId,
     this.displayMode = AiDisplayMode.aiOptimized,
     this.behaviorPrompt,
+    this.restoreCensoredWords = false,
     this.requestTimeoutSeconds = 120,
     this.contentRepairLimit = 2,
     this.transportRetryLimit = 1,
@@ -735,6 +744,7 @@ class AiGlobalSettings {
   final String? modelId;
   final AiDisplayMode displayMode;
   final String? behaviorPrompt;
+  final bool restoreCensoredWords;
   final int requestTimeoutSeconds;
   final int contentRepairLimit;
   final int transportRetryLimit;
@@ -758,6 +768,7 @@ class AiGlobalSettings {
     Object? modelId = _unset,
     AiDisplayMode? displayMode,
     Object? behaviorPrompt = _unset,
+    bool? restoreCensoredWords,
     int? requestTimeoutSeconds,
     int? contentRepairLimit,
     int? transportRetryLimit,
@@ -776,6 +787,7 @@ class AiGlobalSettings {
     Object? usagePriceProfile = _unset,
   }) => AiGlobalSettings(
     enabled: enabled ?? this.enabled,
+    restoreCensoredWords: restoreCensoredWords ?? this.restoreCensoredWords,
     providerId: identical(providerId, _unset)
         ? this.providerId
         : providerId as String?,
@@ -814,6 +826,7 @@ class AiGlobalSettings {
     'modelId': modelId,
     'displayMode': displayMode.name,
     'behaviorPrompt': behaviorPrompt,
+    'restoreCensoredWords': restoreCensoredWords,
     'requestTimeoutSeconds': requestTimeoutSeconds,
     'contentRepairLimit': contentRepairLimit,
     'transportRetryLimit': transportRetryLimit,
@@ -836,6 +849,7 @@ class AiGlobalSettings {
     final map = _mapOrNull(raw) ?? const {};
     return AiGlobalSettings(
       enabled: map['enabled'] == true,
+      restoreCensoredWords: map['restoreCensoredWords'] == true,
       providerId: map['providerId'] is String
           ? map['providerId'] as String
           : null,
