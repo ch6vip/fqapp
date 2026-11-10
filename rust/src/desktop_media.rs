@@ -4,7 +4,6 @@ use crate::desktop_fetch::{
     fetch_known_range, fetch_range, shared_client, with_retries, FetchError, OpenError,
     CHUNK_TIMEOUT, PROBE_TIMEOUT,
 };
-use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -49,7 +48,7 @@ unsafe extern "C" {
 
 struct Source {
     file: Option<File>,
-    client: Option<&'static Client>,
+    remote: bool,
     url: String,
     size: u64,
     cache_start: u64,
@@ -73,26 +72,26 @@ impl Source {
             None
         };
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (client, size) = if let Some(file) = &file {
+        let (remote, size) = if let Some(file) = &file {
             let size = file
                 .metadata()
                 .map_err(|_| OpenError::new("无法读取文件长度", "file"))?
                 .len();
-            (None, size)
+            (false, size)
         } else {
             let client = shared_client().ok_or(OpenError::new("无法初始化媒体连接", "other"))?;
             let (_, total) = with_retries(&cancelled, || {
-                fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+                fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
             })
             .map_err(OpenError::fetch)?;
-            (Some(client), total)
+            (true, total)
         };
         if size == 0 || size > i64::MAX as u64 {
             return Err(OpenError::new("媒体文件长度无效", "range"));
         }
         Ok(Self {
             file,
-            client,
+            remote,
             url,
             size,
             cache_start: 0,
@@ -121,9 +120,9 @@ impl Source {
                 .checked_add(1024 * 1024 - 1)
                 .ok_or(())?
                 .min(self.size - 1);
-            let client = self.client.ok_or(())?;
             let result = with_retries(&self.cancelled, || {
-                fetch_known_range(client, &self.url, offset, end, CHUNK_TIMEOUT, self.size)
+                let client = shared_client().ok_or(FetchError::Connect)?;
+                fetch_known_range(&client, &self.url, offset, end, CHUNK_TIMEOUT, self.size)
             });
             let data = match result {
                 Ok(data) => data,
@@ -426,7 +425,7 @@ struct OpenRequest {
 }
 fn open(request: OpenRequest) -> Result<serde_json::Value, OpenError> {
     let source = Box::new(Source::open(request.url)?);
-    let cancelled = source.client.map(|_| source.cancelled.clone());
+    let cancelled = source.remote.then(|| source.cancelled.clone());
     let last_error = source.last_error.clone();
     let reader = if request.key.is_empty() {
         Reader::Clear(source)
