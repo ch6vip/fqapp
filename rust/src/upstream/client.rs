@@ -398,6 +398,7 @@ mod tests {
             use_count: 0,
             cdid: "cdid-from-pool".to_string(),
             openudid: openudid.to_string(),
+            registered_version_code: String::new(),
         }
     }
 

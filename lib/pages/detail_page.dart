@@ -912,95 +912,98 @@ class _DetailPageState extends State<DetailPage> {
   /// 桌面两栏布局的左栏卡片（PR #104 评审原型）：封面、书名、元信息、书架/刷新
   /// 和主操作全部收进一张白卡，主按钮不再横跨整个窗口底部。
   Widget _desktopSideCard(HomePalette palette, {bool compact = false}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: palette.surface,
+    return Material(
+      color: palette.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: palette.line),
+        side: BorderSide(color: palette.line),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              ValueListenableBuilder<int>(
-                valueListenable: ShelfStore.instance.listenable,
-                builder: (context, _, _) => DetailShelfPill(
-                  inShelf: _inShelf,
-                  enabled: !_loading && _supported,
-                  onTap: _toggleShelf,
-                  keyName: 'detail_shelf_button_desktop',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          DetailHero(
-            item: widget.item,
-            detail: _bookDetail,
-            onOpenAuthor: _openAuthorAction,
-            lastChapterTitle: _latestChapterTitle,
-            desktop: true,
-            compactDesktop: compact,
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            key: const Key('detail_read_button_desktop'),
-            onPressed: _opening || _loading || _allChapters.isEmpty
-                ? null
-                : () => unawaited(_openLastPosition()),
-            style: detailPrimaryButtonStyle(
-              palette,
-              minimumSize: const Size.fromHeight(44),
-            ),
-            icon: Icon(homeKindIcon(widget.item.kind), size: 18),
-            label: Text(
-              _opening ? '正在打开…' : _readBarLabel,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (_isBook) ...[
-            const SizedBox(height: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.start,
               children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const Key('detail_listen_button_desktop'),
-                    onPressed: _loading || _allChapters.isEmpty
-                        ? null
-                        : _openListening,
-                    style: detailOutlineButtonStyle(
-                      palette,
-                      minimumSize: const Size.fromHeight(44),
-                    ),
-                    icon: const Icon(LucideIcons.headphones, size: 16),
-                    label: const Text('听书'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const Key('detail_download_button_desktop'),
-                    onPressed: _loading || _allChapters.isEmpty
-                        ? null
-                        : _toggleDownload,
-                    style: detailOutlineButtonStyle(
-                      palette,
-                      minimumSize: const Size.fromHeight(44),
-                    ),
-                    icon: const Icon(LucideIcons.download, size: 16),
-                    label: Text(_downloadProgress == null ? '下载' : '下载中'),
+                ValueListenableBuilder<int>(
+                  valueListenable: ShelfStore.instance.listenable,
+                  builder: (context, _, _) => DetailShelfPill(
+                    inShelf: _inShelf,
+                    enabled: !_loading && _supported,
+                    onTap: _toggleShelf,
+                    keyName: 'detail_shelf_button_desktop',
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 4),
+            DetailHero(
+              item: widget.item,
+              detail: _bookDetail,
+              onOpenAuthor: _openAuthorAction,
+              lastChapterTitle: _latestChapterTitle,
+              desktop: true,
+              compactDesktop: compact,
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              key: const Key('detail_read_button_desktop'),
+              onPressed: _opening || _loading || _allChapters.isEmpty
+                  ? null
+                  : () => unawaited(_openLastPosition()),
+              style: detailPrimaryButtonStyle(
+                palette,
+                minimumSize: const Size.fromHeight(44),
+              ),
+              icon: Icon(homeKindIcon(widget.item.kind), size: 18),
+              label: Text(
+                _opening ? '正在打开…' : _readBarLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (_isBook) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('detail_listen_button_desktop'),
+                      onPressed: _loading || _allChapters.isEmpty
+                          ? null
+                          : _openListening,
+                      style: detailOutlineButtonStyle(
+                        palette,
+                        minimumSize: const Size.fromHeight(44),
+                      ),
+                      icon: const Icon(LucideIcons.headphones, size: 16),
+                      label: const Text('听书'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('detail_download_button_desktop'),
+                      onPressed: _loading || _allChapters.isEmpty
+                          ? null
+                          : _toggleDownload,
+                      style: detailOutlineButtonStyle(
+                        palette,
+                        minimumSize: const Size.fromHeight(44),
+                      ),
+                      icon: const Icon(LucideIcons.download, size: 16),
+                      label: Text(_downloadProgress == null ? '下载' : '下载中'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            DetailIdRow(id: _contentId, compact: true),
           ],
-          const SizedBox(height: 12),
-          DetailIdRow(id: _contentId, compact: true),
-        ],
+        ),
       ),
     );
   }
@@ -1012,14 +1015,14 @@ class _DetailPageState extends State<DetailPage> {
   /// 铺开，行为不变。
   int _desktopSection = 0;
 
-  Widget _desktopPanel(HomePalette palette, Widget child) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: palette.surface,
+  Widget _desktopPanel(HomePalette palette, Widget child) => Material(
+    color: palette.surface,
+    clipBehavior: Clip.antiAlias,
+    shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: palette.line),
+      side: BorderSide(color: palette.line),
     ),
-    child: child,
+    child: Padding(padding: const EdgeInsets.all(16), child: child),
   );
 
   Widget _desktopBody(HomePalette palette) {
@@ -1271,34 +1274,44 @@ class _DetailPageState extends State<DetailPage> {
         for (var i = 0; i < labels.length; i++)
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: InkWell(
-              key: Key('detail_section_$i'),
-              borderRadius: BorderRadius.circular(18),
-              onTap: () {
-                setState(() => _desktopSection = i);
-                if (_scroll.hasClients &&
-                    MediaQuery.sizeOf(context).width >= 1000) {
-                  _scroll.jumpTo(0);
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
+            child: Material(
+              // `InkWell` paints its splash into the nearest Material
+              // *ancestor*, so the fill has to be the wrapper, not the child:
+              // a Material under the well leaves the ripple on whatever
+              // surface encloses the whole row, hidden behind this opaque
+              // pill. The shape and colours are unchanged.
+              color: _desktopSection == i ? palette.ink : palette.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+                side: BorderSide(
+                  color: _desktopSection == i ? palette.ink : palette.line,
                 ),
-                decoration: BoxDecoration(
-                  color: _desktopSection == i ? palette.ink : palette.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: _desktopSection == i ? palette.ink : palette.line,
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                key: Key('detail_section_$i'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: () {
+                  setState(() => _desktopSection = i);
+                  if (_scroll.hasClients &&
+                      MediaQuery.sizeOf(context).width >= 1000) {
+                    _scroll.jumpTo(0);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
-                ),
-                child: Text(
-                  labels[i],
-                  style: TextStyle(
-                    color: _desktopSection == i ? palette.canvas : palette.ink,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                  child: Text(
+                    labels[i],
+                    style: TextStyle(
+                      color: _desktopSection == i
+                          ? palette.canvas
+                          : palette.ink,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
