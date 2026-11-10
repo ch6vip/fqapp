@@ -161,6 +161,7 @@ pub(crate) async fn init_core(
     }
 
     let cfg = Arc::new(Config::load(&config_path)?);
+    crate::network::apply(&cfg.network_proxy)?;
     // Device registration reads the upstream identity (app version, UA) from the
     // same config file. That file ships inside the APK, so an edit still means a
     // rebuild and an app restart - but no code change, and no re-review of the

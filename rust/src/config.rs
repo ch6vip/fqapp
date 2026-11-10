@@ -239,7 +239,17 @@ impl UpstreamIdentity {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct NetworkProxy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
+    #[serde(default)]
+    pub network_proxy: NetworkProxy,
     #[serde(default)]
     pub algorithm_type: String,
     #[serde(default)]

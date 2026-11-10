@@ -17,9 +17,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/backend_service.dart';
+import '../services/desktop_platform.dart';
 import '../services/lan_share_preferences.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/settings/core_proxy_settings_panel.dart';
 import '../widgets/settings/settings_adaptive.dart';
 import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
@@ -260,6 +262,16 @@ class _ApiServicePageState extends State<ApiServicePage> {
     ).showSnackBar(SnackBar(content: Text('已复制$label')));
   }
 
+  Widget _proxySettingsPanel() => KeyedSubtree(
+    key: _anchor.keyFor('proxy'),
+    child: CoreProxySettingsPanel(
+      applyChanges: () async {
+        await BackendService.instance.restartForConfiguration();
+        if (mounted) await _refresh();
+      },
+    ),
+  );
+
   /// Endpoint reference: name, relative path, one-line purpose.
   static const _endpoints = <(String, String, String)>[
     ('搜索', '/api/v1/search/fanqie?query=', '替换为关键词'),
@@ -439,6 +451,11 @@ class _ApiServicePageState extends State<ApiServicePage> {
                 ],
               ),
             ),
+
+            if (isWindowsDesktop) ...[
+              const SizedBox(height: 14),
+              _proxySettingsPanel(),
+            ],
 
             // 接口是参考信息，默认收起；要用的人自己点开。
             const SizedBox(height: 8),
@@ -678,6 +695,11 @@ class _ApiServicePageState extends State<ApiServicePage> {
                 ),
               ),
             ),
+
+            if (isWindowsDesktop) ...[
+              const SizedBox(height: 14),
+              _proxySettingsPanel(),
+            ],
 
             // 接口是参考信息，默认收起；要用的人自己点开。
             const SizedBox(height: 10),
