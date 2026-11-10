@@ -7,10 +7,10 @@ import 'package:fqapp/services/app_theme.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
-/// The 番茄 import page moved onto the Wenku8 archive shell while keeping its
-/// source actions.
+/// The 番茄 import page retains the archive shell and local file import,
+/// without restoring removed account actions.
 void main() {
-  testWidgets('番茄导入页使用档案外壳，来源按钮保留', (tester) async {
+  testWidgets('番茄导入页使用档案外壳，只保留本地导入来源', (tester) async {
     // The page asks the platform for the latest private capture on open; the
     // mock keeps that read synchronous and empty.
     const channel = MethodChannel('fqapp/library_backup');
@@ -31,20 +31,23 @@ void main() {
     expect(find.byType(ArchiveFeaturePage), findsOneWidget);
     expect(find.text('书架和进度，一起带回来'), findsOneWidget);
     expect(find.text('选择导入来源'), findsOneWidget);
-    expect(find.text('从番茄账号读取'), findsOneWidget);
+    expect(find.text('从番茄账号读取'), findsNothing);
     expect(find.text('从历史文件导入'), findsOneWidget);
     expect(find.byType(SettingsSectionHeader), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('墨水屏模式把 eink=true 传给番茄登录', (tester) async {
+  testWidgets('墨水屏模式使用本地文件导入，不调用账号登录', (tester) async {
     const account = MethodChannel('fqapp/fanqie_account');
     const files = MethodChannel('fqapp/library_backup');
     final loginCalls = <MethodCall>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      files,
-      (call) async => null,
-    );
+    final fileCalls = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(files, (
+      call,
+    ) async {
+      fileCalls.add(call.method);
+      return null;
+    });
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(account, (
       call,
     ) async {
@@ -73,12 +76,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('fanqie-collect')));
+    await tester.tap(find.byKey(const ValueKey('fanqie-pick')));
     await tester.pumpAndSettle();
 
-    expect(loginCalls, hasLength(1));
-    final arguments = loginCalls.single.arguments as Map;
-    expect(arguments['eink'], isTrue, reason: '原生登录页要切换纯白/纯黑');
-    expect(arguments['dark'], isFalse);
+    expect(fileCalls, ['latestFanqieCapture', 'openBackup']);
+    expect(loginCalls, isEmpty);
+    expect(find.text('已取消选择'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

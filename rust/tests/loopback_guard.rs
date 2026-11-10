@@ -14,6 +14,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const COMMENT_ADD: &str = "/api/v1/series/123/comments/add?text=x";
+const COMMENTS: &str = "/api/v1/series/123/comments";
 
 async fn comment_server(
     name: &str,
@@ -22,10 +23,9 @@ async fn comment_server(
     MockUpstream,
     std::sync::Arc<fqapi_core::endpoints::Server>,
 ) {
-    let upstream = MockUpstream::start(|_| {
-        MockReply::json(json!({"code": 0, "data": {"comment_info": {"comment_id": "c9"}}}))
-    })
-    .await;
+    let upstream =
+        MockUpstream::start(|_| MockReply::json(json!({"code": 0, "data": {"comments": []}})))
+            .await;
     let dir = TempDir::new(name);
     let server = build_server(&dir, Some(upstream.origin.clone()), &[], &[], &pool_json(5)).await;
     (dir, upstream, server)
@@ -58,9 +58,7 @@ async fn own_hosts_are_served() {
     let dir = TempDir::new("guard-own-host");
     let server = build_server(&dir, None, &[], &[], &pool_json(3)).await;
     let lb = start_loopback(server).await;
-    // The capability rides in the path so this stays a pure Host-guard test:
-    // The capability rides in the path so this stays a pure Host-guard test:
-    // on a bare target the session gate answers 401 instead of the dispatcher.
+    // Resource-prefixed requests still obey the same Host guard.
     let target = lb.scoped_path("/health");
 
     for host in [
@@ -96,7 +94,7 @@ async fn foreign_or_missing_hosts_are_refused_without_a_body() {
     let lb = start_loopback(server).await;
 
     // The target stays capability-free on purpose: a foreign Host must still
-    // answer 403, which pins the Host guard ahead of the session gate.
+    // answer 403, which pins the Host guard ahead of dispatch.
     let other_port = lb.port.wrapping_add(1);
     for host in [
         // DNS rebinding: a foreign name resolved to 127.0.0.1.
@@ -128,13 +126,13 @@ async fn foreign_or_missing_hosts_are_refused_without_a_body() {
 }
 
 #[tokio::test]
-async fn cross_origin_writes_never_reach_upstream() {
+async fn cross_origin_requests_never_reach_upstream() {
     let (_dir, upstream, server) = comment_server("guard-foreign-origin").await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
     // Capability-free on purpose: a foreign Origin must still answer 403, so
-    // this pins the Origin guard ahead of the session gate.
-    let bare = lb.bare_url(COMMENT_ADD);
+    // this pins the Origin guard ahead of dispatch.
+    let bare = lb.bare_url(COMMENTS);
 
     for origin in [
         "https://evil.example".to_string(),
@@ -159,9 +157,9 @@ async fn cross_origin_writes_never_reach_upstream() {
     }
     assert!(upstream.requests().is_empty());
 
-    // Positive control: the same write from this listener's own origin, and
+    // Positive control: the same read from this listener's own origin, and
     // from a native client that sends no Origin, both go through.
-    let scoped = lb.url(COMMENT_ADD);
+    let scoped = lb.url(COMMENTS);
     for origin in [Some(format!("http://localhost:{}", lb.port)), None] {
         let mut builder = client.post(&scoped);
         if let Some(origin) = &origin {
@@ -181,14 +179,13 @@ async fn oversized_bodies_are_refused_and_moderate_ones_accepted() {
     let lb = start_loopback(server).await;
 
     // Announced oversize: refused from the header, before any body is read.
-    // The 413 check sits behind the session gate, so the target must be scoped.
     let limit = fqapi_core::server::MAX_REQUEST_BODY;
     let (status, text) = raw(
         lb.port,
         &format!(
             "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
              Content-Length: {}\r\nConnection: close\r\n\r\n",
-            lb.scoped_path(COMMENT_ADD),
+            lb.scoped_path(COMMENTS),
             lb.port,
             limit + 1
         ),
@@ -201,7 +198,7 @@ async fn oversized_bodies_are_refused_and_moderate_ones_accepted() {
     // by the adapter without buffering/copying the body into a Vec.
     let client = reqwest::Client::new();
     let response = client
-        .post(lb.url(COMMENT_ADD))
+        .post(lb.url(COMMENTS))
         .body(vec![b' '; 3 * 1024 * 1024])
         .send()
         .await
@@ -256,13 +253,12 @@ async fn anti_crawler_redirect_carries_a_location_header() {
     );
     lb.task.abort();
 }
-// --- Read routes are open, device-bound writes are not --------------------
+// --- Read routes are open, upstream writes have been removed --------------
 //
 // External readers (Legado book sources, local tooling) cannot know the
 // per-launch capability, so every read route answers any local client that
-// names this listener in `Host`. The guard that matters now is the write one:
-// posting a comment or danmaku under this installation's device identity still
-// requires the capability.
+// names this listener in `Host`. A resource capability never enables removed
+// comment or danmaku write routes.
 
 #[tokio::test]
 async fn read_routes_answer_a_capability_free_local_client() {
@@ -293,7 +289,7 @@ async fn read_routes_answer_a_capability_free_local_client() {
 }
 
 #[tokio::test]
-async fn a_device_bound_write_without_a_capability_is_refused() {
+async fn removed_write_routes_stay_unavailable_with_or_without_a_capability() {
     let (_dir, upstream, server) = comment_server("gate-write-no-capability").await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::new();
@@ -305,9 +301,9 @@ async fn a_device_bound_write_without_a_capability_is_refused() {
         .send()
         .await
         .expect("bare POST");
-    assert_eq!(response.status().as_u16(), 401);
+    assert_eq!(response.status().as_u16(), 404);
     let body: serde_json::Value = response.json().await.expect("json refusal");
-    assert_eq!(body["error"], "session required");
+    assert_eq!(body["success"], false);
     assert!(
         upstream.requests().is_empty(),
         "no upstream call may be made"
@@ -331,15 +327,14 @@ async fn a_device_bound_write_without_a_capability_is_refused() {
     }
     assert!(upstream.requests().is_empty());
 
-    // The real capability goes through, so the refusal above is the gate and
-    // not a broken route.
+    // Even the real resource capability cannot restore a removed write route.
     let response = client
         .post(lb.url(COMMENT_ADD))
         .send()
         .await
         .expect("scoped POST");
-    assert_eq!(response.status().as_u16(), 200);
-    assert_eq!(upstream.requests().len(), 1);
+    assert_eq!(response.status().as_u16(), 404);
+    assert!(upstream.requests().is_empty());
     lb.task.abort();
     upstream.shutdown();
 }
@@ -487,7 +482,7 @@ async fn lan_mode_refuses_a_foreign_origin_but_accepts_a_lan_one() {
 
     // A cross-site form POST from a foreign page is still refused.
     let response = client
-        .post(format!("http://127.0.0.1:{}{}", lb.port, COMMENT_ADD))
+        .post(lb.bare_url("/health"))
         .header("host", &ok_host)
         .header("origin", "https://evil.example")
         .send()
@@ -495,16 +490,10 @@ async fn lan_mode_refuses_a_foreign_origin_but_accepts_a_lan_one() {
         .expect("foreign-origin POST");
     assert_eq!(response.status().as_u16(), 403);
 
-    // A page served from this listener over the LAN is same-origin and passes
-    // the Origin guard - but the route is a device-bound write, so it still
-    // needs the capability. 401 here proves the Origin check was cleared while
-    // the capability gate held, which is the layering this test pins.
+    // A page served from this listener over the LAN can use public reads;
+    // unlike the removed write route, /health is a valid positive control.
     let response = client
-        .post(format!(
-            "http://127.0.0.1:{}{}",
-            lb.port,
-            lb.scoped_path(COMMENT_ADD)
-        ))
+        .post(lb.bare_url("/health"))
         .header("host", &ok_host)
         .header("origin", format!("http://{ok_host}"))
         .send()

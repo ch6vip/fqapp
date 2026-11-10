@@ -322,20 +322,3 @@ mod body_cap_tests {
         assert_eq!(resp.body, b"{\"ok\":true}");
     }
 }
-
-#[cfg(test)]
-mod account_transport_tests {
-    use super::account_transport;
-
-    // Account collection runs several requests per import; each one used to
-    // rebuild the TLS client. The shared handle must stay identical.
-    #[test]
-    fn the_account_transport_is_built_once_and_reused() {
-        let first = account_transport().expect("account transport");
-        let second = account_transport().expect("account transport");
-        assert!(
-            std::ptr::eq(first, second),
-            "account requests must reuse the cached no-redirect transport"
-        );
-    }
-}

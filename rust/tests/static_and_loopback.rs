@@ -278,17 +278,13 @@ async fn loopback_adapter_refuses_traversal_over_a_real_socket() {
 
 // --- Loopback request bodies ------------------------------------------------
 
-/// The account routes read their credentials from a POST body. The adapter
-/// must forward it: draining every body sent these requests to the handlers
-/// empty, which rejected them as unparseable.
+/// Retained clients cannot restore removed account routes by sending a body.
 #[tokio::test]
-async fn loopback_adapter_forwards_account_post_bodies() {
+async fn loopback_adapter_keeps_removed_account_routes_unavailable() {
     let (_dir, server) = fixture().await;
     let lb = start_loopback(server).await;
     let client = reqwest::Client::builder().build().expect("client");
 
-    // Both bodies parse; they fail only the cookie check, which proves the
-    // handler saw the body instead of an empty one.
     let cases = [
         (
             "/api/v1/account/fanqie/history",
@@ -306,34 +302,13 @@ async fn loopback_adapter_forwards_account_post_bodies() {
             .send()
             .await
             .expect("loopback post");
-        assert_eq!(resp.status().as_u16(), 400, "path {path}");
+        assert_eq!(resp.status().as_u16(), 404, "path {path}");
         let text = resp.text().await.expect("response body");
         assert!(
-            text.contains("未取得有效登录态"),
-            "path {path}: handler did not see the POST body: {text}"
+            text.contains("not found:"),
+            "path {path}: removed account route must not dispatch: {text}"
         );
     }
-    lb.task.abort();
-}
-
-#[tokio::test]
-async fn loopback_adapter_refuses_an_oversized_account_body() {
-    let (_dir, server) = fixture().await;
-    let lb = start_loopback(server).await;
-    let client = reqwest::Client::builder().build().expect("client");
-
-    let body = "x".repeat(fqapi_core::dispatch::ACCOUNT_REQUEST_BODY_LIMIT + 1);
-    let resp = client
-        .post(lb.bare_url("/api/v1/account/fanqie/history"))
-        .body(body)
-        .send()
-        .await
-        .expect("loopback post");
-    assert_eq!(
-        resp.status().as_u16(),
-        413,
-        "an over-limit account body must be refused before buffering"
-    );
     lb.task.abort();
 }
 
