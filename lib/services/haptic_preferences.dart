@@ -61,7 +61,11 @@ class HapticPreferences extends ValueNotifier<bool> {
     if (!supported) return true;
     try {
       // Android's window gate also covers implicit Material long-press haptics.
-      return await _channel.invokeMethod<bool>('setEnabled', enabled) ?? false;
+      // A silent platform channel must not keep optional startup work pending.
+      return await _channel
+              .invokeMethod<bool>('setEnabled', enabled)
+              .timeout(const Duration(seconds: 2), onTimeout: () => false) ??
+          false;
     } on PlatformException {
       return false;
     } on MissingPluginException {
