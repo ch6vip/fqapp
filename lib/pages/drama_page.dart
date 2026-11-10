@@ -19,6 +19,7 @@ import '../services/drama_channel_preferences.dart';
 import '../services/drama_mute_preferences.dart';
 import '../services/episode_source_cache.dart';
 import '../services/inline_video_playback.dart';
+import '../services/haptic_preferences.dart';
 
 import '../services/library_store.dart';
 import '../services/native_player.dart';
@@ -3021,7 +3022,9 @@ class _CardGestures extends StatelessWidget {
             if (inBand(details.localPosition.dx)) {
               onPanelLongPress();
             } else {
-              HapticFeedback.lightImpact();
+              if (HapticPreferences.instance.value) {
+                HapticFeedback.lightImpact();
+              }
               onBoostLongPressStart();
             }
           },

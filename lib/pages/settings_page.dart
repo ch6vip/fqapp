@@ -13,8 +13,9 @@
 //   `setting_menu.dart` / `glass_controls.dart`.
 // - Upstream items fqapp does not have (force portrait, start page, combined
 //   shelf, language, fonts, dictionaries, lane sync, widgets, frame rate,
-//   low-performance mode, haptics) are intentionally absent, per the product
+//   low-performance mode) are intentionally absent, per the product
 //   boundary: "do not add upstream settings fqapp lacks".
+// - Haptics use fqapp's app-wide preference, shared by both UI styles (#303).
 // - Windows keeps the existing two-pane `DesktopSettingsBody` inside the
 //   archive shell so the desktop settings workflow is unchanged.
 
@@ -26,6 +27,8 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/app_theme.dart';
+import '../services/app_theme_style.dart';
+import '../services/app_style_tokens.dart';
 import '../services/audio_preferences.dart';
 import '../services/desktop_platform.dart';
 import '../services/native_player.dart';
@@ -33,10 +36,12 @@ import '../services/player_layout_preferences.dart';
 import '../services/player_preferences.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
+import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/desktop_settings_body.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/settings/classic_settings_icons.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'about_page.dart';
 import 'api_service_page.dart';
@@ -46,6 +51,7 @@ import 'library_backup_page.dart';
 import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
 import 'text_replacement_page.dart';
+import 'theme_page.dart';
 import 'ai_reading/settings/ai_settings_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
@@ -57,22 +63,33 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     // 开关读的是 ValueNotifier：先把持久化的值读出来，读到后自动重绘。
     unawaited(BookOpenPreferences.instance.load());
+    final style = AppStyleTokens.of(context);
     final categories = <SettingsCategory>[
       SettingsCategory(
         icon: SettingsCategoryIcons.appearance,
         title: '外观',
-        subtitle: '主题模式、OLED 纯黑、播放页布局',
+        subtitle: HapticPreferences.supported
+            ? '主题模式、振动反馈、播放页布局'
+            : '主题模式、OLED 纯黑、播放页布局',
         // 用 builder 而不是固定 items：切到深色 / 切回浅色后，分类页重建
         // 时会重新判定，OLED 行不必退出重进就能出现或消失。
         // 播放页布局只在手机端有效（Windows 由 DesktopVideoChrome 承担）。
         itemsBuilder: (context) => [
           _themeModeItem(),
+          if (HapticPreferences.supported) _hapticsItem(),
           if (isDarkAppearance(
             systemBrightness: MediaQuery.platformBrightnessOf(context),
           ))
             _oledModeItem(),
           if (!isWindowsDesktop) _playerLayoutItem(),
         ],
+      ),
+      SettingsCategory(
+        icon: CupertinoIcons.paintbrush,
+        title: '主题',
+        subtitle: '经典主题、档案主题',
+        pageBuilder: (_) => const ThemePage(),
+        items: const [],
       ),
       SettingsCategory(
         icon: SettingsCategoryIcons.reading,
@@ -180,9 +197,9 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
 
+    // Keep the desktop body at one element path while switching themes: its
+    // nested Navigator owns the theme picker and must not be recreated mid-tap.
     if (isWindowsDesktop) {
-      // The desktop body keeps its two-pane workflow; the archive shell only
-      // supplies the shared header and background.
       return WenkuPage(
         header: _header(context),
         child: Padding(
@@ -190,7 +207,44 @@ class SettingsPage extends StatelessWidget {
             top:
                 MediaQuery.paddingOf(context).top + FrostedHeader.toolbarHeight,
           ),
-          child: DesktopSettingsBody(categories: categories),
+          child: DesktopSettingsBody(
+            categories: style.isClassic
+                ? [
+                    for (final category in categories)
+                      _classicCategory(category),
+                  ]
+                : categories,
+          ),
+        ),
+      );
+    }
+
+    if (style.isClassic) {
+      // Restore the single grouped card from f329399, not rounded archive
+      // FeatureEntry cards. The category models still own all current actions.
+      final classicCategories = [
+        for (final category in categories) _classicCategory(category),
+      ];
+      return SettingsScaffold(
+        title: '设置',
+        body: ListView(
+          key: const PageStorageKey('settings-classic'),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          children: [
+            SettingsGroupCard(
+              children: [
+                for (final category in classicCategories)
+                  SettingsRow(
+                    key: ValueKey('settings-entry-${category.title}'),
+                    icon: category.icon,
+                    iconTile: true,
+                    title: category.title,
+                    subtitle: category.subtitle,
+                    onTap: () => _openCategory(context, category),
+                  ),
+              ],
+            ),
+          ],
         ),
       );
     }
@@ -206,12 +260,18 @@ class SettingsPage extends StatelessWidget {
             padding: featurePadding(context),
             children: [
               for (var index = 0; index < categories.length; index++) ...[
-                if (index > 0) const SizedBox(height: 14),
+                if (index > 0) SizedBox(height: style.entryGap),
                 FeatureEntry(
                   key: ValueKey('settings-entry-${categories[index].title}'),
                   title: categories[index].title,
                   subtitle: categories[index].subtitle,
                   icon: categories[index].icon,
+                  // The current theme is a value, not a control: it belongs
+                  // next to the chevron, and the chevron has to land in the
+                  // same place as every other row's.
+                  trailingText: categories[index].title == '主题'
+                      ? AppThemeStyleStore.instance.value.label
+                      : null,
                   onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
@@ -221,6 +281,16 @@ class SettingsPage extends StatelessWidget {
       ),
     );
   }
+
+  static SettingsCategory _classicCategory(SettingsCategory category) =>
+      SettingsCategory(
+        icon: classicSettingsIcon(category.title, category.icon),
+        title: category.title,
+        subtitle: category.subtitle,
+        items: category.items,
+        itemsBuilder: category.itemsBuilder,
+        pageBuilder: category.pageBuilder,
+      );
 
   /// Settings is opened as a route (the “我的” entry and the Windows rail),
   /// so the upstream tab-style [ArchiveMasthead] needs a way back. The
@@ -330,6 +400,29 @@ class SettingsPage extends StatelessWidget {
       }
     }
   }
+
+  SettingsItem _hapticsItem() => SettingsItem(
+    icon: CupertinoIcons.waveform,
+    title: '振动反馈',
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: HapticPreferences.instance,
+      builder: (context, value, _) => SettingsToggleRow(
+        key: const ValueKey('settings-haptics'),
+        icon: CupertinoIcons.waveform,
+        title: '振动反馈',
+        description: '控制按钮、书架与播放手势的振动，不影响系统键盘',
+        value: value,
+        onChanged: (enabled) async {
+          final saved = await HapticPreferences.instance.setEnabled(enabled);
+          if (!saved && context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('未能完整应用或保存振动设置，请重试')));
+          }
+        },
+      ),
+    ),
+  );
 
   /// OLED 纯黑：画布纯黑省电，卡片 / 弹层保持近黑，靠描边撑住层次。
   /// 只在深色外观下显示（浅色 / 墨水屏没有可省的黑）。

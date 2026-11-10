@@ -72,6 +72,12 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
     await tester.pumpAndSettle();
 
+    // 「主题」分类插在「阅读」之前，把「服务」挤出了首屏：先滚到可见再点。
+    await tester.scrollUntilVisible(
+      find.text('服务').hitTestable(),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('服务'));
     await tester.pumpAndSettle();
 

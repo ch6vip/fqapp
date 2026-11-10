@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/app_theme.dart';
+import '../../services/app_theme_style.dart';
+import '../../services/app_style_tokens.dart';
 import 'src/performance_preferences.dart';
 import 'wenku_archive.dart';
 
@@ -83,6 +85,7 @@ class WenkuTonalColors extends ThemeExtension<WenkuTonalColors> {
     required bool eink,
     required bool oled,
     required bool highContrast,
+    AppThemeStyle style = AppThemeStyle.archive,
   }) {
     final dark = scheme.brightness == Brightness.dark;
     if (eink) {
@@ -109,6 +112,22 @@ class WenkuTonalColors extends ThemeExtension<WenkuTonalColors> {
         track: scheme.surfaceContainerHighest,
         thumb: scheme.onSurface,
         action: scheme.onSurface,
+      );
+    }
+    if (style == AppThemeStyle.classic) {
+      final background = dark
+          ? const Color(0xFF151517)
+          : const Color(0xFFF6F6F6);
+      return WenkuTonalColors(
+        pageStart: background,
+        pageEnd: background,
+        milk: scheme.surface,
+        darkMilk: scheme.onSurface,
+        glassSurface: scheme.surface,
+        active: scheme.primary,
+        track: scheme.surfaceContainerHighest,
+        thumb: scheme.surface,
+        action: scheme.primary,
       );
     }
     return WenkuTonalColors(
@@ -187,13 +206,24 @@ abstract final class WenkuTheme {
     bool eink = false,
     bool oled = false,
     bool highContrast = false,
+    AppThemeStyle style = AppThemeStyle.archive,
   }) {
     if (eink) {
       return _withWenkuExtensions(
-        AppTheme.createTheme(Brightness.light, einkMode: true),
+        AppTheme.createTheme(Brightness.light, einkMode: true, style: style),
         eink: true,
         oled: false,
         highContrast: highContrast,
+        style: style,
+      );
+    }
+    if (style == AppThemeStyle.classic) {
+      return _withWenkuExtensions(
+        AppTheme.createTheme(requestedBrightness, oledMode: oled, style: style),
+        eink: false,
+        oled: oled && requestedBrightness == Brightness.dark,
+        highContrast: highContrast,
+        style: style,
       );
     }
     if (oled && requestedBrightness == Brightness.dark) {
@@ -312,14 +342,18 @@ abstract final class WenkuTheme {
     required bool eink,
     required bool oled,
     required bool highContrast,
+    AppThemeStyle style = AppThemeStyle.archive,
   }) => theme.copyWith(
     extensions: [
+      ...theme.extensions.values,
+      AppStyleTokens.forStyle(style),
       WenkuAppearance(eink: eink, oled: oled, highContrast: highContrast),
       WenkuTonalColors.forScheme(
         theme.colorScheme,
         eink: eink,
         oled: oled,
         highContrast: highContrast,
+        style: style,
       ),
     ],
   );
@@ -432,6 +466,7 @@ class _WenkuScopeState extends State<WenkuScope>
       eink: eink,
       oled: oled,
       highContrast: highContrast,
+      style: AppStyleTokens.of(context).style,
     );
     return MediaQuery(
       data: effectiveMedia,

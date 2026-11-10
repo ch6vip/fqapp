@@ -28,6 +28,9 @@ import 'package:flutter/material.dart';
 
 import '../../models/media_item.dart';
 import '../../models/shuqi_book.dart';
+import '../../services/app_style_tokens.dart';
+import '../cover_tag_chip.dart';
+import '../media_card.dart';
 import '../wenku/book_collection_layout.dart';
 import '../wenku/src/app_text.dart';
 import '../wenku/wenku_archive.dart';
@@ -96,40 +99,6 @@ class ShelfSelectionMark extends StatelessWidget {
   );
 }
 
-/// A small cover badge (更新 / 缓存 / source). [inverse] flips it to an ink
-/// plate for light artwork.
-class ShelfCoverBadge extends StatelessWidget {
-  const ShelfCoverBadge({super.key, required this.text, this.inverse = false});
-  final String text;
-  final bool inverse;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: inverse
-            ? scheme.onSurface
-            : scheme.surface.withValues(alpha: .94),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: AppText(
-          text,
-          maxLines: 1,
-          style: TextStyle(
-            color: inverse ? scheme.surface : scheme.onSurface,
-            fontSize: 9,
-            height: 1.2,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// The archive list row: cover, file code, title and one metadata line.
 class ShelfNovelRow extends StatelessWidget {
   const ShelfNovelRow({
@@ -158,10 +127,13 @@ class ShelfNovelRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final metaText = [
+    final style = AppStyleTokens.of(context);
+    final metaText = joinMetaSegments([
+      shuqiMarker(item, isClassic: style.isClassic) ?? '',
+      if (cached) '缓存',
       if (meta != null && meta!.isNotEmpty) meta!,
       if (fanqieImported) '番茄导入',
-    ].join(' · ');
+    ]);
     return Semantics(
       button: true,
       selected: editing ? selected : null,
@@ -170,7 +142,9 @@ class ShelfNovelRow extends StatelessWidget {
         child: JellyTapSurface(
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 13),
+            padding: EdgeInsets.symmetric(
+              vertical: style.isClassic ? style.entryGap : 13,
+            ),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(color: Theme.of(context).dividerColor),
@@ -187,7 +161,7 @@ class ShelfNovelRow extends StatelessWidget {
                         item: item,
                         width: 56,
                         height: 76,
-                        radius: ArchiveDesign.coverRadius,
+                        radius: style.coverRadius,
                         decodeWidth: shelfCoverDecodeWidth(
                           56,
                           MediaQuery.devicePixelRatioOf(context),
@@ -206,13 +180,15 @@ class ShelfNovelRow extends StatelessWidget {
                       ),
                   ],
                 ),
-                const SizedBox(width: 15),
+                SizedBox(width: style.isClassic ? style.panelPadding : 15),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ArchiveCode(archiveFileCode(item)),
-                      const SizedBox(height: 4),
+                      if (style.showDecorativeCodes) ...[
+                        ArchiveCode(archiveFileCode(item)),
+                        const SizedBox(height: 4),
+                      ],
                       AppText(
                         item.title,
                         maxLines: 2,
@@ -304,7 +280,7 @@ class ShelfBookGridTile extends StatelessWidget {
                 item: item,
                 width: width,
                 height: height,
-                radius: ArchiveDesign.coverRadius,
+                radius: AppStyleTokens.of(context).coverRadius,
                 decodeWidth: shelfCoverDecodeWidth(
                   width,
                   MediaQuery.devicePixelRatioOf(context),
@@ -327,10 +303,13 @@ class ShelfBookGridTile extends StatelessWidget {
   Widget _metadata(BuildContext context, {double? height}) {
     // The grid footer carries the same facts as the list row's meta line, so
     // the 番茄导入 marker never disappears when the user switches to a grid.
-    final metaText = [
+    final style = AppStyleTokens.of(context);
+    final metaText = joinMetaSegments([
+      shuqiMarker(item, isClassic: style.isClassic) ?? '',
+      if (cached) '缓存',
       if (meta != null && meta!.isNotEmpty) meta!,
       if (fanqieImported) '番茄导入',
-    ].join(' · ');
+    ]);
     return SizedBox(
       key: ValueKey('grid-metadata-${item.id}'),
       height: height,
@@ -480,7 +459,9 @@ class ShelfBookGridFailure extends StatelessWidget {
                 context,
               ).colorScheme.onSurface.withValues(alpha: .04),
               border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(ArchiveDesign.coverRadius),
+              borderRadius: BorderRadius.circular(
+                AppStyleTokens.of(context).coverRadius,
+              ),
             ),
             child: const Center(
               child: AppText(

@@ -411,7 +411,9 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
 
   /// 非编辑态长按条目：触感反馈后进编辑态并选中该项。
   void _longPress(_ShelfEntry entry) {
-    HapticFeedback.mediumImpact();
+    if (HapticPreferences.instance.value) {
+      HapticFeedback.mediumImpact();
+    }
     _enterEdit(entry);
   }
 
@@ -523,16 +525,20 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     });
     try {
       await ShelfStore.instance.removeKeys(keys);
+      if (localEntries.isNotEmpty) {
+        // Clean every removed identity before slow or unavailable file I/O.
+        try {
+          await ShelfGroupStore.instance.removeAssignments(
+            localEntries.map((entry) => entry.contentKey),
+          );
+        } catch (error, stack) {
+          AppLog.w('shelf', '清理本地书分组失败', error: error, stack: stack);
+        }
+      }
       for (final entry in localEntries) {
         try {
           await ImportedBookStore.instance.deleteBook(entry.item.id);
         } catch (_) {}
-        // D-M8: 分组仓库未就绪或写失败都不能阻断本地文件删除。
-        try {
-          await ShelfGroupStore.instance.removeAssignments([entry.contentKey]);
-        } catch (error, stack) {
-          AppLog.w('shelf', '清理本地书分组失败', error: error, stack: stack);
-        }
       }
     } catch (_) {
       if (mounted) {

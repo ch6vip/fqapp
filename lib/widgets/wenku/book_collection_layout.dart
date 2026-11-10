@@ -132,9 +132,9 @@ class BookGridViewport {
     required this.width,
     required this.height,
     required TextScaler textScaler,
-  }) : titleHeight = textScaler.scale(14) * 1.4 * 2,
-       authorHeight = textScaler.scale(12) * 1.4,
-       progressHeight = textScaler.scale(12) * 1.4,
+  }) : titleHeight = (textScaler.scale(14) * 1.4).ceilToDouble() * 2,
+       authorHeight = (textScaler.scale(12) * 1.4).ceilToDouble(),
+       progressHeight = (textScaler.scale(12) * 1.4).ceilToDouble(),
        minimumCellWidth = math.max(56.0, textScaler.scale(14) * 4),
        retryHeight = math.max(48.0, textScaler.scale(12) * 1.4 + 16),
        statusHeight = textScaler.scale(12) * 1.4 * 2 + 8;

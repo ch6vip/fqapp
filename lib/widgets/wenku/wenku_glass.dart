@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
+import '../../services/app_style_tokens.dart';
+
 import 'src/app_haptics.dart';
 import 'src/app_text.dart';
 import 'src/dock_layout.dart';
@@ -1098,16 +1100,20 @@ class ContentPanel extends StatefulWidget {
   const ContentPanel({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(16),
-    this.radius = ArchiveDesign.panelRadius,
+    this._padding,
+    this._radius,
     this.backgroundColor,
     this.onTap,
     this.haptic = HapticCue.action,
   });
 
   final Widget child;
-  final EdgeInsetsGeometry padding;
-  final double radius;
+  final EdgeInsetsGeometry? _padding;
+  final double? _radius;
+
+  /// Default geometry remains observable for callers without a theme scope.
+  EdgeInsetsGeometry get padding => _padding ?? const EdgeInsets.all(16);
+  double get radius => _radius ?? ArchiveDesign.panelRadius;
   final Color? backgroundColor;
   final VoidCallback? onTap;
   final HapticCue? haptic;
@@ -1122,6 +1128,7 @@ class _ContentPanelState extends State<ContentPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final style = AppStyleTokens.of(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return AnimatedScale(
       scale: _pressed && !reduceMotion ? .975 : 1,
@@ -1134,8 +1141,13 @@ class _ContentPanelState extends State<ContentPanel> {
       child: Material(
         color: widget.backgroundColor ?? Theme.of(context).colorScheme.surface,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
-          side: BorderSide(color: Theme.of(context).dividerColor, width: .7),
+          borderRadius: BorderRadius.circular(
+            widget._radius ?? style.panelRadius,
+          ),
+          side: BorderSide(
+            color: Theme.of(context).dividerColor,
+            width: style.isClassic ? .6 : .7,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -1156,7 +1168,10 @@ class _ContentPanelState extends State<ContentPanel> {
             pressed: _pressed,
             activation: _iconActivation,
             child: ArchiveRegistration(
-              child: Padding(padding: widget.padding, child: widget.child),
+              child: Padding(
+                padding: widget._padding ?? EdgeInsets.all(style.panelPadding),
+                child: widget.child,
+              ),
             ),
           ),
         ),

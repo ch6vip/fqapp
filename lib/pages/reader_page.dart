@@ -45,6 +45,7 @@ import '../widgets/reader/reader_narration_visibility.dart';
 import '../widgets/reader/reader_sync_pill.dart';
 import '../services/eink_refresh.dart';
 import '../services/fair_memory.dart';
+import '../services/haptic_preferences.dart';
 import '../services/volume_key.dart';
 import '../services/reader_bookmark_store.dart';
 import '../services/reader_history.dart';
