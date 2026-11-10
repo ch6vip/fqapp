@@ -28,6 +28,7 @@ import 'services/app_theme.dart';
 import 'services/app_theme_style.dart';
 import 'services/api_client.dart';
 import 'services/ai_reading/ai_controller.dart';
+import 'services/webdav_sync_service.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
@@ -192,6 +193,8 @@ Future<void> _initializeLocalData() async {
     // AI 设置/缓存/反馈箱：失败只让 AI 功能退化，不能拖住阅读。
     optional(AiReadingController.instance.init),
   ]);
+  // WebDAV 为可选功能；网络或安全存储故障不阻塞本机阅读。
+  unawaited(optional(WebDavSyncService.instance.init));
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
   // 短剧「边看边往后缓存」的开关与集数：同一条装配链里读，避免播放页

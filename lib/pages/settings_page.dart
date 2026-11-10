@@ -239,7 +239,9 @@ class SettingsPage extends StatelessWidget {
                     icon: category.icon,
                     iconTile: true,
                     title: category.title,
-                    subtitle: category.subtitle,
+                    subtitle: category.title == '主题'
+                        ? AppThemeStyleStore.instance.value.label
+                        : category.subtitle,
                     onTap: () => _openCategory(context, category),
                   ),
               ],

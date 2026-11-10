@@ -271,6 +271,7 @@ class _ReaderDirectoryFastScrollState extends State<ReaderDirectoryFastScroll>
     ReaderThemePreset.parchment => const Color(0xCCBFB69F),
     ReaderThemePreset.dark => const Color(0xCC5E5E5E),
     ReaderThemePreset.eink => Colors.black,
+    ReaderThemePreset.mistBlue => const Color(0xCC9FB6CB),
   };
 
   Widget _overlay(BoxConstraints constraints, Widget handle) {
