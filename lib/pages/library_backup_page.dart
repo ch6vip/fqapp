@@ -175,7 +175,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                         icon: LucideIcons.book_open,
                         iconTile: true,
                         title: '导入番茄书架',
-                        subtitle: '网页登录、最近采集和旧版历史文件',
+                        subtitle: '此前保存的采集数据或本地历史文件',
                         enabled: enabled,
                         onTap: enabled
                             ? () => Navigator.push(

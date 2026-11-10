@@ -378,7 +378,7 @@ fn match_videos(parts: &[&str], q: &Params) -> Option<RouteMatch> {
         return None;
     }
     let mut p = q.clone();
-    if parts.len() >= 2 && parts[1] == "detail" {
+    if parts.len() == 2 && parts[1] == "detail" {
         p.set("series_id", parts[0]);
         return Some(RouteMatch {
             api: "video_detail",
@@ -387,22 +387,17 @@ fn match_videos(parts: &[&str], q: &Params) -> Option<RouteMatch> {
     }
     // 弹幕取数以 vid 为 group_id（官方 `DanmakuRequestHelper.java:303,318`），
     // 剧集 id 只是在 business_param 里当 book_id，所以两者都进 params。
-    if parts.len() >= 2 && parts[1] == "danmaku" {
+    if parts.len() == 2 && parts[1] == "danmaku" {
         p.set("vid", parts[0]);
-        // 发弹幕走 `comment/add`，与取数分开。
-        if parts.len() >= 3 && parts[2] == "add" {
-            p.set("mode", "danmaku");
-            return Some(RouteMatch {
-                api: "playlet_comment_add",
-                params: p,
-            });
-        }
         return Some(RouteMatch {
             api: "playlet_danmaku",
             params: p,
         });
     }
 
+    if parts.len() != 1 {
+        return None;
+    }
     p.set("video_id", parts[0]);
     Some(RouteMatch {
         api: "video",
@@ -426,8 +421,6 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
     // （`m0.java:938-957`，`share_type=7`）。
     if parts.len() >= 2 {
         match parts[1] {
-            // 发评论与读评论同一条上游，但本地分成两个路由：POST 的
-            // `comments/add` 走写入（`comment/add/v1/`），`comments` 走列表。
             "comments" => {
                 if parts.len() == 4 && parts[3] == "replies" {
                     p.set("comment_id", parts[2]);
@@ -436,11 +429,8 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
                         params: p,
                     });
                 }
-                if parts.len() >= 3 && parts[2] == "add" {
-                    return Some(RouteMatch {
-                        api: "playlet_comment_add",
-                        params: p,
-                    });
+                if parts.len() != 2 {
+                    return None;
                 }
                 return Some(RouteMatch {
                     api: "playlet_comments",
@@ -449,13 +439,13 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             }
             // 热评与右栏评论计数（`a13/w.java:563-599`）：剧集场景下
             // group_id 取 vid（调用方给），没有 vid 时退回剧集 id。
-            "hot-comments" => {
+            "hot-comments" if parts.len() == 2 => {
                 return Some(RouteMatch {
                     api: "playlet_hot_comments",
                     params: p,
                 })
             }
-            "share" => {
+            "share" if parts.len() == 2 => {
                 // 官方把 seriesId 同时放在 `album_id` 与 `group_id`。
                 p.set("group_id", parts[0]);
                 if p.get_str("album_id").is_empty() {
@@ -466,7 +456,7 @@ fn match_series(parts: &[&str], q: &Params) -> Option<RouteMatch> {
                     params: p,
                 });
             }
-            _ => {}
+            _ => return None,
         }
     }
     Some(RouteMatch {
@@ -540,13 +530,13 @@ fn match_comments(parts: &[&str], q: &Params) -> Option<RouteMatch> {
     }
     let mut p = q.clone();
     // 复制链接的短链兜底（`LinkShareItem.java:86-104`）。
-    if parts[0] == "short-url" {
+    if parts.len() == 1 && parts[0] == "short-url" {
         return Some(RouteMatch {
             api: "share_short_url",
             params: p,
         });
     }
-    if parts.len() < 2 {
+    if parts.len() != 2 {
         return None;
     }
     p.set("comment_id", parts[0]);
@@ -556,18 +546,7 @@ fn match_comments(parts: &[&str], q: &Params) -> Option<RouteMatch> {
             params: p,
         });
     }
-    // 点赞/回复短剧评论（`social/t.java:803-831`、`nx1/d.java:217-231`）。
-    match parts[1] {
-        "digg" => Some(RouteMatch {
-            api: "playlet_comment_digg",
-            params: p,
-        }),
-        "reply" => Some(RouteMatch {
-            api: "playlet_comment_reply",
-            params: p,
-        }),
-        _ => None,
-    }
+    None
 }
 
 /// Router-level device pinning helper (see `device_session.go`).

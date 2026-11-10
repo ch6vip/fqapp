@@ -25,10 +25,9 @@ for package in packages:
     for file in package_root.iterdir():
         if file.is_file() and re.match(r'^(LICENSE|COPYING|COPYRIGHT)([._-].*)?$', file.name, re.I):
             shutil.copy2(file, destination / f"{package['name']}-{file.name}.txt")
-for source, name in [(root / 'LICENSE', 'fqapp-GPL-3.0.txt'),
-                     (root / 'build/windows/x64/packages/Microsoft.Web.WebView2/LICENSE.txt', 'WebView2-LICENSE.txt')]:
-    if source.is_file():
-        shutil.copy2(source, destination / name)
+source = root / 'LICENSE'
+if source.is_file():
+    shutil.copy2(source, destination / 'fqapp-GPL-3.0.txt')
 header = root / 'build/windows/x64/libmpv/include/client.h'
 if header.is_file():
     notice = header.read_text(encoding='utf8').split('*/', 1)[0] + '*/\n'

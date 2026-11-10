@@ -103,10 +103,10 @@ abstract class BackendTransport {
   /// Base URL used to resolve backend-relative resources such as `/src/...`.
   String get baseUrl;
 
-  /// Per-launch capability the loopback adapter requires; empty when unknown.
+  /// Per-launch resource URL scope; empty when unknown.
   ///
-  /// Only callers that cross the socket must present it - FFI calls stay in
-  /// process and are never gated.
+  /// App resource URLs use it to avoid resolving against a restarted core.
+  /// External readers may also use the unprefixed read routes.
   String get capability => '';
 
   Future<BackendResponse> send(
@@ -522,8 +522,7 @@ class HttpBackendTransport implements BackendTransport {
   @override
   final String baseUrl;
 
-  /// Loopback capability presented as a bearer token; empty when the caller
-  /// talks to a server that does not ask for one.
+  /// Resource scope of the current loopback core, empty when unknown.
   ///
   /// Mutable because the FFI transport only learns it once the core is up.
   @override
@@ -555,11 +554,6 @@ class HttpBackendTransport implements BackendTransport {
       abortTrigger: abort.future,
     );
     if (body != null) httpRequest.bodyBytes = body;
-    if (capability.isNotEmpty) {
-      // This is the only HTTP path that never sees the cookie the entry URL
-      // sets, so it has to present the capability as a bearer token.
-      httpRequest.headers['authorization'] = 'Bearer $capability';
-    }
     try {
       // The deadline must cover reading the body too: a server that sends
       // headers and then stalls would otherwise hold the connection forever.

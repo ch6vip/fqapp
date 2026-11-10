@@ -27,7 +27,7 @@ class FanqieHistoryPage {
 
   factory FanqieHistoryPage.parse(Map<String, dynamic> envelope) {
     if (envelope['code'] != 0 && envelope['code'] != '0') {
-      throw const FormatException('番茄未返回成功结果，请重新登录后重试');
+      throw const FormatException('文件中的番茄历史响应未成功，请选择有效的历史文件');
     }
     final data = envelope['data'];
     if (data is! Map ||

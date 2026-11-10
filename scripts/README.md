@@ -58,7 +58,7 @@ node --test test/web_assets_test.cjs test/verify_audio_cenc_test.cjs test/build_
 
 ### 番茄采集的本机转换
 
-将应用导出的原始 ZIP 解包到独立目录后，可直接使用 Dart 转换为兼容本机备份格式的 JSON：
+将此前保存的采集 ZIP 解包到独立目录后，可直接使用 Dart 转换为兼容本机备份格式的 JSON。应用不再提供网页登录和账号采集，旧文件仍可导出、转换和导入：
 
 ```powershell
 dart scripts/convert_fanqie_capture.dart <解包目录> <新输出文件.json> [目录响应缓存目录]
@@ -69,7 +69,7 @@ dart scripts/convert_fanqie_capture.dart <解包目录> <新输出文件.json> [
 没有目录时保留章节 ID，不猜章节序号；不会下载正文或访问账号。输出含个人阅读数据，请勿入库。
 
 ```powershell
-flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi --no-pub
+flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 python scripts/verify_android_apk.py --help
 node scripts/check_native_alignment.cjs android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so android/app/src/main/jniLibs/armeabi-v7a/libfqapi_core.so
 node scripts/check_so_freshness.cjs android/app/src/main/jniLibs/arm64-v8a/libfqapi_core.so --since v1.0.88

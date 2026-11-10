@@ -14,7 +14,7 @@
   <a href="https://github.com/ch6vip/fqapp/releases/latest"><img alt="下载 APK" height="40" src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white"></a>
 </p>
 
-所有内容实时从网上获取，App 本身不存任何内容。
+在线内容来自第三方接口，本项目不托管内容；缓存和主动下载的内容保存在你的设备上。
 
 > [!WARNING]
 > 仅供学习研究，不提供、不存放任何内容。内容来自第三方公开接口，版权归原作者所有。使用后果自负，如有侵权请联系删除。
@@ -78,7 +78,9 @@
 
 <details><summary><b>需要注册或付费吗？有 iOS 版吗？</b></summary>
 
-不用注册也不用付费，App 里没有任何登录和支付功能。没有 iOS 版，目前只有安卓。
+不用注册，App 不提供账号登录、支付或云端同步。主要支持 Android，也提供 [Windows 桌面版](WINDOWS.md)；[iOS 构建](IOS.md)以搜书、书架和小说阅读为主，尚不支持完整播放功能。
+
+番茄书架导入仅使用本地历史文件或此前已保存的采集数据，不登录番茄账号。评论可浏览，本地收藏和点赞不会提交到上游。
 
 </details>
 

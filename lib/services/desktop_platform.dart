@@ -18,7 +18,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:smtc_windows/smtc_windows.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../widgets/desktop_login.dart';
 import 'desktop_media.dart';
 import 'app_log.dart';
 import 'platform_channel.dart';
@@ -285,22 +284,6 @@ class DesktopPlatform with WindowListener {
         return _reader(method, args);
       case 'fqapp/system_tts':
         return _speech(method, args);
-      case 'fqapp/fanqie_account':
-        if (method == 'login') {
-          final context = navigatorKey.currentContext;
-          if (context == null) {
-            throw PlatformException(code: 'not_ready', message: '窗口尚未就绪');
-          }
-          return DesktopLogin.open(context);
-        }
-        if (method == 'cancelLogin') {
-          DesktopLogin.cancel();
-          return null;
-        }
-        if (method == 'clearSession') {
-          await DesktopLogin.clearSession();
-          return null;
-        }
       case 'fqapp/eink-refresh':
         return false;
       case 'fqapp/volume-key':

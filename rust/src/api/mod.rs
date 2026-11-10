@@ -271,13 +271,11 @@ pub async fn base_url() -> String {
         _ => String::new(),
     }
 }
-/// Per-launch capability of the loopback adapter.
+/// Per-launch resource URL scope of the loopback adapter.
 ///
-/// Every request the adapter accepts must carry it: as a `/_session/<cap>`
-/// path prefix, an `Authorization: Bearer` header, or the session cookie the
-/// entry URL sets. `base_url()` deliberately stays capability-free - the same
-/// value is the FFI path root, and FFI calls never cross the socket. URLs
-/// handed to HTTP clients instead (`/src/...`) must carry the prefix.
+/// App-generated resource URLs carry `/_session/<cap>` so an earlier core's
+/// URLs do not resolve against a restarted core. External readers can use
+/// the unprefixed read routes without it; this is not an account credential.
 pub async fn session_capability() -> String {
     let guard = CORE.read().await;
     match guard.as_ref() {

@@ -147,65 +147,9 @@ async fn read_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, St
     Ok(out)
 }
 
-/// Routes whose handler reads the POST body rather than URL/query arguments.
-const ACCOUNT_HISTORY_PATH: &str = "/api/v1/account/fanqie/history";
-const ACCOUNT_LIBRARY_PATH: &str = "/api/v1/account/fanqie/library";
-
-/// Largest body the account routes accept. Both handlers reject anything
-/// above this, so the loopback adapter refuses it before buffering.
-pub const ACCOUNT_REQUEST_BODY_LIMIT: usize = 16 * 1024;
-
-/// Routes that read the request body. The loopback adapter retains and
-/// forwards the body for exactly these paths; every other route ignores
-/// bodies, so draining them is enough.
-pub fn request_body_limit(path: &str) -> Option<usize> {
-    match path {
-        ACCOUNT_HISTORY_PATH | ACCOUNT_LIBRARY_PATH => Some(ACCOUNT_REQUEST_BODY_LIMIT),
-        _ => None,
-    }
-}
-
-/// APIs that submit user actions under the device identity (comments add /
-/// digg / reply; the danmaku add route reuses `playlet_comment_add`). The
-/// loopback adapter is callable by other local HTTP clients, so a GET must
-/// never turn into an upstream POST just because the path matched one of
-/// these. New device-bound write routes must be added here and to the
-/// contract test; the list lives apart from router.rs's route table on
-/// purpose — see
-/// .agents/notes/implemented/bug-fix/2026-09-28-loopback-write-methods.md.
-const DEVICE_BOUND_WRITE_APIS: &[&str] = &[
-    "playlet_comment_add",
-    "playlet_comment_digg",
-    "playlet_comment_reply",
-];
-
-/// Whether `path` addresses a device-bound write route.
-///
-/// Read routes answer any local client without the capability, so that external
-/// readers (Legado book sources, local tooling) can consume them. These routes
-/// stay behind the capability: they submit actions as this installation's
-/// device identity, and a sibling app on the same phone must not be able to
-/// post comments or danmaku on the user's behalf.
-pub fn requires_capability(path: &str) -> bool {
-    let params = Params::parse("");
-    match router::match_rest_path(path, &params) {
-        Some(m) => DEVICE_BOUND_WRITE_APIS.contains(&m.api),
-        None => false,
-    }
-}
-
 pub async fn dispatch(server: &Server, req: &Request) -> Response {
     let path = req.path.as_str();
     let ctx = &server.ctx;
-
-    // Account credentials belong in a bounded POST body, never in route/query
-    // parameters, endpoint error logs, or the anonymous rotating device pool.
-    if path == ACCOUNT_HISTORY_PATH {
-        return crate::endpoints::account_history::handle(ctx, req).await;
-    }
-    if path == ACCOUNT_LIBRARY_PATH {
-        return crate::endpoints::account_library::handle(ctx, req).await;
-    }
 
     if path == "/health" {
         let devices = ctx.pool.count().await;
@@ -244,19 +188,6 @@ pub async fn dispatch(server: &Server, req: &Request) -> Response {
         }
     };
     params = m.params;
-
-    // Method enforcement for device-bound writes: see DEVICE_BOUND_WRITE_APIS
-    // and the note it references.
-    if DEVICE_BOUND_WRITE_APIS.contains(&m.api) && !req.method.eq_ignore_ascii_case("POST") {
-        let mut response = Response::json(
-            405,
-            &json!({ "success": false, "error": "method not allowed" }),
-        );
-        response
-            .headers
-            .push(("allow".to_string(), "POST".to_string()));
-        return response;
-    }
 
     // HTML page endpoints write their own response and bypass the envelope.
     if let Some(raw) = server.raw_handler(m.api) {

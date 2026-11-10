@@ -25,13 +25,13 @@
 
 ## 架构总览
 
-### 番茄书架原始采集与历史导入
+### 番茄书架本地文件导入
 
-设置 → 数据 → 备份与导入提供本机备份/恢复入口，并集中进入“导入番茄书架”。网页登录、最近采集与旧版历史 JSON 共用导入预览和本机书架/历史合并流程。原始响应、分卷导出与补取资料放在折叠详情中。
+设置 → 数据 → 备份与导入提供本机备份/恢复入口，并集中进入“导入番茄书架”。可选择此前保存的历史 JSON，或使用旧版已经留在本机的采集数据；预览后才合并书架和历史。
 
-Android WebView 由用户本人完成官方手机号登录和人机验证。Cookie 保存在本应用私有 WebView 存储中，关闭窗口时 flush，只有显式“退出网页登录”才清除 Cookie 与网页存储；上游仍可使会话过期。交给 Rust 的会话副本只在内存和 `ApiClient._get` 的 POST 请求体中使用，不写进采集或备份。原生登录界面跟随应用主题，仅点击发送/获取验证码或重新发送按钮后尝试一次缩放适配；输入框获得焦点时取消尚未执行的自动适配，验证容器和键盘布局变化不触发缩放，提供手动“适应全页”和双指缩放；只读取按钮文字与布局尺寸，不读取输入框、验证答案或跨域 iframe 内容。
+应用不提供账号登录、账号采集或云端同步，不提交上游评论、弹幕、回复或点赞。评论浏览、回复列表和本地收藏/点赞保留；部分只读上游接口使用 POST，不能仅按 HTTP 方法判断是否写入。Android 登录插件、Windows 登录 WebView 和 Rust 账号路由均已移除。升级不删除已有书架、缓存、采集文件或旧 WebView 数据，也不再访问旧登录会话。
 
-固定白名单覆盖历史、书架、进度、文件夹、置顶与标签，仍只调用已确认的读取接口。采集保留响应 JSON 原始字段并移除凭证，结果分卷存入 Android 私有目录 `files/fanqie-library-captures/`。清单 `fqapp.fanqie-library-capture` v2 的 `sources` 为索引，`parts` 为原始分卷；支持读取最近一次、续取公开详情和系统选择器导出 ZIP，兼容 v1 单文件。采集本身不写入书架，解析预览后才合并。
+Android 私有目录 `files/fanqie-library-captures/` 中的旧文件仍可读取和导出。清单 `fqapp.fanqie-library-capture` v2 的 `sources` 为索引，`parts` 为原始分卷；兼容 v1 单文件。补齐资料只读取公开书籍详情，章节定位只读取公开目录，不携带账号凭证、不刷新账号快照，也不下载正文。折叠详情保留原始响应概况、分卷导出和补齐资料入口。
 
 小说按章节 ID 对照目录恢复续读位置，保留较新的本机进度；未确认的段内偏移不转换为本地文字偏移。采集数量不等于书籍数量或全部云端数据；失败、取消、分页未完成和目录暂不可用均分别保留。协议证据与私人采集放在本地 `.agents/research/fanqie-history-20261018/`，不随源码分发。
 
@@ -152,13 +152,13 @@ fqapp/
 
 | 工具 | 版本 | 用途 |
 |---|---|---|
-| Flutter | 3.44.6 (stable) | 构建 App |
-| Dart SDK | 3.12+ | 随 Flutter |
+| Flutter | 3.47.9 (stable) | 与 Android / Windows CI 一致 |
+| Dart SDK | 3.13.7 | 随 Flutter 3.47.9 |
 | Rust | stable (cargo/rustc) | 编译原生核心 `fqapi_core` |
 | flutter_rust_bridge | 2.13.0 | 生成 Flutter/Rust 绑定 |
 | Android SDK | 36 (platform) + Build-Tools | 编译 APK |
 | JDK | 17 | Android Gradle 构建 |
-| Android NDK | 28.2.13676358 | 交叉编译 Rust ARM64 核心与 C 流式解密库 |
+| Android NDK | 28.2.13676358 | 交叉编译 Rust ARM64 / ARMv7 核心与 C 流式解密库 |
 | CMake | 3.22.1 | Android 构建自动编译 C 库 |
 | Visual Studio | 2022（「使用 C++ 的桌面开发」工作负载） | 仅构建 Windows 桌面端（可选） |
 
@@ -173,24 +173,27 @@ fqapp/
 
 `rust/` 是产品唯一的后端实现（crate `fqapi_core`）。构建脚本会先用
 `flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml` 生成 Dart/Rust 绑定，
-再用 NDK 28.2.13676358 交叉编译 `aarch64-linux-android`，最后把 `libfqapi_core.so`
-复制到 `android/app/src/main/jniLibs/arm64-v8a/`。
+再用 NDK 28.2.13676358 交叉编译 `aarch64-linux-android` 和 `armv7-linux-androideabi`，
+最后把各自的 `libfqapi_core.so` 复制到 `android/app/src/main/jniLibs/arm64-v8a/`
+和 `android/app/src/main/jniLibs/armeabi-v7a/`。
 
 Windows PowerShell：
 
 ```powershell
+flutter pub get --enforce-lockfile
 .\scripts\build_rust_backend.ps1
 ```
 
 Linux / macOS：
 
 ```bash
+flutter pub get --enforce-lockfile
 ./scripts/build_rust_backend.sh
 ```
 
 常用开关：`-SkipCodegen` 跳过绑定生成（绑定已是最新时），`-HostLib` 额外构建桌面 cdylib，
 `-Profile debug` 选择 debug 配置。NDK 可由 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`
-指定，或放在 Android SDK 的 `ndk/` 下；脚本优先使用 `ndk/28.2.13676358`。
+指定，或放在 Android SDK 的 `ndk/28.2.13676358` 下；其他 NDK 版本会被脚本拒绝。
 
 `rust/testdata/` 的黄金向量由维护者的离线对照环境生成后随仓库分发；
 正常构建与 CI 不依赖任何私有检出，也不需要额外的外部工具链。
@@ -215,15 +218,15 @@ Rust 核心库由 `scripts/build_rust_backend.*` 生成；C 库由下一步 APK 
 ### 3. 构建 APK
 
 ```powershell
-cd fqapp
-flutter pub get
-# 当前 Rust 核心只提供 arm64-v8a，构建时显式指定目标 ABI
-flutter build apk --debug --target-platform android-arm64
-flutter build apk --release --target-platform android-arm64
+# 从仓库根目录运行；此前须已执行 Rust 构建步骤。
+flutter pub get --enforce-lockfile
+flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi
 ```
 
-生成的 APK 仅支持 `arm64-v8a`；如果要支持 32 位或 x86 设备，需要先为
-对应 ABI 交叉编译并打包 `libfqapi_core.so` 和 `libshortplay_crypto.so`，同时调整 ABI 配置。
+在 `build/app/outputs/flutter-apk/` 生成 `app-arm64-v8a-release.apk` 和
+`app-armeabi-v7a-release.apk`，分别适用于 ARM64 与 32 位 ARM 设备。
+只构建 MuMu 验证包时可选择 `--target-platform android-arm64`，仍保留 `--split-per-abi`。
+当前不分发 x86 / x86_64 原生 APK；MuMu 的 ARM 转译结果不代表其他设备兼容性。
 
 > **release 构建不要加 `--no-pub`**：`integration_test` 在 `dev_dependencies` 里，`flutter test` 会把
 > 它写进 Android 插件注册表；随后用 `--no-pub` 构建 release，Gradle 会报
@@ -234,10 +237,11 @@ flutter build apk --release --target-platform android-arm64
 
 打开 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，
 点击 **Run workflow** 即可从源码构建。`master` 上的应用、原生库及构建配置变更也会自动触发。
-运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
-`app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
+运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-<ref>-<commit>-<运行编号>`
+或 `fqapp-armv7-<ref>-<commit>-<运行编号>`；分别包含对应 ABI 的 release APK、SHA-256、
+签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
 
-[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.44.6`、Rust 工具链与
+[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.47.9`、Rust 工具链与
 flutter_rust_bridge `2.13.0`、JDK 17、NDK `28.2.13676358` 和 CMake `3.22.1`。
 Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false`
 使用官方 Maven 源；本地构建默认仍使用国内镜像。
@@ -361,7 +365,7 @@ flutter analyze --no-pub
 bash scripts/test_quick.sh home
 ```
 
-构建 MuMu 验证包用 `flutter build apk --release --target-platform android-arm64 --split-per-abi --no-pub`；不带 `--split-per-abi` 的 fat APK 的 versionCode 低于已装包，安装会报 `INSTALL_FAILED_VERSION_DOWNGRADE`。
+构建 MuMu 验证包用 `flutter build apk --release --target-platform android-arm64 --split-per-abi`，保留 pub 步骤以刷新 release 插件注册。不带 `--split-per-abi` 的 fat APK 的 versionCode 低于已装 split 包，安装会报 `INSTALL_FAILED_VERSION_DOWNGRADE`。
 
 #### 2026-11-04 听书复核
 
@@ -405,6 +409,26 @@ bash scripts/test_quick.sh home
 本机 `x86_64` 主 ABI 经 ARM 转译运行 arm64 包；媒体流静音且无 TTS 服务，本轮未验证听书发声、物理设备性能、硬件解码、16 KiB 页设备，以及自动降级 flat 态。截图、UI dump 与 logcat 位于仓库外 `%TEMP%\fqapp-mumu-home-20261105`。
 
 验证结束恢复 `wm size` 为 720x1280、`font_scale` 为未设置、首页「推荐榜」NO.001 / 共 16 本，保留安装的新包与原应用数据；未卸载、清空数据或改装调试包。
+
+#### 2026-11-10 只读边界清理复核
+
+通过 MuMuManager 重新确认实例 `0` / Android 12 / `127.0.0.1:16385`，主 ABI 为 `x86_64`，使用 ARM 转译运行 arm64 release 包；分辨率 720x1280、`font_scale=1.0`。Flutter `3.47.9` / Dart `3.13.7` 锁定依赖后，由 `scripts/build_rust_backend.ps1` 重新生成 FRB 绑定并构建两个 ARM ABI，再执行双 ABI 的 split release 构建。版本保持 `1.0.200+205`，arm64 安装包 versionCode 为 `2205`。
+
+- 最终 arm64 APK SHA-256：`ecfa9aa1ad1a387fa91b274640ff2ac6eb9a5c0b316f80be80b623eeb0a0128d`，覆盖安装后设备侧 hash 一致。
+- 最终 ARMv7 APK SHA-256：`9b06ad7e90b36c33b499eaf9be32e09edc729aca38bd60130aebe22dc45fefe7`，仅构建，未在 32 位设备运行。
+
+| 实际路径 | 观察结果 | 限制 |
+|---|---|---|
+| 首页 → 我的 → 备份与导入 → 导入番茄书架 | 页面仅提供本地历史文件来源，无账号读取和登录管理入口 | 本实例没有旧采集文件，旧分卷解析、导出和补齐资料未实测 |
+| 系统文件选择器 → 既有本地历史 JSON → 预览 | 显示 3 本小说和最终导入按钮 | 未点击最终合并，避免改动现有书架；不代表合并持久化已验证 |
+| 六类已删除路由 | 账号历史、账号书架、发表评论、发弹幕、点赞、回复的原路由，GET / POST 均返回 404 | 使用无效 ID 且不带账号凭证，没有向上游提交写操作 |
+| 保留的读取接口 | `/health` 返回 200；真实书评 GET 与回复列表 POST 均为 HTTP 200 / 业务码 0，各返回 3 条 | 数量仅为当时上游结果；缺参数的回复读取返回 400，而非 404 |
+| loopback 来源校验 | 错误 Host 和外部 Origin 均返回 403 | ADB 转发访问须保留 `Host: 127.0.0.1:18921`；本机代理不参与请求 |
+| 验证前后应用内导出备份 | 收藏 0、历史 3、已看标记 0；三组记录逐项一致 | 仅核对这三组本机数据，不宣称全部私有存储不变 |
+
+最终包应用日志未发现 FATAL EXCEPTION、ANR 或未处理 Flutter 异常。验证结束覆盖恢复 MuMu 原已装包，SHA-256 为 `cfb1fa4ad8f80cbbf4ab08a7f7fd5dd9afaa816bf08fe69077c7d9a79e89a869`，设备侧核对一致并返回首页；没有卸载或清空数据，临时端口转发已移除。截图、响应、备份和日志保存在仓库外 `%TEMP%\fqapp-readonly-20261110`，不随源码分发。MuMu 结果不代表实体设备性能或硬件兼容性。
+
+辅助检查为 `flutter analyze --no-pub lib`、`cargo clippy --manifest-path rust/Cargo.toml --locked --offline --lib -- -D warnings` 和 `git diff --check`。本轮没有新增、修改或运行自动化测试；冻结的旧测试仍引用已删除的账号/写入契约，其中 `account_transport_tests` 导入已删除函数，会阻塞测试目标编译，不能把本次库构建视为 CI 通过。Windows 缺少 Visual Studio C++ 构建工具，已由 Flutter 工具刷新插件注册，但未完成 Windows 构建。
 
 ### 分层跑测试
 
@@ -870,7 +894,7 @@ curl http://127.0.0.1:18080/health
 
 ## 开发计划
 
-番茄原始采集可在“设置 → 数据 → 备份与导入 → 导入番茄书架”中查看最近采集，
+此前保存的番茄原始采集可在“设置 → 数据 → 备份与导入 → 导入番茄书架”中查看，
 选择“解析并预览已保存的数据”，预览后合并到本机书架和历史。
 导入复用现有 Hive 书架和阅读历史；按章节 ID 对照目录，不把上游 `order` 当成目录下标。
 较新的本机位置优先，缺目录时保留章节 ID，点书时重新匹配；段内偏移暂不转换。

@@ -4,8 +4,6 @@
 //! adapter both dispatch through it. Endpoint names and path matching are
 //! identical across both dispatch paths.
 
-pub mod account_history;
-pub mod account_library;
 pub mod audio;
 pub mod audio_text;
 pub mod author;

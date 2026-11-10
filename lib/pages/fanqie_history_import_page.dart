@@ -45,9 +45,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   }
 
   void _cancelRead() {
-    if (_request == null) return;
-    _request!.cancel();
-    unawaited(_service.cancelLogin());
+    _request?.cancel();
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -68,7 +66,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
           BackendRequestAborted() => '读取已取消，未导入本机',
           MissingPluginException() => '当前环境不支持此操作，请使用 Android 应用',
           // Never display raw platform/network exceptions containing account data.
-          PlatformException() => '登录或文件操作未完成，请重试',
+          PlatformException() => '文件操作未完成，请重试',
           _ => '操作未完成，请检查网络后重试。若正在合并，部分记录可能已写入，可重复导入。',
         };
       });
@@ -98,46 +96,6 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       }
     }
   }
-
-  Future<void> _collect() => _run(() async {
-    setState(() {
-      _libraryPreview = null;
-      _captureProgress = '等待你在官方页面完成登录';
-    });
-    final request = BackendRequest();
-    _request = request;
-    final palette = HomePalette.of(context);
-    final capture = await _collector.collect(
-      request,
-      (message) {
-        if (mounted) setState(() => _captureProgress = message);
-      },
-      dark: palette.dark,
-      eink: palette.eink,
-    );
-    if (mounted) {
-      setState(() {
-        if (capture != null) _capture = capture;
-        _captureProgress = null;
-      });
-    }
-    if (capture == null || capture.sources.isEmpty) {
-      if (mounted) setState(() => _message = '采集已取消，未保存新文件');
-      return;
-    }
-    // Keep the in-memory result available for export even if private storage
-    // fails. A partial capture is useful evidence and never merges itself.
-    try {
-      final saved = await _collector.save(capture);
-      if (mounted) {
-        setState(
-          () => _message = saved ? '书架数据已保存，解析后即可预览并导入' : '本机保存未完成，当前数据仍可导出',
-        );
-      }
-    } on PlatformException {
-      if (mounted) setState(() => _message = '本机保存失败，当前数据仍可导出');
-    }
-  });
 
   Future<void> _pick() => _run(() async {
     setState(() => _libraryPreview = null);
@@ -225,16 +183,11 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       final capture = await _collector.latest();
       if (mounted) setState(() => _capture = capture);
     } on Exception {
-      // The online and file paths stay available if no private capture exists.
+      // File import remains available when no saved capture can be read.
     } finally {
       if (mounted) setState(() => _loadingLatest = false);
     }
   }
-
-  Future<void> _logout() => _run(() async {
-    await _service.clearSession();
-    if (mounted) setState(() => _message = '已退出本应用中的番茄网页登录，已采集的数据仍保留');
-  });
 
   @override
   Widget build(BuildContext context) {
@@ -246,11 +199,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       canPop: !_busy,
       child: Scaffold(
         backgroundColor: palette.canvas,
-        appBar: settingsAppBar(
-          context,
-          title: '导入番茄书架',
-          actions: [_loginActions(enabled)],
-        ),
+        appBar: settingsAppBar(context, title: '导入番茄书架'),
         body: SafeArea(
           child: Align(
             alignment: Alignment.topCenter,
@@ -262,19 +211,11 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                   const DataTransferHeader(
                     icon: LucideIcons.book_open,
                     title: '书架和进度，一起带回来',
-                    subtitle: '从番茄读取小说，加入本机书架与历史。\n有章节记录的书，可以接着读。',
+                    subtitle: '从本地文件恢复小说书架与历史。\n有章节记录的书，可以接着读。',
                   ),
                   const SettingsSectionHeader(title: '选择导入来源'),
                   SettingsGroupCard(
                     children: [
-                      SettingsRow(
-                        icon: LucideIcons.globe,
-                        iconTile: true,
-                        title: '从番茄账号读取',
-                        subtitle: '打开官方页面登录，保留本机登录状态',
-                        enabled: enabled,
-                        onTap: enabled ? _collect : null,
-                      ),
                       SettingsRow(
                         icon: LucideIcons.file_input,
                         iconTile: true,
@@ -291,7 +232,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                       child: LinearProgressIndicator(),
                     ),
                   if (capture != null) ...[
-                    const SettingsSectionHeader(title: '最近一次采集'),
+                    const SettingsSectionHeader(title: '此前保存的数据'),
                     SettingsGroupCard(
                       children: [
                         SettingsRow(
@@ -299,7 +240,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                           iconTile: true,
                           title: '使用已保存的书架数据',
                           subtitle:
-                              '${capture.received} 个响应已保存 · 无需重新登录'
+                              '${capture.received} 个响应已保存在本机'
                               '${capture.stopReason.isNotEmpty ? ' · 部分采集' : ''}',
                           enabled: enabled,
                           onTap: enabled ? _prepareLibrary : null,
@@ -496,7 +437,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
                   ],
                   const SizedBox(height: 24),
                   Text(
-                    '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；导出文件不含登录凭证。',
+                    '不登录或访问番茄账号，仅导入本地文件。补齐资料和定位章节会读取公开详情与目录，不下载正文；确认导入后才合并本机书架和历史。',
                     style: TextStyle(
                       color: palette.muted,
                       fontSize: 12,
@@ -553,15 +494,6 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       ),
     );
   }
-
-  Widget _loginActions(bool enabled) => PopupMenuButton<String>(
-    enabled: enabled,
-    tooltip: '登录管理',
-    onSelected: (_) => _logout(),
-    itemBuilder: (_) => [
-      const PopupMenuItem(value: 'logout', child: Text('退出网页登录')),
-    ],
-  );
 
   Widget _cover(Map<String, dynamic> record, HomePalette palette) => ClipRRect(
     borderRadius: BorderRadius.circular(5),

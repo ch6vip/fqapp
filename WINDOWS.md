@@ -9,7 +9,7 @@ Windows 10/11 x64：解压完整目录后运行 `fqapp.exe`，不要单独移动
 开始菜单/桌面快捷方式及卸载，无需管理员权限。卸载保留当前用户的书架、进度和缓存。
 首次启动需联网初始化；已下载的书籍及媒体可从应用内离线入口打开。
 数据保存在当前用户的应用数据目录，不依赖解压目录。备份使用原版 JSON 格式。
-官方网页导入需要 Microsoft Edge WebView2 Runtime，并由用户在官方网页完成登录。
+番茄书架仅从本地历史文件或此前保存的采集数据导入，不提供网页登录，不再依赖 WebView2 Runtime。
 系统朗读使用已安装的 Windows 语音；缺少中文音色时在系统语音设置中安装。
 
 播放器：空格播放/暂停，左右键快退/快进 10 秒，上下键音量，F 全屏，Esc 退出全屏。
@@ -19,7 +19,7 @@ Windows 10/11 x64：解压完整目录后运行 `fqapp.exe`，不要单独移动
 
 ## 构建和验证
 
-需要 Flutter 3.44.6 / Dart 3.12.2、Rust stable、Visual Studio C++ 桌面工具、NuGet CLI 和 FFmpeg。
+需要 Flutter 3.47.9 / Dart 3.13.7（与 CI 一致）、Rust stable、Visual Studio C++ 桌面工具、NuGet CLI 和 FFmpeg。
 执行 `pwsh -File scripts/build_windows.ps1 -FlutterRoot <Flutter SDK 路径>`。
 原生 DLL 由 Windows CMake 构建自动调用 Cargo 编译；C 解密核心由 Rust build.rs 编译。
 构建脚本对中文工作区使用临时英文目录联接，不移动源码。
@@ -64,5 +64,4 @@ libmpv/FFmpeg 原生库。执行 Flutter 测试后构建 Android release 时，�
 
 沿用 Flutter/Rust/C 架构。Windows 播放采用 media_kit/libmpv，系统媒体控制采用 smtc_windows，
 文件选择采用 file_selector，系统朗读采用 flutter_tts，窗口管理采用 window_manager。
-WebView2 适配器基于 webview_windows 0.4.0，其 MIT 许可和修改说明保存在 third_party/webview_windows。
 原项目及第三方许可证随源码/程序一并保留；Flutter 的许可证页面可查看 Dart 依赖许可。

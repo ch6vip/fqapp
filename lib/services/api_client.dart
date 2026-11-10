@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -59,36 +58,6 @@ class ApiClient {
 
   static final ApiClient instance = ApiClient();
 
-  /// Fixed read-only library resources; credentials stay in the POST body.
-  Future<Map<String, dynamic>> fanqieLibraryResource({
-    required String cookie,
-    required String resource,
-    String? deviceId,
-    int offset = 0,
-    int bookType = 0,
-    List<String> bookIds = const [],
-    String? folderId,
-  }) async {
-    final response = await _get(
-      '$_base/api/v1/account/fanqie/library',
-      method: 'POST',
-      body: Uint8List.fromList(
-        utf8.encode(
-          jsonEncode({
-            'cookie': cookie,
-            'resource': resource,
-            'device_id': ?deviceId,
-            'offset': offset,
-            'book_type': bookType,
-            'book_ids': bookIds,
-            'folder_id': ?folderId,
-          }),
-        ),
-      ),
-    );
-    return _decodeAsync(response);
-  }
-
   /// Preserve the detail payload for later interpretation instead of dropping
   /// fields through the display model. This endpoint needs no account cookie.
   Future<Map<String, dynamic>> fanqieBookMetadata(String bookId) async =>
@@ -97,33 +66,6 @@ class ApiClient {
           _url('/api/v1/books/${Uri.encodeComponent(bookId)}/detail', {}),
         ),
       );
-
-  /// Read-only upstream operation. POST keeps the temporary login cookie out
-  /// of URLs; the Rust adapter only permits the fixed upstream history GET.
-  Future<Map<String, dynamic>> fanqieHistoryPage({
-    required String cookie,
-    required int offset,
-    required int lastMinReadTimestampMs,
-    required bool firstLoad,
-    String? deviceId,
-  }) async {
-    final response = await _get(
-      '$_base/api/v1/account/fanqie/history',
-      method: 'POST',
-      body: Uint8List.fromList(
-        utf8.encode(
-          jsonEncode({
-            'cookie': cookie,
-            'offset': offset,
-            'last_min_read_timestamp_ms': lastMinReadTimestampMs,
-            'is_first_load': firstLoad,
-            'device_id': ?deviceId,
-          }),
-        ),
-      ),
-    );
-    return _decodeAsync(response);
-  }
 
   /// Per-instance gate: coalescing must not reach across test instances, and
   /// a restarted backend service gets a fresh flight table.
@@ -222,7 +164,7 @@ class ApiClient {
   /// Sends a request to the local backend with a timeout.
   ///
   /// [method] exists for the few bridge endpoints that are POST-only upstream
-  /// (comment replies); callers still pass their arguments as query parameters,
+  /// (reading comment replies); callers pass their arguments as query parameters,
   /// which the backend reads from the URL either way.
   ///
   /// Every call passes through [RequestGate]: identical concurrent GETs share
@@ -231,7 +173,6 @@ class ApiClient {
     String url, {
     Duration? timeout,
     String method = 'GET',
-    Uint8List? body,
   }) {
     // The transport owns the deadline: cancelling drops the in-flight Rust
     // dispatch (and therefore the upstream request, its retry backoff and any
@@ -246,7 +187,7 @@ class ApiClient {
     final future = _gate.run(
       '$method $url ${effectiveTimeout.inMilliseconds}',
       request: request is BackendRequest ? request : null,
-      share: method == 'GET' && body == null,
+      share: method == 'GET',
       timeout: effectiveTimeout,
       send: () async {
         queueTime = watch.elapsed;
@@ -258,7 +199,6 @@ class ApiClient {
         final response = await _transport.send(
           method,
           Uri.parse(url),
-          body: body,
           timeout: remaining,
           request: request is BackendRequest ? request : null,
         );
@@ -1149,104 +1089,6 @@ class ApiClient {
     final bytes = response.bodyBytes;
     return Isolate.run(
       () => PlayletCommentPage.fromPayload(_decodeEnvelope(status, bytes)),
-    );
-  }
-
-  /// 发短剧评论（官方 `comment/add`，`community/.../playlet/editor/p0.java:211-256`）。
-  ///
-  /// [dataType] 官方由调用点给：列表页普通具评用 `Book(2)`，
-  /// 快捷评星用 `FakeBook(3)`（`kr1/n.java:241`）。
-  Future<void> addPlayletComment(
-    String seriesId,
-    String text, {
-    int dataType = 2,
-    int score = 0,
-  }) async {
-    final response = await _get(
-      _url('/api/v1/series/${Uri.encodeComponent(seriesId)}/comments/add', {
-        'text': text,
-        'data_type': '$dataType',
-        'score': '$score',
-      }),
-      method: 'POST',
-    );
-    _checkWrite(response);
-  }
-
-  /// 发弹幕（官方 `hy1/l.java:86-113`）：`group_id` 是 vid，时间毫秒。
-  Future<void> addPlayletDanmaku(
-    String vid, {
-    required String seriesId,
-    required String text,
-    required int offsetMs,
-  }) async {
-    final response = await _get(
-      _url('/api/v1/videos/${Uri.encodeComponent(vid)}/danmaku/add', {
-        'text': text,
-        'series_id': seriesId,
-        'offset': '$offsetMs',
-      }),
-      method: 'POST',
-    );
-    _checkWrite(response);
-  }
-
-  /// 回复短剧评论（官方 `nx1/d.java:217-231`）。
-  Future<void> replyPlayletComment(
-    String commentId, {
-    required String seriesId,
-    required String text,
-    String replyToReplyId = '',
-    String replyToUserId = '',
-  }) async {
-    final response = await _get(
-      _url('/api/v1/comments/${Uri.encodeComponent(commentId)}/reply', {
-        'text': text,
-        'series_id': seriesId,
-        if (replyToReplyId.isNotEmpty) 'reply_to_reply_id': replyToReplyId,
-        if (replyToUserId.isNotEmpty) 'reply_to_user_id': replyToUserId,
-      }),
-      method: 'POST',
-    );
-    _checkWrite(response);
-  }
-
-  /// 点赞/取消点赞短剧评论（官方独立 digg 接口，`social/t.java:803-831`）。
-  ///
-  /// [targetType] 官方 `DiggTargetType`：Comment=1 / Reply=2 / PlayletComment=5；
-  /// 短剧评论该用哪个**未取证**，所以由调用方给。
-  Future<void> diggPlayletComment(
-    String commentId, {
-    required bool liked,
-    String bookId = '',
-    int targetType = 1,
-  }) async {
-    final response = await _get(
-      _url('/api/v1/comments/${Uri.encodeComponent(commentId)}/digg', {
-        'liked': liked ? 'true' : 'false',
-        'target_type': '$targetType',
-        if (bookId.isNotEmpty) 'book_id': bookId,
-      }),
-      method: 'POST',
-    );
-    _checkWrite(response);
-  }
-
-  /// 写接口的业务码检查：HTTP 200 里也会带回业务错误，不能只看状态码。
-  /// 与只读接口一致，把上游带出来的业务码放进 `upstreamCode`。
-  void _checkWrite(http.Response response) {
-    final status = response.statusCode;
-    if (status != 200) {
-      throw ApiException('写入失败', statusCode: status);
-    }
-    final payload = jsonDecode(utf8.decode(response.bodyBytes));
-    if (payload is! Map) return;
-    final code = payload['code'];
-    if (code == null || code == 0 || code == 200) return;
-    throw ApiException(
-      '${payload['message'] ?? '写入失败'}',
-      statusCode: status,
-      upstreamCode: code is int ? code : int.tryParse('$code'),
     );
   }
 

@@ -8,7 +8,6 @@
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use once_cell::sync::OnceCell;
 
 use crate::crypto::{gunzip_capped, GunzipError, MAX_GUNZIP_BYTES};
 
@@ -102,22 +101,10 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     pub fn new(timeout_secs: u64) -> Result<Self, String> {
-        Self::build(timeout_secs, false)
-    }
-
-    /// Account cookies must never follow a redirect to a different origin.
-    pub fn without_redirects(timeout_secs: u64) -> Result<Self, String> {
-        Self::build(timeout_secs, true)
-    }
-
-    fn build(timeout_secs: u64, no_redirects: bool) -> Result<Self, String> {
         ensure_crypto_provider();
         let tls = build_tls_config()?;
-        let mut builder = reqwest::Client::builder().tls_backend_preconfigured(tls);
-        if no_redirects {
-            builder = builder.redirect(reqwest::redirect::Policy::none());
-        }
-        let client = builder
+        let client = reqwest::Client::builder()
+            .tls_backend_preconfigured(tls)
             .build()
             .map_err(|e| format!("build http client: {e}"))?;
         Ok(HttpTransport {
@@ -254,18 +241,6 @@ impl HttpTransport {
             body,
         })
     }
-}
-
-/// Process-wide transport for account cookie requests.
-///
-/// Account reads must not follow redirects with a cookie attached, and every
-/// collection request used to build a fresh `reqwest::Client` (TLS roots and
-/// all) just for that. The transport is stateless, so one shared instance is
-/// safe and keeps client construction off the per-request path. A failed
-/// first build is retried on the next call.
-pub fn account_transport() -> Result<&'static HttpTransport, String> {
-    static ACCOUNT_TRANSPORT: OnceCell<HttpTransport> = OnceCell::new();
-    ACCOUNT_TRANSPORT.get_or_try_init(|| HttpTransport::without_redirects(20))
 }
 
 /// reqwest is built with `rustls-no-provider` so exactly one TLS backend is

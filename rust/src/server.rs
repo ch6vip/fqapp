@@ -14,12 +14,9 @@
 //! Binding to 127.0.0.1 alone does not keep web pages out. Every request must
 //! name this listener in `Host` (defeats DNS rebinding, which would otherwise
 //! let a foreign page read responses) and, when it carries an `Origin`, come
-//! from this listener too (defeats cross-site form POSTs to the device-bound
-//! write routes, which read their arguments from the query string and so need
-//! no CORS preflight). Read routes answer any local client without a
-//! capability so external readers (Legado book sources, local tooling) can use
-//! them; device-bound writes still require the per-launch capability. See
-//! .agents/notes/implemented/bug-fix/2026-10-07-loopback-session.md.
+//! from this listener too. Only read routes are exposed; external readers
+//! can use them without a capability. The per-launch prefix remains available
+//! for resource URLs produced by the FFI bridge.
 
 use std::sync::Arc;
 
@@ -35,9 +32,7 @@ use tokio_util::io::ReaderStream;
 use crate::dispatch::{dispatch, Request, ResponseBody};
 use crate::endpoints::Server;
 
-/// Upper bound for any request body the adapter drains. Only the routes that
-/// read a body retain it, under the smaller per-route cap from
-/// [`crate::dispatch::request_body_limit`].
+/// Upper bound for request bodies drained without retaining their contents.
 pub const MAX_REQUEST_BODY: usize = 64 * 1024 * 1024;
 
 pub struct LoopbackHandle {
@@ -203,28 +198,7 @@ async fn handle_request(state: AppState, req: axum::extract::Request) -> Respons
     let scoped = path
         .strip_prefix(&prefix)
         .filter(|rest| rest.is_empty() || rest.starts_with('/'));
-    let bearer = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok());
-    let cookie_name = format!("fq_session_{}", state.port);
-    let cookie_ok = req
-        .headers()
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|h| h.to_str().ok())
-        .flat_map(|h| h.split(';'))
-        .filter_map(|part| part.trim().split_once('='))
-        .any(|(name, value)| name == cookie_name && value == state.token);
     let request_path = scoped.unwrap_or(path).to_string();
-    // Reads answer any local client: external readers (Legado book sources,
-    // local tooling) cannot know the per-launch capability. Device-bound
-    // writes still need it.
-    let capability_ok =
-        scoped.is_some() || bearer == Some(format!("Bearer {}", state.token).as_str()) || cookie_ok;
-    if !capability_ok && crate::dispatch::requires_capability(&request_path) {
-        return refuse(StatusCode::UNAUTHORIZED, "session required");
-    }
     let declared = req
         .headers()
         .get(header::CONTENT_LENGTH)
@@ -246,27 +220,16 @@ async fn handle_request(state: AppState, req: axum::extract::Request) -> Respons
             )
         })
         .collect();
-    // Only the account routes read a request body; every other route takes
-    // its arguments from the URL, so those bodies are drained in bounded
-    // frames without being retained.
-    let body = match crate::dispatch::request_body_limit(&request_path) {
-        Some(limit) => match read_request_body(req.into_body(), limit).await {
-            Ok(body) => body,
-            Err(status) => return refuse(status, body_error_message(status)),
-        },
-        None => {
-            if let Err(status) = discard_request_body(req.into_body()).await {
-                return refuse(status, body_error_message(status));
-            }
-            Vec::new()
-        }
-    };
+    // Read endpoints take URL arguments, including POST-based upstream reads.
+    if let Err(status) = discard_request_body(req.into_body()).await {
+        return refuse(status, body_error_message(status));
+    }
     let server = state.server;
     let request = Request {
         method,
         path: request_path,
         query: uri.query().unwrap_or("").to_string(),
-        body,
+        body: Vec::new(),
         headers,
     };
     let resp = dispatch(&server, &request).await;
@@ -327,23 +290,6 @@ fn body_error_message(status: StatusCode) -> &'static str {
     } else {
         "failed to read request body"
     }
-}
-
-/// Reads a request body into memory, refusing once it exceeds `limit`.
-async fn read_request_body(mut body: Body, limit: usize) -> Result<Vec<u8>, StatusCode> {
-    use http_body_util::BodyExt;
-
-    let mut out = Vec::new();
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|_| StatusCode::BAD_REQUEST)?;
-        if let Ok(data) = frame.into_data() {
-            if out.len().saturating_add(data.len()) > limit {
-                return Err(StatusCode::PAYLOAD_TOO_LARGE);
-            }
-            out.extend_from_slice(&data);
-        }
-    }
-    Ok(out)
 }
 
 async fn discard_request_body(mut body: Body) -> Result<(), StatusCode> {
