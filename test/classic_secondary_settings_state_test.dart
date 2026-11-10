@@ -276,10 +276,13 @@ void main() {
       await scrollTo(tester, find.byKey(const ValueKey('backup-help')));
       await tester.tap(find.text('备份包含哪些内容？'));
       await tester.pumpAndSettle();
-      await scrollTo(
-        tester,
+      // The local section is above the expanded help, outside the lazy cache.
+      await tester.scrollUntilVisible(
         find.byKey(const ValueKey('backup-local-section')),
+        -160,
+        scrollable: find.byType(Scrollable).first,
       );
+      await tester.pumpAndSettle();
       await expectAnchored(
         tester,
         store,

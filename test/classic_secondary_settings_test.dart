@@ -415,7 +415,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(WenkuPage), findsOneWidget);
     expect(find.byType(ArchiveSection), findsNWidgets(3));
-    expect(find.byType(FeatureEntry), findsOneWidget);
+    expect(find.byType(FeatureEntry), findsNWidgets(2));
     expect(find.text('确认恢复到本机'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
