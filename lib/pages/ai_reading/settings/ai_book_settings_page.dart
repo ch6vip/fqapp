@@ -386,72 +386,24 @@ class _AiBookSettingsPageState extends State<AiBookSettingsPage> {
                           ),
                           SettingsRow(
                             title: '范围',
-                            trailing: DropdownButtonHideUnderline(
-                              child: DropdownButton<int>(
-                                value: effective.maxPrefetchChapters.clamp(
-                                  1,
-                                  3,
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 1,
-                                    child: Text('1 章'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 2,
-                                    child: Text('2 章'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 3,
-                                    child: Text('3 章'),
-                                  ),
-                                ],
-                                onChanged: (value) async {
-                                  if (value == null) return;
-                                  await _run(
-                                    () => _settings.setBookOverride(
-                                      widget.bookId,
-                                      'maxPrefetchChapters',
-                                      value,
-                                    ),
-                                  );
-                                  setSheet(() {});
-                                },
-                              ),
+                            value:
+                                '${effective.maxPrefetchChapters.clamp(1, 3)} 章',
+                            onTap: () => _pickPrefetchRange(
+                              context,
+                              effective.maxPrefetchChapters.clamp(1, 3),
+                              setSheet,
                             ),
                           ),
                           SettingsRow(
                             title: '触发点',
-                            trailing: DropdownButtonHideUnderline(
-                              child: DropdownButton<int>(
-                                value: (effective.prefetchTriggerRatio * 100)
-                                    .round()
-                                    .clamp(0, 90),
-                                items: [
-                                  for (final percent in const [
-                                    0,
-                                    25,
-                                    50,
-                                    75,
-                                    90,
-                                  ])
-                                    DropdownMenuItem(
-                                      value: percent,
-                                      child: Text('$percent%'),
-                                    ),
-                                ],
-                                onChanged: (value) async {
-                                  if (value == null) return;
-                                  await _run(
-                                    () => _settings.setBookOverride(
-                                      widget.bookId,
-                                      'prefetchTriggerRatio',
-                                      value / 100,
-                                    ),
-                                  );
-                                  setSheet(() {});
-                                },
-                              ),
+                            value:
+                                '${(effective.prefetchTriggerRatio * 100).round().clamp(0, 90)}%',
+                            onTap: () => _pickPrefetchTrigger(
+                              context,
+                              (effective.prefetchTriggerRatio * 100)
+                                  .round()
+                                  .clamp(0, 90),
+                              setSheet,
                             ),
                           ),
                         ],
@@ -487,6 +439,65 @@ class _AiBookSettingsPageState extends State<AiBookSettingsPage> {
     );
   }
 
+  /// Picks the pre-proofread chapter count, inside the prefetch sheet.
+  ///
+  /// The sheet used to embed a `DropdownButton`, which drew its own 2dp menu
+  /// on the canvas colour - a different control from every other picker on
+  /// this page. The row now opens the same choice dialog the rest of the page
+  /// uses.
+  Future<void> _pickPrefetchRange(
+    BuildContext context,
+    int current,
+    void Function(VoidCallback) setSheet,
+  ) async {
+    final choice = await showAiChoiceDialog(
+      context,
+      title: '范围',
+      options: [
+        for (final count in const [1, 2, 3])
+          (key: '$count', label: '$count 章', selected: count == current),
+      ],
+    );
+    if (choice == null) return;
+    final value = int.tryParse(choice);
+    if (value == null) return;
+    await _run(
+      () => _settings.setBookOverride(
+        widget.bookId,
+        'maxPrefetchChapters',
+        value,
+      ),
+    );
+    setSheet(() {});
+  }
+
+  /// Picks the pre-proofread trigger point, inside the prefetch sheet.
+  Future<void> _pickPrefetchTrigger(
+    BuildContext context,
+    int current,
+    void Function(VoidCallback) setSheet,
+  ) async {
+    final choice = await showAiChoiceDialog(
+      context,
+      title: '触发点',
+      options: [
+        for (final percent in const [0, 25, 50, 75, 90])
+          (key: '$percent', label: '$percent%', selected: percent == current),
+      ],
+    );
+    if (choice == null) return;
+    final value = int.tryParse(choice);
+    if (value == null) return;
+    await _run(
+      () => _settings.setBookOverride(
+        widget.bookId,
+        'prefetchTriggerRatio',
+        value / 100,
+      ),
+    );
+    setSheet(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
@@ -514,13 +525,8 @@ class _AiBookSettingsPageState extends State<AiBookSettingsPage> {
           body: ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
-              Container(
+              SurfacePanel(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                decoration: BoxDecoration(
-                  color: palette.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: palette.line, width: 0.6),
-                ),
                 child: Row(
                   children: [
                     Container(
