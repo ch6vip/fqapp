@@ -1,22 +1,133 @@
 part of 'library_page.dart';
 
-/// 书架页的内容区：空态、宫格 / 双列 / 列表三档版式与点按分发。原来都
-/// 写在 `library_page.dart` 的状态类里，把那个文件推过了行数预算，按职责
-/// 挪到这里。
-mixin _LibraryShelfViews on _LibraryPageActions {
-  Widget _content(HomePalette palette) {
+/// 书架页的内容区：四模式容器、立体书架头部、条目与空态。
+mixin _LibraryShelfViews on _LibraryShelfChrome {
+  /// 浏览历史固定纯列表（design §1.1 #1）；书架 / 收藏共用持久化版式。
+  BookCollectionMode get _effectiveMode =>
+      _tab == 1 ? BookCollectionMode.list : ShelfViewStore.instance.mode;
+
+  Widget _content(BuildContext context) {
+    // Register a theme dependency on the page even when collection slivers
+    // reuse their cached row delegates; style changes must refresh padding.
+    final style = AppStyleTokens.of(context);
     final entries = _visibleEntries;
-    if (entries.isEmpty) {
-      // 空态按 tab 区分：书架为空给「去书城找书 + 查看离线缓存」（筛选已
-      // 移除，故这已是书架 tab 唯一的空态）；浏览历史为空沿用官方通用
-      // 文案；收藏为空按当前筛选给文案 + 「找短剧」入口（官方空态形态）。
-      if (_tab == 0 && _shelf.isEmpty) {
+    final mode = _effectiveMode;
+    final view = ShelfViewStore.instance.state;
+    // 首屏条目沿用上游的入场序列：数据/筛选批次变化时播一次，滚动重建与
+    // 隐藏 tab 不重播（`LoadedContentSequence` 在 TickerMode 关闭时静态化）。
+    return LoadedContentSequence(
+      generation: ShelfViewStore.instance.isLoaded
+          ? (_tab, mode, view.sort, view.filter, view.source, _category)
+          : null,
+      child: ShelfCollectionView(
+        key: ValueKey('shelf-view-${mode.storageValue}'),
+        mode: mode,
+        density: view.density,
+        itemCount: entries.length,
+        regionToolbar: _toolbar(entries.length),
+        carousel: mode.hasShelf ? _carousel(entries) : null,
+        itemBuilder: (context, index) => _tile(entries[index], mode, index),
+        emptyBuilder: (context) => _emptyState(context),
+        padding: EdgeInsets.fromLTRB(
+          style.pageGutter,
+          0,
+          style.pageGutter,
+          DockLayout.scrollPaddingOf(context),
+        ),
+        storageKey: PageStorageKey('shelf-$_tab'),
+        onGridViewport: (viewport) => _gridViewport = viewport,
+      ),
+    );
+  }
+
+  /// 立体书架头部：条目顺序与下方列表一致（followCollection 恒 true），
+  /// 只取 `BookShelfPreferences.featuredCount` 本。
+  Widget? _carousel(List<_ShelfEntry> entries) {
+    final preferences = ShelfViewStore.instance.shelfPreferences;
+    final count = preferences.featuredCount(entries.length);
+    if (count <= 0) return null;
+    if (!_carouselEntrancePlayed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _carouselEntrancePlayed = true;
+      });
+    }
+    return ArchiveFileCarousel(
+      key: const ValueKey('archive-shelf-carousel'),
+      entries: [for (final entry in entries.take(count)) entry.toArchive()],
+      onOpen: (entry) => _tapItem(entry.item),
+      onLongPress: (entry) => _longPressItem(entry.item),
+      directReading: BookOpenPreferences.instance.shelfDirectReader.value,
+      reduceMotion: _reduceMotion,
+      animateEntrance: !_carouselEntrancePlayed,
+      repeatFill: preferences.repeatFill,
+      interactive: !_editing,
+      selecting: _editing,
+      selected: _selected,
+    );
+  }
+
+  Widget _tile(_ShelfEntry entry, BookCollectionMode mode, int index) {
+    final selected = _selected.contains(entry.selectionKey);
+    final tile = mode.isGrid
+        ? ShelfBookGridTile(
+            key: ValueKey('shelf-grid-book-${entry.contentKey}'),
+            item: entry.item,
+            badge: entry.badgeText,
+            progress: entry.readingText,
+            meta: entry.metaText,
+            cached: entry.cached,
+            fanqieImported: entry.fanqieImported,
+            editing: _editing,
+            selected: selected,
+            onTap: () => _tap(entry),
+            onLongPress: () => _longPress(entry),
+          )
+        : ShelfNovelRow(
+            key: ValueKey('shelf-book-${entry.contentKey}'),
+            item: entry.item,
+            badge: entry.badgeText,
+            progress: entry.readingText,
+            meta: entry.metaText,
+            cached: entry.cached,
+            fanqieImported: entry.fanqieImported,
+            editing: _editing,
+            selected: selected,
+            onTap: () => _tap(entry),
+            onLongPress: () => _longPress(entry),
+          );
+    return LoadedContentItem(
+      key: ValueKey('shelf-entrance-${entry.contentKey}'),
+      index: index,
+      placeholder: mode.isGrid
+          ? const BookGridSkeleton()
+          : const BookRowSkeleton(),
+      child: tile,
+    );
+  }
+
+  /// 空态按 tab 区分：书架为空给「去书城找书 + 查看离线缓存」；筛选后为空
+  /// 给「清除筛选」出口；浏览历史沿用官方通用文案；收藏为空按当前类型
+  /// 筛选给文案 + 「找短剧」入口。
+  Widget _emptyState(BuildContext context) {
+    if (_tab == 0) {
+      if (_shelf.isEmpty) {
         return ShelfEmptyState(
           onBrowse: widget.onBrowse,
           onCachedBooks: _openCachedBooks,
         );
       }
-      if (_tab == 2) {
+      return ShelfFilteredEmptyState(
+        text: '没有符合筛选的书籍',
+        onClearFilters: _clearFilters,
+      );
+    }
+    if (_tab == 2) {
+      // 只有类型筛选时沿用官方收藏空态文案（暂无短剧 / 暂无漫剧 / 暂无
+      // 收藏内容）；排序 / 阅读状态 / 来源 / 分类把结果筛空时才给
+      // 「清除筛选」出口。
+      final onlyTypeFilter =
+          _activeFilters == 0 && _category == ShelfCategory.all;
+      if (_collection.isEmpty || onlyTypeFilter) {
         return ShelfCollectionEmptyState(
           text: switch (_collectionFilter) {
             'video' => '暂无短剧',
@@ -26,160 +137,17 @@ mixin _LibraryShelfViews on _LibraryPageActions {
           onFindDrama: widget.onFindDrama,
         );
       }
+      return ShelfFilteredEmptyState(
+        text: '没有符合筛选的收藏',
+        onClearFilters: _clearFilters,
+      );
+    }
+    if (_browseHistory.isEmpty) {
       return const ShelfEmptyHint(text: '未找到相关内容');
     }
-    final body = switch (_layout) {
-      BookshelfLayout.grid => _grid(entries),
-      BookshelfLayout.doubleColumn => _doubleGrid(entries),
-      BookshelfLayout.list => _list(entries),
-    };
-    // 版式切换：fade+scale 220ms（无障碍关闭动画时瞬时）。
-    return AnimatedSwitcher(
-      duration: _motionDuration(context, 220),
-      switchInCurve: Curves.easeOutCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: ScaleTransition(
-          scale: Tween(begin: 0.96, end: 1.0).animate(animation),
-          child: child,
-        ),
-      ),
-      child: KeyedSubtree(
-        key: ValueKey('shelf-content-${_layout.name}'),
-        child: body,
-      ),
+    return ShelfFilteredEmptyState(
+      text: '没有符合筛选的记录',
+      onClearFilters: _clearFilters,
     );
-  }
-
-  Widget _grid(List<_ShelfEntry> entries) {
-    return LayoutBuilder(
-      builder: (context, constraints) => GridView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        key: const Key('shelf-grid-view'),
-        padding: const EdgeInsets.fromLTRB(
-          ShelfTokens.screenPadding,
-          ShelfTokens.spaceXS,
-          ShelfTokens.screenPadding,
-          ShelfTokens.contentBottomInset,
-        ),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: isWindowsDesktop
-              ? (constraints.maxWidth / 170).floor().clamp(3, 10)
-              : ShelfTokens.gridColumns,
-          crossAxisSpacing: ShelfTokens.gridSpacing,
-          mainAxisSpacing: ShelfTokens.gridRunSpacing,
-          childAspectRatio: shelfGridChildAspectRatio(
-            context,
-            availableWidth: constraints.maxWidth,
-            columns: isWindowsDesktop
-                ? (constraints.maxWidth / 170).floor().clamp(3, 10)
-                : ShelfTokens.gridColumns,
-          ),
-        ),
-        itemCount: entries.length,
-        itemBuilder: (context, index) {
-          final entry = entries[index];
-          return HomeEntrance(
-            index: index,
-            animate: index < 6 && _entered.add(index),
-            child: BookshelfGridCard(
-              key: ValueKey('shelf-grid-${entry.selectionKey}'),
-              item: entry.item,
-              badgeText: entry.badgeText,
-              infoText: entry.infoText,
-              editing: _editing,
-              selected: _selected.contains(entry.selectionKey),
-              onTap: () => _tap(entry),
-              onLongPress: () => _longPress(entry),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _doubleGrid(List<_ShelfEntry> entries) {
-    return LayoutBuilder(
-      builder: (context, constraints) => GridView.builder(
-        physics: const AlwaysScrollableScrollPhysics(),
-        key: const Key('shelf-double-view'),
-        padding: const EdgeInsets.fromLTRB(
-          ShelfTokens.screenPadding,
-          ShelfTokens.spaceXS,
-          ShelfTokens.screenPadding,
-          ShelfTokens.contentBottomInset,
-        ),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: ShelfTokens.gridSpacing,
-          mainAxisSpacing: ShelfTokens.gridSpacing,
-          childAspectRatio: shelfDoubleChildAspectRatio(
-            context,
-            availableWidth: constraints.maxWidth,
-          ),
-        ),
-        itemCount: entries.length,
-        itemBuilder: (context, index) {
-          final entry = entries[index];
-          return HomeEntrance(
-            index: index,
-            animate: index < 6 && _entered.add(index),
-            child: BookshelfDoubleCard(
-              key: ValueKey('shelf-double-${entry.selectionKey}'),
-              item: entry.item,
-              badgeText: entry.badgeText,
-              subtitleText: entry.subtitleText,
-              editing: _editing,
-              selected: _selected.contains(entry.selectionKey),
-              onTap: () => _tap(entry),
-              onLongPress: () => _longPress(entry),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _list(List<_ShelfEntry> entries) {
-    return ListView.separated(
-      physics: const AlwaysScrollableScrollPhysics(),
-      key: const Key('shelf-list-view'),
-      padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceXS,
-        bottom: ShelfTokens.contentBottomInset,
-      ),
-      itemCount: entries.length,
-      separatorBuilder: (context, index) => Divider(
-        height: 0.5,
-        thickness: 0.5,
-        color: HomePalette.of(context).line,
-      ),
-      itemBuilder: (context, index) {
-        final entry = entries[index];
-        return HomeEntrance(
-          index: index,
-          animate: index < 6 && _entered.add(index),
-          child: BookshelfListCard(
-            key: ValueKey('shelf-list-${entry.selectionKey}'),
-            item: entry.item,
-            progressText: entry.readingText,
-            metaText: entry.metaText,
-            progress: entry.progress,
-            editing: _editing,
-            selected: _selected.contains(entry.selectionKey),
-            onTap: () => _tap(entry),
-            onLongPress: () => _longPress(entry),
-          ),
-        );
-      },
-    );
-  }
-
-  void _tap(_ShelfEntry entry) {
-    if (_editing) {
-      _toggleSelected(entry);
-    } else {
-      _open(entry.item, importedResume: entry.importedResume);
-    }
   }
 }

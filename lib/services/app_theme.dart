@@ -2,6 +2,9 @@ import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
 
+import 'app_style_tokens.dart';
+import 'app_theme_style.dart';
+
 /// Persisted theme-mode preference key: 'theme_mode' = 'light'|'dark'|'system'.
 /// 墨水屏是第四种外观，单独存 [einkModeKey]。
 const themeModeKey = 'theme_mode';
@@ -224,8 +227,12 @@ class AppTheme {
     Brightness brightness, {
     bool einkMode = false,
     bool oledMode = false,
+    AppThemeStyle style = AppThemeStyle.archive,
   }) {
-    if (einkMode) return _createEinkTheme();
+    final tokens = AppStyleTokens.forStyle(style);
+    if (einkMode) {
+      return _createEinkTheme().copyWith(extensions: [tokens]);
+    }
     final isDark = brightness == Brightness.dark;
     // OLED 纯黑只在深色下成立；浅色模式忽略该开关。
     final oled = oledMode && isDark;
@@ -235,6 +242,8 @@ class AppTheme {
     // 深色 / OLED / 墨水屏本来就与 HomePalette.canvas 一致。
     final canvas = oled
         ? Colors.black
+        : tokens.isClassic
+        ? (isDark ? const Color(0xFF151517) : const Color(0xFFF6F6F6))
         : (isDark ? const Color(0xFF191919) : const Color(0xFFF4F3EF));
     final surface = oled
         ? const Color(0xFF0C0C0E)
@@ -302,6 +311,7 @@ class AppTheme {
     );
 
     return ThemeData(
+      extensions: [tokens],
       colorScheme: scheme,
       useMaterial3: true,
       scaffoldBackgroundColor: canvas,

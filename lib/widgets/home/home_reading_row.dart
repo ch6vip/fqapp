@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';
+import '../../services/app_style_tokens.dart';
 import '../../services/library_store.dart';
 import '../../services/media_history_store.dart';
+import 'classic_home_continue_row.dart';
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -103,13 +105,22 @@ class HomeContinueRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final tokens = AppStyleTokens.of(context);
+    if (tokens.isClassic) {
+      return ClassicHomeContinueRow(
+        now: now,
+        onOpen: onOpen,
+        onDismiss: onDismiss,
+      );
+    }
+    final panelRadius = BorderRadius.circular(tokens.panelRadius);
     final percent = (now.progress * 100).round();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       child: Container(
         decoration: BoxDecoration(
           color: palette.surface,
-          borderRadius: BorderRadius.circular(homePanelRadius),
+          borderRadius: panelRadius,
           border: palette.eink
               ? Border.all(color: palette.ink, width: 1)
               : null,
@@ -119,7 +130,7 @@ class HomeContinueRow extends StatelessWidget {
             Expanded(
               child: HomePressable(
                 onTap: onOpen,
-                borderRadius: BorderRadius.circular(homePanelRadius),
+                borderRadius: panelRadius,
                 semanticLabel: '${now.verb} ${now.item.title}',
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
@@ -127,7 +138,19 @@ class HomeContinueRow extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      HomeCode('CONTINUE / ${now.detail}'),
+                      if (tokens.showDecorativeCodes)
+                        HomeCode('CONTINUE / ${now.detail}')
+                      else
+                        Text(
+                          '${now.verb} · ${now.detail}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            height: 1.25,
+                            color: palette.muted,
+                          ),
+                        ),
                       const SizedBox(height: 5),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.baseline,

@@ -1,58 +1,173 @@
 import 'package:flutter/material.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+import 'package:fqapp/services/ai_reading/ai_chapter_snapshot.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/services/text_replacement_engine.dart';
 import 'package:fqapp/widgets/reader/reader_chapter_layout.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('rendered paragraphs match their measured height below 1.0 scale', (
-    tester,
-  ) async {
-    // RichText auto-scales inline WidgetSpan children
-    // (_AutoScaleInlineWidget), so the unscaled indent span paints at
-    // indent * scale and must keep matching the measured placeholder at any
-    // system text scale — the suite previously only exercised scales >= 1.0.
-    final scale = 0.85;
-    final layout = _layout(scale: scale);
-    final spec = layout.spec;
-    for (final block in layout.blocks) {
-      if (block.isImage || block.text.isEmpty) continue;
-      final key = GlobalKey();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Align(
-            alignment: Alignment.topLeft,
-            child: SingleChildScrollView(
-              child: SizedBox(
-                width: spec.width,
-                child: RichText(
-                  key: key,
-                  text: block.span,
-                  textAlign: block.align,
-                  textDirection: TextDirection.ltr,
-                  textScaler: spec.textScaler,
-                  locale: const Locale('zh', 'CN'),
+  test('display selection maps to the AI snapshot without the title shift', () {
+    final content = ChapterContent(
+      blocks: const [ChapterParagraph('第一段。'), ChapterParagraph('第二段。')],
+    );
+    final title = '第一章 山间来信';
+    final layout = _layout(title: title, content: content);
+    final snapshot = AiChapterSnapshotBuilder.fromContent(content, title);
+
+    final first = layout.snapshotLocationForDisplayOffset(
+      layout.blocks[1].start + 2,
+      snapshot,
+    );
+    expect(first, isNotNull);
+    expect(first!.paragraph, 0);
+    expect(first.offset, 2);
+
+    final second = layout.snapshotLocationForDisplayOffset(
+      layout.blocks[2].start + 1,
+      snapshot,
+    );
+    expect(second, isNotNull);
+    expect(second!.paragraph, 1);
+    expect(second.offset, snapshot.paragraphStarts[1] + 1);
+  });
+
+  test('display selection maps past an image without a title offset leak', () {
+    final content = ChapterContent(
+      blocks: const [
+        ChapterParagraph('第一段。'),
+        ChapterImage(url: 'https://example.com/a.png'),
+        ChapterParagraph('第二段。'),
+      ],
+    );
+    final title = '第一章 山间来信';
+    final layout = _layout(title: title, content: content);
+    final snapshot = AiChapterSnapshotBuilder.fromContent(content, title);
+    final paragraphs = layout.blocks
+        .where((block) => !block.isTitle && !block.isImage)
+        .toList();
+
+    final second = layout.snapshotLocationForDisplayOffset(
+      paragraphs[1].start + 1,
+      snapshot,
+    );
+    expect(second, isNotNull);
+    expect(second!.paragraph, 1);
+    expect(second.offset, snapshot.paragraphStarts[1] + 1);
+  });
+
+  test('display selection maps through a length-changing replacement', () {
+    final source = ChapterContent(
+      blocks: const [ChapterParagraph('第一段。'), ChapterParagraph('第二段。')],
+    );
+    final replaced = ChapterContent(
+      blocks: const [ChapterParagraph('第一段改长了。'), ChapterParagraph('第二段。')],
+    );
+    final replacement = TextReplacementResult(
+      source: source,
+      content: replaced,
+      snapshotRevision: 1,
+      paragraphMaps: {
+        0: TextOffsetMap.fromSegments(4, 7, [
+          (start: 0, end: 4, outputStart: 0, outputEnd: 7),
+        ]),
+      },
+    );
+    final title = '第一章 山间来信';
+    final layout = _layout(
+      title: title,
+      content: source,
+      replacement: replacement,
+    );
+    final snapshot = AiChapterSnapshotBuilder.fromContent(source, title);
+    final paragraphs = layout.blocks
+        .where((block) => !block.isTitle && !block.isImage)
+        .toList();
+
+    final first = layout.snapshotLocationForDisplayOffset(
+      paragraphs[0].start + 2,
+      snapshot,
+    );
+    final second = layout.snapshotLocationForDisplayOffset(
+      paragraphs[1].start + 1,
+      snapshot,
+    );
+    expect(first, isNotNull);
+    expect(first!.paragraph, 0);
+    expect(first.offset, 0);
+    expect(second, isNotNull);
+    expect(second!.paragraph, 1);
+    expect(second.offset, snapshot.paragraphStarts[1] + 1);
+
+    // A selection entirely inside the replaced fragment must expand to the
+    // complete source range: display [1, 5) -> source [0, 4).
+    final rangeStart = layout.snapshotLocationForDisplayOffset(
+      paragraphs[0].start + 1,
+      snapshot,
+      bias: TextBoundaryBias.start,
+    );
+    final rangeEnd = layout.snapshotLocationForDisplayOffset(
+      paragraphs[0].start + 5,
+      snapshot,
+      bias: TextBoundaryBias.end,
+    );
+    expect(rangeStart, isNotNull);
+    expect(rangeEnd, isNotNull);
+    expect(rangeStart!.paragraph, 0);
+    expect(rangeEnd!.paragraph, 0);
+    expect(rangeStart.offset, 0);
+    expect(rangeEnd.offset, 4);
+  });
+
+  testWidgets(
+    'rendered paragraphs match their measured height below 1.0 scale',
+    (tester) async {
+      // RichText auto-scales inline WidgetSpan children
+      // (_AutoScaleInlineWidget), so the unscaled indent span paints at
+      // indent * scale and must keep matching the measured placeholder at any
+      // system text scale — the suite previously only exercised scales >= 1.0.
+      final scale = 0.85;
+      final layout = _layout(scale: scale);
+      final spec = layout.spec;
+      for (final block in layout.blocks) {
+        if (block.isImage || block.text.isEmpty) continue;
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Align(
+              alignment: Alignment.topLeft,
+              child: SingleChildScrollView(
+                child: SizedBox(
+                  width: spec.width,
+                  child: RichText(
+                    key: key,
+                    text: block.span,
+                    textAlign: block.align,
+                    textDirection: TextDirection.ltr,
+                    textScaler: spec.textScaler,
+                    locale: const Locale('zh', 'CN'),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      final rendered = key.currentContext!.size!.height;
-      expect(
-        rendered,
-        moreOrLessEquals(block.height, epsilon: 0.5),
-        reason:
-            'block ${block.index} renders ${rendered}px but was measured '
-            '${block.height}px',
-      );
-    }
-  });
+        );
+        final rendered = key.currentContext!.size!.height;
+        expect(
+          rendered,
+          moreOrLessEquals(block.height, epsilon: 0.5),
+          reason:
+              'block ${block.index} renders ${rendered}px but was measured '
+              '${block.height}px',
+        );
+      }
+    },
+  );
 
   for (final scenario in [
     (size: const Size(350, 640), scale: 1.0, font: 18.0, spacing: 12.0),
@@ -456,6 +571,7 @@ ReaderChapterLayout _layout({
   double scale = 1,
   ReaderPreferences preferences = const ReaderPreferences(),
   ChapterContent? content,
+  TextReplacementResult? replacement,
 }) => ReaderChapterLayout(
   title: title,
   content:
@@ -474,6 +590,7 @@ ReaderChapterLayout _layout({
           '完。',
         ].map(ChapterParagraph.new).toList(),
       ),
+  replacement: replacement,
   spec: ReaderLayoutSpec(
     viewport: size,
     textScaler: TextScaler.linear(scale),

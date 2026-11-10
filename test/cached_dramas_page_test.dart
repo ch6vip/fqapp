@@ -9,6 +9,8 @@ import 'package:fqapp/pages/cached_dramas_page.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/drama_downloader.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
+import 'package:fqapp/widgets/settings/settings_widgets.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
 
@@ -54,7 +56,9 @@ void main() {
 
   Future<void> pumpPage(WidgetTester tester) async {
     await tester.pumpWidget(
-      MaterialApp(home: CachedDramasPage(store: store, downloader: downloader)),
+      MaterialApp(
+        home: CachedDramasPage(store: store, downloader: downloader),
+      ),
     );
     await tester.pumpAndSettle();
   }
@@ -92,7 +96,10 @@ void main() {
 
   testWidgets('缓存页标题与设置入口使用同一名称', (tester) async {
     await pumpPage(tester);
+    expect(find.byType(ArchiveFeaturePage), findsOneWidget);
     expect(find.text('短剧离线缓存'), findsOneWidget);
+    expect(find.byType(ArchiveSection), findsOneWidget);
+    expect(find.byType(SettingsSectionHeader), findsNothing);
   });
 
   testWidgets('空态文案可见', (tester) async {
@@ -118,7 +125,9 @@ void main() {
       episodes: [Chapter(itemId: 'ep9', title: '第九集', volumeName: '')],
     );
     await tester.pumpWidget(
-      MaterialApp(home: CachedDramasPage(store: store, downloader: downloader)),
+      MaterialApp(
+        home: CachedDramasPage(store: store, downloader: downloader),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -170,7 +179,9 @@ void main() {
     expect(real.value.single.status, DramaDownloadStatus.completed);
 
     await tester.pumpWidget(
-      MaterialApp(home: CachedDramasPage(store: store, downloader: real)),
+      MaterialApp(
+        home: CachedDramasPage(store: store, downloader: real),
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.text('测试剧'), findsOneWidget);

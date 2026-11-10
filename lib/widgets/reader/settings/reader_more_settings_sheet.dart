@@ -11,6 +11,8 @@ import 'reader_settings_widgets.dart';
 /// Actions that close both settings sheets before opening their destination.
 enum ReaderMoreSettingsResult { textReplacement, listeningSource }
 
+enum ReaderBehaviorCategory { all, page, theme, turn, operations, listening }
+
 /// 打开「更多设置」。
 ///
 /// 单独一层约 75% 高的面板，而不是首屏内翻页：改动行距 / 字距时页面还露在
@@ -53,6 +55,9 @@ class ReaderMoreSettingsSheet extends StatefulWidget {
     this.oledOverride = false,
     this.backgroundLocked = false,
     this.showListeningSource = false,
+    this.category = ReaderBehaviorCategory.all,
+    this.embedded = false,
+    this.onAction,
   });
 
   final ReaderPreferences initialValue;
@@ -63,6 +68,9 @@ class ReaderMoreSettingsSheet extends StatefulWidget {
   final bool oledOverride;
   final bool backgroundLocked;
   final bool showListeningSource;
+  final ReaderBehaviorCategory category;
+  final bool embedded;
+  final ValueChanged<ReaderMoreSettingsResult>? onAction;
 
   @override
   State<ReaderMoreSettingsSheet> createState() =>
@@ -84,13 +92,26 @@ class _ReaderMoreSettingsSheetState
   }
 
   void _apply(ReaderPreferences Function(ReaderPreferences) change) =>
-      updatePreferences(change(value));
+      commitPreferences(change(value));
+
+  @override
+  void commitPreferences(ReaderPreferences next) {
+    if (!mounted) return;
+    if (!widget.embedded) {
+      super.commitPreferences(next);
+      return;
+    }
+    // The category host owns the debounce and final flush. Do not leave a
+    // second timer in a child that can disappear during navigation.
+    adoptPreferences(next);
+    widget.onChanged(next.normalized());
+  }
 
   bool get _noAnimation =>
       value.pageTurnStyle == ReaderPageTurnStyle.none || value.instantSwipeTurn;
 
   void _setNoAnimation(bool enabled) {
-    updatePreferences(
+    commitPreferences(
       value.copyWith(
         pageTurnStyle: enabled
             ? ReaderPageTurnStyle.none
@@ -103,6 +124,7 @@ class _ReaderMoreSettingsSheetState
   /// 恢复默认排版：保留亮度与跟随系统；背景被全局模式接管时，也保留用户
   /// 已保存的预设，关闭全局模式后仍回到原来那套背景。
   Future<void> _editTapZones() async {
+    flushPreferences();
     final zones = await showReaderTapZoneEditor(
       context: context,
       initialZones: value.tapZones,
@@ -114,35 +136,53 @@ class _ReaderMoreSettingsSheetState
   }
 
   @override
+  void didUpdateWidget(ReaderMoreSettingsSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialValue != widget.initialValue) {
+      adoptPreferences(widget.initialValue);
+    }
+  }
+
+  void _action(ReaderMoreSettingsResult action) {
+    flushPreferences();
+    if (widget.onAction case final callback?) {
+      callback(action);
+    } else {
+      Navigator.pop(context, action);
+    }
+  }
+
+  bool _shows(ReaderBehaviorCategory category) =>
+      widget.category == ReaderBehaviorCategory.all ||
+      widget.category == category;
+
+  @override
   Widget build(BuildContext context) {
-    final preset = _displayPreset;
-    return ReaderSettingsSheetFrame(
-      preset: preset,
-      title: '更多设置',
-      closeTooltip: '关闭更多设置',
-      scrollKey: const ValueKey('reader-more-settings-scroll'),
-      maxHeightFactor: 0.75,
-      children: [
+    final children = <Widget>[
+      if (widget.category == ReaderBehaviorCategory.all) ...[
         const ReaderSettingsSectionHeader(title: '排版'),
         ReaderTypographySettings(
           value: value,
-          onChanged: updatePreferences,
+          onChanged: commitPreferences,
           backgroundLocked: widget.backgroundLocked,
         ),
         const ReaderSettingsDivider(),
+      ],
+      if (_shows(ReaderBehaviorCategory.operations)) ...[
         const ReaderSettingsSectionHeader(title: '操作'),
         ReaderSettingsNavRow(label: '点击区域', onTap: _editTapZones),
         ReaderSettingsSwitchRow(
           label: '音量键翻页',
           value: value.volumeKeyTurn,
-          onChanged: (on) =>
-              _apply((current) => current.copyWith(volumeKeyTurn: on)),
+          onChanged: (on) => _apply((p) => p.copyWith(volumeKeyTurn: on)),
         ),
+      ],
+      if (_shows(ReaderBehaviorCategory.turn) ||
+          widget.category == ReaderBehaviorCategory.operations) ...[
         ReaderSettingsSwitchRow(
           label: '连续阅读',
           value: value.continuousReading,
-          onChanged: (on) =>
-              _apply((current) => current.copyWith(continuousReading: on)),
+          onChanged: (on) => _apply((p) => p.copyWith(continuousReading: on)),
         ),
         _autoTurnSecondsRow(),
         ReaderSettingsSwitchRow(
@@ -150,56 +190,69 @@ class _ReaderMoreSettingsSheetState
           value: _noAnimation,
           onChanged: _setNoAnimation,
         ),
-        const ReaderSettingsDivider(),
+      ],
+      if (_shows(ReaderBehaviorCategory.page)) ...[
         const ReaderSettingsSectionHeader(title: '显示'),
         _infoModeRow(),
         ReaderSettingsSwitchRow(
           label: '系统状态栏',
           value: value.showSystemStatusBar,
-          onChanged: (on) =>
-              _apply((current) => current.copyWith(showSystemStatusBar: on)),
+          onChanged: (on) => _apply((p) => p.copyWith(showSystemStatusBar: on)),
         ),
         ReaderSettingsSwitchRow(
           label: '底部导航栏',
           value: value.showSystemNavigationBar,
-          onChanged: (on) => _apply(
-            (current) => current.copyWith(showSystemNavigationBar: on),
-          ),
+          onChanged: (on) =>
+              _apply((p) => p.copyWith(showSystemNavigationBar: on)),
         ),
         ReaderSettingsSwitchRow(
           label: '段评气泡',
           value: value.showParagraphBubbles,
           onChanged: (on) =>
-              _apply((current) => current.copyWith(showParagraphBubbles: on)),
+              _apply((p) => p.copyWith(showParagraphBubbles: on)),
         ),
         ReaderSettingsSwitchRow(
           key: const ValueKey('reader-dialogue-highlight'),
           label: '正文对话高亮',
           value: value.dialogueHighlight,
-          onChanged: (on) =>
-              _apply((current) => current.copyWith(dialogueHighlight: on)),
+          onChanged: (on) => _apply((p) => p.copyWith(dialogueHighlight: on)),
         ),
         if (value.dialogueHighlight) _dialogueStyleRow(),
         ReaderSettingsSwitchRow(
           label: '屏幕常亮',
           value: value.keepScreenOn,
-          onChanged: (on) =>
-              _apply((current) => current.copyWith(keepScreenOn: on)),
+          onChanged: (on) => _apply((p) => p.copyWith(keepScreenOn: on)),
         ),
-        if (widget.einkOverride || value.themePreset == ReaderThemePreset.eink)
-          _einkRefreshRow(),
-        const ReaderSettingsDivider(),
-        _listeningSection(),
+      ],
+      if (_shows(ReaderBehaviorCategory.theme) &&
+          (widget.einkOverride || value.themePreset == ReaderThemePreset.eink))
+        _einkRefreshRow(),
+      if (_shows(ReaderBehaviorCategory.listening)) _listeningSection(),
+      if (_shows(ReaderBehaviorCategory.operations)) ...[
         const ReaderSettingsDivider(),
         ..._videoSettings(),
         const ReaderSettingsDivider(),
         ReaderSettingsNavRow(
           label: '正文替换',
           icon: LucideIcons.replace,
-          onTap: () =>
-              Navigator.pop(context, ReaderMoreSettingsResult.textReplacement),
+          onTap: () => _action(ReaderMoreSettingsResult.textReplacement),
         ),
       ],
+    ];
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      );
+    }
+    return ReaderSettingsSheetFrame(
+      preset: _displayPreset,
+      title: '更多设置',
+      closeTooltip: '关闭更多设置',
+      scrollKey: const ValueKey('reader-more-settings-scroll'),
+      maxHeightFactor: 0.75,
+      onClose: flushPreferences,
+      children: children,
     );
   }
 
@@ -248,8 +301,7 @@ class _ReaderMoreSettingsSheetState
         ReaderSettingsNavRow(
           label: '听书方式',
           icon: LucideIcons.headphones,
-          onTap: () =>
-              Navigator.pop(context, ReaderMoreSettingsResult.listeningSource),
+          onTap: () => _action(ReaderMoreSettingsResult.listeningSource),
         ),
       ReaderSettingsSwitchRow(
         label: '跟随翻页',

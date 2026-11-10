@@ -1,5 +1,21 @@
+// Upstream source: Wenku8_Flutter rev ebcd7f1
+//   lib/updates/update_page.dart (AppUpdatePage: ArchiveFeaturePage shell,
+//     ArchiveSection title block, ContentPanel rows, GlassTextButton)
+//   lib/feature_pages.dart (FeatureEntry/featurePadding vocabulary)
+// Mechanical substitutions:
+// - fqapp has no update service or account module: the version line stays the
+//   static `AboutPage.versionText` (never bumped here), update checking links
+//   to the GitHub release page, and the open-source licence entry keeps
+//   `showLicensePage` with the Wenku8 notices registered by
+//   `lib/services/third_party_licenses.dart` (assets/licenses/wenku8).
+// - `SettingsGroupCard`/`SettingsRow` are replaced by the archive
+//   `ContentPanel` + an upstream-styled row. The sponsor card and the WeChat
+//   reward dialog are fqapp-only and remain unchanged.
+// - Logo plate / heading / intro copy are preserved so the existing About
+//   contract (version copy, licence route, e-ink shadow) is unchanged.
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -7,9 +23,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/settings_widgets.dart';
+import '../widgets/wenku/wenku_ui.dart';
 
-/// About page styled after PiliPlus: centered logo/name header, a short
-/// intro paragraph, then grouped card rows (version, updates, licenses,
+/// About page in the Wenku8 archive shell: centered logo/name header, a short
+/// intro paragraph, then archive panel rows (version, updates, licenses,
 /// source code, feedback, ...).
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
@@ -18,7 +35,7 @@ class AboutPage extends StatelessWidget {
   /// `version`. Without a package_info dependency the value is
   /// static, so test/about_version_test.dart parses the pubspec and fails the
   /// build check when the two drift apart after a version bump.
-  static const versionText = '1.0.200 (205)';
+  static const versionText = '1.0.201 (206)';
 
   /// Bundled WeChat reward code (赞赏码), shown large in a dialog from the
   /// support card. Copied from .github/wechat.png, the same image the repo's
@@ -36,11 +53,14 @@ class AboutPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final palette = HomePalette.of(context);
+    final scheme = theme.colorScheme;
 
-    return SettingsScaffold(
+    return ArchiveFeaturePage(
       title: '关于',
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      code: 'SYSTEM / ABOUT',
+      child: ListView(
+        key: const ValueKey('about-scroll'),
+        padding: featurePadding(context),
         children: [
           const _AboutLogo(),
           const SizedBox(height: 12),
@@ -50,13 +70,84 @@ class AboutPage extends StatelessWidget {
             '什锦铺把小说、短剧、漫剧、漫画和听书聚到一起。'
             '所有签名与解密都在你的手机本地完成，不依赖第三方服务。',
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: palette.muted,
-              height: 1.55,
+              color: scheme.onSurfaceVariant,
+              height: 1.7,
             ),
           ),
-          const SizedBox(height: 12),
-          const _AboutInfoCard(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 24),
+          const ArchiveSection(title: '应用信息', code: 'FQAPP / ABOUT'),
+          const SizedBox(height: 14),
+          ContentPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _InfoRow(
+                  icon: LucideIcons.badge_check,
+                  title: '当前版本',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        versionText,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        LucideIcons.copy,
+                        size: 15,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                  onTap: () => _copyVersion(context),
+                ),
+                _InfoRow(
+                  icon: LucideIcons.square_arrow_out_up_right,
+                  title: '检查更新',
+                  subtitle: '前往 GitHub 发布页查看新版本',
+                  onTap: () => _launchExternalUrl(
+                    context,
+                    'https://github.com/ch6vip/fqapp/releases',
+                  ),
+                ),
+                _InfoRow(
+                  icon: LucideIcons.scale,
+                  title: '开源许可',
+                  subtitle: 'GPL-3.0 与第三方组件许可',
+                  onTap: () => showLicensePage(
+                    context: context,
+                    applicationName: '什锦铺',
+                    applicationVersion: versionText,
+                    applicationLegalese:
+                        '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。'
+                        'Wenku8 Flutter 界面来源与许可文本见 assets/licenses/wenku8。',
+                  ),
+                ),
+                _InfoRow(
+                  icon: LucideIcons.code_xml,
+                  title: '源代码',
+                  subtitle: 'github.com/ch6vip/fqapp',
+                  onTap: () => _launchExternalUrl(
+                    context,
+                    'https://github.com/ch6vip/fqapp',
+                  ),
+                ),
+                _InfoRow(
+                  icon: LucideIcons.message_square,
+                  title: '问题反馈',
+                  subtitle: '前往 GitHub Issues 提交',
+                  onTap: () => _launchExternalUrl(
+                    context,
+                    'https://github.com/ch6vip/fqapp/issues',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
           const _SupportCard(),
           const SizedBox(height: 24),
           Center(
@@ -121,6 +212,73 @@ class AboutPage extends StatelessWidget {
   }
 }
 
+/// Archive-style information row: leading icon, title/subtitle and an optional
+/// trailing value. The whole row is the tap target.
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          ArchiveIcon(icon, size: 21),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppText(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 5),
+                  AppText(
+                    subtitle!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+          if (onTap != null) ...[
+            const SizedBox(width: 8),
+            const ArchiveIcon(CupertinoIcons.chevron_right, size: 14),
+          ],
+        ],
+      ),
+    );
+    if (onTap == null) return content;
+    return Semantics(
+      button: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: onTap,
+        child: content,
+      ),
+    );
+  }
+}
+
 /// 头部 logo：全幅图片，圆角与投影跟随图版的 15% 板式圆角。
 class _AboutLogo extends StatelessWidget {
   const _AboutLogo();
@@ -173,10 +331,10 @@ class _AboutHeading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       children: [
-        Text(
+        AppText(
           '什锦铺',
           textAlign: TextAlign.center,
           style: TextStyle(
@@ -184,85 +342,14 @@ class _AboutHeading extends StatelessWidget {
             height: 1.25,
             fontWeight: FontWeight.bold,
             letterSpacing: -0.3,
-            color: palette.ink,
+            color: scheme.onSurface,
           ),
         ),
         const SizedBox(height: 6),
-        Text(
+        AppText(
           '小说 / 短剧 / 漫剧 / 漫画 / 听书聚合客户端',
           textAlign: TextAlign.center,
-          style: TextStyle(color: palette.muted, fontSize: 13),
-        ),
-      ],
-    );
-  }
-}
-
-/// 信息卡：版本（点按复制）、检查更新、开源许可、源码与反馈。
-class _AboutInfoCard extends StatelessWidget {
-  const _AboutInfoCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
-    return SettingsGroupCard(
-      children: [
-        SettingsRow(
-          icon: LucideIcons.badge_check,
-          iconTile: true,
-          title: '当前版本',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                AboutPage.versionText,
-                style: TextStyle(fontSize: 13, color: palette.muted),
-              ),
-              const SizedBox(width: 6),
-              Icon(LucideIcons.copy, size: 15, color: palette.muted),
-            ],
-          ),
-          onTap: () => AboutPage._copyVersion(context),
-        ),
-        SettingsRow(
-          icon: LucideIcons.square_arrow_out_up_right,
-          iconTile: true,
-          title: '检查更新',
-          subtitle: '前往 GitHub 发布页查看新版本',
-          onTap: () => _launchExternalUrl(
-            context,
-            'https://github.com/ch6vip/fqapp/releases',
-          ),
-        ),
-        SettingsRow(
-          icon: LucideIcons.scale,
-          iconTile: true,
-          title: '开源许可',
-          subtitle: 'GPL-3.0 与第三方组件许可',
-          onTap: () => showLicensePage(
-            context: context,
-            applicationName: '什锦铺',
-            applicationVersion: AboutPage.versionText,
-            applicationLegalese: '什锦铺基于 GPL-3.0 协议开源，第三方组件遵循其各自的许可协议。',
-          ),
-        ),
-        SettingsRow(
-          icon: LucideIcons.code_xml,
-          iconTile: true,
-          title: '源代码',
-          subtitle: 'github.com/ch6vip/fqapp',
-          onTap: () =>
-              _launchExternalUrl(context, 'https://github.com/ch6vip/fqapp'),
-        ),
-        SettingsRow(
-          icon: LucideIcons.message_square,
-          iconTile: true,
-          title: '问题反馈',
-          subtitle: '前往 GitHub Issues 提交',
-          onTap: () => _launchExternalUrl(
-            context,
-            'https://github.com/ch6vip/fqapp/issues',
-          ),
+          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
         ),
       ],
     );
@@ -370,7 +457,7 @@ class _SupportHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       children: [
         Container(
@@ -392,13 +479,16 @@ class _SupportHeader extends StatelessWidget {
                 style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 15,
-                  color: palette.ink,
+                  color: scheme.onSurface,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 '如果这个项目对你有帮助，欢迎在爱发电支持我',
-                style: TextStyle(fontSize: 12.5, color: palette.muted),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),

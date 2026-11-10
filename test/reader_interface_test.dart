@@ -14,6 +14,7 @@ import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
 
 import 'support/fakes.dart';
+import 'support/reader_settings_nav.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -124,12 +125,9 @@ void main() {
     expect(device.calls, contains('start:true:0.5'));
     await _openMenu(tester);
     await _openSettings(tester);
-    final slider = tester.widget<Slider>(
-      find.byKey(const ValueKey('reader-brightness')),
-    );
-    slider.onChanged!(0.3);
-    slider.onChangeEnd!(0.3);
-    await tester.pumpAndSettle();
+    // 亮度在「屏幕」分类里。
+    await openReaderSettingsCategory(tester, 'page');
+    await setReaderSliderValue(tester, 'reader-brightness', 0.3);
     expect(device.calls, contains('brightness:false:0.3'));
     expect((await ReaderPreferences.load()).followSystemBrightness, isFalse);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -157,31 +155,19 @@ void main() {
       await tester.pumpAndSettle();
       final anchor = _firstVisibleParagraph(tester);
       await _openAppearance(tester);
-      await tester.tap(find.byTooltip('增大字号'));
-      await tester.pumpAndSettle();
+      // 字号与字距、标题对齐都在「字体」分类。
+      await openReaderSettingsCategory(tester, 'font');
+      await setReaderSliderValue(tester, 'reader-font-size', 19);
       expect(_firstVisibleParagraph(tester), anchor);
-      // 字距、标题对齐收在「更多设置」里。
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('reader-more-appearance')),
-      );
-      await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byTooltip('增大字距'));
-      await tester.tap(find.byTooltip('增大字距'));
-      await tester.pumpAndSettle();
+      await setReaderSliderValue(tester, 'reader-letter-spacing', 0.1);
       await tester.ensureVisible(find.text('居中'));
       await tester.tap(find.text('居中'));
       await tester.pumpAndSettle();
-      // 上下边距 默认 16，每次 +4，三次到 28。
-      for (var i = 0; i < 3; i++) {
-        await tester.ensureVisible(find.byTooltip('增大上下边距'));
-        await tester.tap(find.byTooltip('增大上下边距'));
-        await tester.pumpAndSettle();
-      }
-      await tester.tap(find.byTooltip('关闭更多设置'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('关闭排版设置'));
-      await tester.pumpAndSettle();
+      // 上下边距在「屏幕」分类里；默认 16。
+      await backToReaderSettingsCategories(tester);
+      await openReaderSettingsCategory(tester, 'page');
+      await setReaderSliderValue(tester, 'reader-vertical-padding', 28);
+      await closeReaderSettingsSheet(tester);
       final preferences = await ReaderPreferences.load();
       expect(preferences.fontSize, 19);
       expect(preferences.letterSpacing, closeTo(0.1, 0.001));
@@ -203,7 +189,7 @@ void main() {
       await _openMenu(tester);
       await tester.tap(find.text('目录'));
       await tester.pumpAndSettle();
-      final directory = find.text('目录 · 2 章');
+      final directory = find.text('目录');
       expect(
         Theme.of(tester.element(directory)).colorScheme.brightness,
         Brightness.dark,
@@ -227,11 +213,12 @@ void main() {
     await _size(tester, const Size(390, 800));
     await tester.pumpWidget(_app(_reader()));
     await tester.pumpAndSettle();
-    await _openAppearance(tester);
-    final moreSettings = find.byKey(const ValueKey('reader-more-appearance'));
-    await tester.ensureVisible(moreSettings);
-    await tester.tap(moreSettings);
+    await _openMenu(tester);
+    // 「听书方式」在「听书」分类里；从坞上的「操作」进去后退回网格才能看到它。
+    await tester.tap(find.byKey(const ValueKey('reader-operations-entry')));
     await tester.pumpAndSettle();
+    await backToReaderSettingsCategories(tester);
+    await openReaderSettingsCategory(tester, 'listening');
     await tester.ensureVisible(find.text('听书方式'));
     await tester.tap(find.text('听书方式'));
     // The entry's busy indicator runs until the source sheet closes.
@@ -267,6 +254,7 @@ void main() {
     await tester.pumpWidget(_app(_reader()));
     await tester.pumpAndSettle();
     await _openAppearance(tester);
+    await openReaderSettingsCategory(tester, 'font');
     await tester.ensureVisible(
       find.byKey(const ValueKey('reader-font-picker')),
     );
@@ -278,8 +266,7 @@ void main() {
     expect(find.textContaining('无法载入字体'), findsNothing);
     await tester.tap(find.byTooltip('关闭字体设置'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('关闭排版设置'));
-    await tester.pumpAndSettle();
+    await closeReaderSettingsSheet(tester);
     expect((await ReaderPreferences.load()).fontPath, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -302,15 +289,20 @@ void main() {
         expect(tester.takeException(), isNull);
         if (layout.name == 'portrait') await _capture(tester, 'menu');
         await _openSettings(tester);
-        expect(find.text('阅读设置'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('reader-settings-category-grid')),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
         if (layout.name == 'portrait') await _capture(tester, 'appearance');
+        // 主题 chips 在「主题」分类里。
+        await openReaderSettingsCategory(tester, 'theme');
         await tester.ensureVisible(
           find.byKey(const ValueKey('reader-theme-dark')),
         );
         await tester.tap(find.byKey(const ValueKey('reader-theme-dark')));
         await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('关闭排版设置'));
+        await closeReaderSettingsSheet(tester);
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         if (layout.name == 'portrait') await _capture(tester, 'night');
@@ -473,9 +465,14 @@ Future<void> _capture(WidgetTester tester, String name) async {
   });
 }
 
-/// 从阅读菜单的「设置」直接打开阅读设置面板。
+/// 从阅读菜单的「外观」直接打开阅读设置面板。
 Future<void> _openSettings(WidgetTester tester) async {
-  if (find.text('阅读设置').evaluate().isNotEmpty) return;
+  if (find
+      .byKey(const ValueKey('reader-settings-category-grid'))
+      .evaluate()
+      .isNotEmpty) {
+    return;
+  }
   await tester.tap(find.byKey(const ValueKey('reader-settings')));
   await tester.pumpAndSettle();
 }

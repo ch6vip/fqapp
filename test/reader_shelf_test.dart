@@ -10,6 +10,7 @@ import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/comic_reader_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/widgets/comic/comic_chrome_button.dart';
@@ -60,25 +61,30 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _openReaderMenu(tester);
+    // 书架入口在顶栏「更多阅读操作」菜单里。
+    await _openReaderMoreMenu(tester);
 
     final button = find.byKey(const ValueKey('reader-shelf-button'));
     expect(button, findsOneWidget);
-    expect(tester.widget<IconButton>(button).tooltip, '加入书架');
+    expect(tester.widget<GlassMenuItem>(button).label, '加入书架');
 
     await tester.tap(button);
     await _settleShelfWrite(tester, '已加入书架');
 
     expect(ShelfStore.instance.contains('book', 'reader-shelf'), isTrue);
     expect(find.text('已加入书架'), findsOneWidget);
-    expect(tester.widget<IconButton>(button).tooltip, '已在书架');
+
+    await _openReaderMoreMenu(tester);
+    expect(tester.widget<GlassMenuItem>(button).label, '已在书架');
 
     await tester.tap(button);
     await _settleShelfWrite(tester, '已移出书架');
 
     expect(ShelfStore.instance.contains('book', 'reader-shelf'), isFalse);
     expect(find.text('已移出书架'), findsOneWidget);
-    expect(tester.widget<IconButton>(button).tooltip, '加入书架');
+
+    await _openReaderMoreMenu(tester);
+    expect(tester.widget<GlassMenuItem>(button).label, '加入书架');
   });
 
   testWidgets('漫画阅读器里可以直接加入书架', (tester) async {
@@ -120,10 +126,16 @@ void main() {
 }
 
 /// 点正文中间唤出阅读菜单（工具栏只在菜单展开时存在）。
-Future<void> _openReaderMenu(WidgetTester tester) async {
-  await tester.tapAt(
-    tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
-  );
+/// 顶栏「更多阅读操作」菜单：chrome 已经显示时不要再点正文（那是开关）。
+Future<void> _openReaderMoreMenu(WidgetTester tester) async {
+  final more = find.byKey(const ValueKey('reader-header-more'));
+  if (more.hitTestable().evaluate().isEmpty) {
+    await tester.tapAt(
+      tester.getCenter(find.byKey(const ValueKey('reader-page-surface'))),
+    );
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(more);
   await tester.pumpAndSettle();
 }
 
@@ -131,10 +143,7 @@ Future<void> _openReaderMenu(WidgetTester tester) async {
 ///
 /// 等的是**这条**提示：连续两次切换会产生两条 SnackBar，第二条要等前一条的 2 秒
 /// 期限走完才轮得到，所以每轮额外把 fake 时钟往前推一点。
-Future<void> _settleShelfWrite(
-  WidgetTester tester,
-  String expectedText,
-) async {
+Future<void> _settleShelfWrite(WidgetTester tester, String expectedText) async {
   for (var attempt = 0; attempt < 40; attempt++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 10)),
@@ -144,8 +153,8 @@ Future<void> _settleShelfWrite(
     await tester.pump(const Duration(milliseconds: 400));
   }
   await tester.pump(const Duration(milliseconds: 300));
-
 }
+
 final _chapters = [
   Chapter(itemId: 'chapter-1', title: '第一章', volumeName: '正文'),
 ];

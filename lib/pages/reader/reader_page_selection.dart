@@ -4,8 +4,8 @@ part of '../reader_page.dart';
 extension _ReaderPageSelection on _ReaderPageState {
   List<ReaderRangeUnderline> get _displayRangeUnderlines {
     final layout = _chapterLayout;
-    if (layout == null || _replacement == null) return _rangeUnderlines;
-    return [
+    if (layout == null) return _rangeUnderlines;
+    final marks = <ReaderRangeUnderline>[
       for (final mark in _rangeUnderlines)
         if (layout.displayOffsetForSource(
               mark.end,
@@ -22,8 +22,45 @@ extension _ReaderPageSelection on _ReaderPageState {
             ),
             text: mark.text,
             createdAt: mark.createdAt,
+            dashed: mark.dashed,
           ),
     ];
+    // AI changes are display-only marks, not user underlines. They live in
+    // final display coordinates and never enter the underline store.
+    final markStyle = AiReadingController.instance.settings
+        .resolve(widget.bookId)
+        .markStyle;
+    final composition = _currentAiView?.composition;
+    final spans = composition?.displaySpans.isNotEmpty == true
+        ? composition!.displaySpans
+        : composition?.applied?.spans ?? const <AiEditSpan>[];
+    // AI spans are body-relative; ReaderChapterLayout prepends the chapter
+    // title, so shift them to the layout's display coordinates.
+    final bodyStart = layout.blocks.length > 1 ? layout.blocks[1].start : 0;
+    if (!_aiTemporaryOriginal && markStyle != 'off' && spans.isNotEmpty) {
+      for (final span in spans) {
+        final range = _minimalChangeRange(
+          span,
+          layout.textLength - bodyStart,
+          bodyStart,
+        );
+        if (range == null) continue;
+        marks.add(
+          ReaderRangeUnderline(
+            bookId: widget.bookId,
+            chapterId: _chapter.itemId,
+            start: range.start,
+            end: range.end,
+            text: span.replacement,
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+            dashed: markStyle == 'dotted',
+            deletion: range.deletion,
+            payload: span,
+          ),
+        );
+      }
+    }
+    return marks;
   }
 
   Future<void> _onParagraphLongPress(
@@ -31,6 +68,7 @@ extension _ReaderPageSelection on _ReaderPageState {
     Offset position,
   ) async {
     if (block.isTitle || block.isImage || block.textId == null) return;
+    _clearLocationHighlight();
     _longPressDragging = false;
     // 选中文字,暂停自动翻页 — the official selection helper does the same
     // (selection/h.java#a).
@@ -171,8 +209,9 @@ extension _ReaderPageSelection on _ReaderPageState {
     var topAnchor = _selectionBarTopAnchor;
     var view = media.size;
     var safeArea = media.padding;
-    var avoidBottom =
-        _controlsVisible ? _ReaderPageState._bottomBarHeight : 0.0;
+    var avoidBottom = _controlsVisible
+        ? _ReaderPageState._bottomBarHeight
+        : 0.0;
     final overlayBox =
         _selectionOverlayKey.currentContext?.findRenderObject() as RenderBox?;
     if (overlayBox != null && overlayBox.attached) {
@@ -189,6 +228,16 @@ extension _ReaderPageSelection on _ReaderPageState {
         0.0,
         double.infinity,
       );
+      final controls = _bottomControlsKey.currentContext?.findRenderObject();
+      if (_controlsVisible &&
+          controls is RenderBox &&
+          controls.attached &&
+          controls.hasSize) {
+        final top = overlayBox
+            .globalToLocal(controls.localToGlobal(Offset.zero))
+            .dy;
+        avoidBottom = (view.height - top).clamp(0.0, view.height);
+      }
     } else {
       // No overlay box (loading/error fallback): the top anchor would be in a
       // different coordinate space than the bar maths — drop the flip
@@ -203,6 +252,8 @@ extension _ReaderPageSelection on _ReaderPageState {
       safeArea: safeArea,
       underlined: underlined,
       showListening: true,
+      showBookmark: true,
+      showAi: _currentAiView?.aiEnabled == true,
       avoidBottom: avoidBottom,
     );
     return Positioned(
@@ -213,6 +264,9 @@ extension _ReaderPageSelection on _ReaderPageState {
         underlined: underlined,
         paragraphScoped: selection.isWholeParagraph,
         showListening: true,
+        showBookmark: true,
+        maxWidth: (view.width - 20).clamp(0.0, double.infinity),
+        showAi: _currentAiView?.aiEnabled == true,
         isDark: preset.isDark,
         belowAnchor: below,
         onAction: (action) {
@@ -275,12 +329,64 @@ extension _ReaderPageSelection on _ReaderPageState {
         final textId = block?.textId;
         if (block == null || textId == null) return;
         await _openListening(fromMs: block.startMs, textId: textId);
+      case ReaderParagraphAction.bookmark:
+        try {
+          final bookmark = await _addBookmark(selection: selection);
+          if (mounted) _showMessage(bookmark == null ? '阅读位置尚未就绪' : '已保存书签');
+        } catch (_) {
+          if (mounted) _showMessage('书签保存失败，请重试');
+        }
       case ReaderParagraphAction.underline:
       case ReaderParagraphAction.removeUnderline:
         await _toggleSelectionUnderline(
           add: action == ReaderParagraphAction.underline,
         );
+      case ReaderParagraphAction.missedChange:
+        await _markMissedSelection();
     }
+  }
+
+  Future<void> _markMissedSelection() async {
+    final selection = _selection;
+    final layout = _chapterLayout;
+    final snapshot = _currentAiView?.snapshot;
+    if (selection == null || layout == null || snapshot == null) return;
+    final startLocation = layout.snapshotLocationForDisplayOffset(
+      selection.start,
+      snapshot,
+      bias: TextBoundaryBias.start,
+    );
+    final endLocation = layout.snapshotLocationForDisplayOffset(
+      selection.end,
+      snapshot,
+      bias: TextBoundaryBias.end,
+    );
+    if (startLocation == null ||
+        endLocation == null ||
+        startLocation.paragraph != endLocation.paragraph) {
+      _showMessage('漏改了只能标在单个段落内');
+      return;
+    }
+    final start = startLocation.offset;
+    final end = endLocation.offset;
+    final paragraph = startLocation.paragraph;
+    if (end <= start || end > snapshot.paragraphEnd(paragraph)) {
+      _showMessage('漏改了只能标在单个段落内');
+      return;
+    }
+    final created = await showAiMissedSheet(
+      context,
+      bookId: widget.bookId,
+      chapterId: _chapter.itemId,
+      snapshot: snapshot,
+      sourceStart: start,
+      sourceEnd: end,
+      onChanged: () {
+        _aiRevision = -1;
+        unawaited(_onAiChanged());
+      },
+    );
+    if (created && mounted) _showMessage('已记录漏改了');
   }
 
   /// 划线 on the current selection. A whole-paragraph selection keeps the
@@ -443,10 +549,98 @@ extension _ReaderPageSelection on _ReaderPageState {
     }
     if (!mounted || generation != _loadGeneration) return;
     if (chapterId != _chapter.itemId) return;
+    final cacheKey = '${widget.bookId}\u0000$chapterId';
+    final previous = _underlineCache[cacheKey];
+    _underlineCache[cacheKey] = (
+      version: _chapter.version,
+      ids: ids,
+      ranges: ranges,
+    );
+    while (_underlineCache.length > 12) {
+      _underlineCache.remove(_underlineCache.keys.first);
+    }
+    final unchanged =
+        previous?.version == _chapter.version &&
+        setEquals(previous!.ids, ids) &&
+        _sameRangeUnderlines(previous.ranges, ranges);
+    if (unchanged) return;
     _setState(() {
       _underlines = ids;
       _rangeUnderlines = ranges;
       ++_underlineRevision;
     });
   }
+}
+
+/// Returns the changed sub-range in final display coordinates. Prefix/suffix
+/// common to the original and replacement are not marked, so a one-character
+/// typo fix does not paint the whole paragraph.
+({int start, int end, bool deletion})? _minimalChangeRange(
+  AiEditSpan span,
+  int displayLength,
+  int offset,
+) {
+  if (span.displayEnd < span.displayStart) return null;
+  final displayStart = span.displayStart + offset;
+  final displayEnd = span.displayEnd + offset;
+  if (span.replacement.isEmpty) {
+    // Deletion has no glyph to underline. Keep a zero-width caret position so
+    // the painter can draw a small vertical mark at the real deletion point.
+    final position = displayStart.clamp(0, displayLength);
+    return (start: position, end: position, deletion: true);
+  }
+  var prefix = 0;
+  final maxPrefix = math.min(span.original.length, span.replacement.length);
+  while (prefix < maxPrefix &&
+      span.original.codeUnitAt(prefix) == span.replacement.codeUnitAt(prefix)) {
+    prefix++;
+  }
+  var suffix = 0;
+  final maxSuffix = math.min(
+    span.original.length - prefix,
+    span.replacement.length - prefix,
+  );
+  while (suffix < maxSuffix &&
+      span.original.codeUnitAt(span.original.length - 1 - suffix) ==
+          span.replacement.codeUnitAt(span.replacement.length - 1 - suffix)) {
+    suffix++;
+  }
+  final start = (displayStart + prefix).clamp(0, displayLength);
+  final end = (displayEnd - suffix).clamp(start, displayLength);
+  if (end <= start) {
+    if (displayLength <= 0) return null;
+    final fallback = start.clamp(0, displayLength - 1);
+    return (
+      start: fallback,
+      end: (fallback + 1).clamp(fallback + 1, displayLength),
+      deletion: false,
+    );
+  }
+  return (start: start, end: end, deletion: false);
+}
+
+/// Compares the actual ranges, not only their count. Deleting one underline
+/// and adding another elsewhere keeps the count unchanged but must still
+/// repaint the chapter.
+bool _sameRangeUnderlines(
+  List<ReaderRangeUnderline> left,
+  List<ReaderRangeUnderline> right,
+) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    final a = left[i];
+    final b = right[i];
+    if (a.bookId != b.bookId ||
+        a.chapterId != b.chapterId ||
+        a.start != b.start ||
+        a.end != b.end ||
+        a.text != b.text ||
+        a.createdAt != b.createdAt ||
+        a.dashed != b.dashed ||
+        a.deletion != b.deletion) {
+      return false;
+    }
+  }
+  return true;
 }

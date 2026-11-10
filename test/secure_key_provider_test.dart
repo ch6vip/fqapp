@@ -65,6 +65,9 @@ class _HangingStorage implements SecureKeyStorage {
   @override
   Future<void> write(String key, String value) =>
       Completer<void>().future;
+
+  @override
+  Future<void> delete(String key) => Completer<void>().future;
 }
 
 class _ThrowingStorage implements SecureKeyStorage {
@@ -74,6 +77,9 @@ class _ThrowingStorage implements SecureKeyStorage {
   @override
   Future<void> write(String key, String value) async =>
       throw StateError('no keystore');
+
+  @override
+  Future<void> delete(String key) async => throw StateError('no keystore');
 }
 
 class _MapStorage implements SecureKeyStorage {
@@ -85,5 +91,10 @@ class _MapStorage implements SecureKeyStorage {
   @override
   Future<void> write(String key, String value) async {
     values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    values.remove(key);
   }
 }

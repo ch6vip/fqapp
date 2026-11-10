@@ -23,6 +23,9 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'services/app_log.dart';
 import 'services/app_theme.dart';
+import 'services/app_theme_style.dart';
+import 'services/api_client.dart';
+import 'services/ai_reading/ai_controller.dart';
 import 'services/audio_download_store.dart';
 import 'services/audio_floating_routes.dart';
 import 'services/drama_cache_preferences.dart';
@@ -37,13 +40,16 @@ import 'services/drama_downloader.dart';
 import 'services/fair_memory.dart';
 import 'services/connectivity_status.dart';
 import 'services/home_feed_cache.dart';
+import 'services/haptic_preferences.dart';
 import 'services/library_store.dart';
 import 'services/rank_cache.dart';
 import 'services/player_style_config.dart';
 import 'services/short_series_font_scale.dart';
 import 'services/playlet_share.dart';
 import 'services/poster_cache.dart';
+import 'services/shelf_group_store.dart';
 import 'services/shelf_store.dart';
+import 'services/shelf_view_store.dart';
 import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
@@ -129,10 +135,17 @@ Future<void> _initializeLocalData() async {
   }
 
   await Future.wait<void>([
+    // Load before interactive pages mount, so a saved opt-out applies at launch.
+    optional(HapticPreferences.instance.load),
     LibraryStore.instance.init(),
     // The 加入书架 collection is optional data: a failure here must not block
     // startup, which is why it shares the retryable bootstrap with the history.
     ShelfStore.instance.init(),
+    // 书架分组与视图偏好都在书架数据之后装配：页面首帧就能读到版式，
+    // 分组只在就绪后参与筛选（未就绪时读 API 安全降级）。两者都是可选数据，
+    // 打不开时页面退化为「全部 / 默认版式」而不是拖住启动。
+    optional(ShelfGroupStore.instance.init),
+    optional(ShelfViewStore.instance.load),
     // 短剧 feed 的 点赞 也是可选本地数据，与书架同一处理：开箱失败不能让
     // 启动失败，否则一个纯装饰性的集合会拖住短剧页之外的所有功能。
     optional(() async {
@@ -172,6 +185,8 @@ Future<void> _initializeLocalData() async {
     optional(HiveDramaDownloadStore.instance.warmUp),
     // 听书音频离线记录箱：与短剧箱分开，同样只在就绪时才查离线命中。
     optional(HiveAudioDownloadStore.instance.warmUp),
+    // AI 设置/缓存/反馈箱：失败只让 AI 功能退化，不能拖住阅读。
+    optional(AiReadingController.instance.init),
   ]);
   // 听书后台播放开关：异步读取 SharedPreferences，失败退化为默认开启。
   unawaited(AudioPreferences.instance.load());
@@ -205,6 +220,7 @@ Future<void> _initializeLocalData() async {
   // 否则广播到达时 Dart 侧还没有处理函数，原生侧只能按“未处理”回。
   FairMemoryService.instance.init();
   final sp = await SharedPreferences.getInstance();
+  await AppThemeStyleStore.instance.load();
   // Note: Optional preference schemas cannot block local data startup; see
   // .agents/notes/implemented/bug-fix/2026-09-17-persistent-data-and-web-cancellation.md.
   final savedTheme = sp.get(themeModeKey);
@@ -264,37 +280,71 @@ class _FqAppState extends State<FqApp> {
               builder: (context, oled, _) {
                 // 墨水屏强制浅色纯黑白：深色反白在墨水屏上残影最重。
                 final effectiveMode = eink ? ThemeMode.light : mode;
-                return MaterialApp(
-                  navigatorKey: _navigatorKey,
-                  navigatorObservers: [_audioRoutes],
-                  builder: (context, child) {
-                    final playback = AudioPlaybackScope(
-                      key: _audioScopeKey,
-                      navigatorKey: _navigatorKey,
-                      recentListen: loadRecentListen,
-                      child: child ?? const SizedBox.shrink(),
-                    );
-                    return AudioFloatingRouteScope(
-                      routes: _audioRoutes,
-                      child: isWindowsDesktop
-                          ? DesktopAppFrame(child: playback)
-                          : playback,
-                    );
-                  },
-                  title: '什锦铺',
-                  debugShowCheckedModeBanner: false,
-                  // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
-                  theme: _theme(Brightness.light, eink: eink, oled: oled),
-                  darkTheme: _theme(Brightness.dark, eink: eink, oled: oled),
-                  themeMode: effectiveMode,
-                  // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
-                  // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
-                  locale: const Locale('zh', 'CN'),
-                  supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
-                  localizationsDelegates: GlobalMaterialLocalizations.delegates,
-                  home: AppBootstrap(
-                    backendStarter: BackendService.instance.start,
-                    child: const RootShell(),
+                return ValueListenableBuilder<AppThemeStyle>(
+                  valueListenable: AppThemeStyleStore.instance,
+                  builder: (context, style, _) => MaterialApp(
+                    navigatorKey: _navigatorKey,
+                    navigatorObservers: [_audioRoutes],
+                    builder: (context, child) {
+                      final palette = HomePalette.of(context);
+                      final playback = AudioPlaybackScope(
+                        key: _audioScopeKey,
+                        navigatorKey: _navigatorKey,
+                        recentListen: loadRecentListen,
+                        child: child ?? const SizedBox.shrink(),
+                      );
+                      // Routes without an AppBar need a live fallback above the
+                      // Navigator; the covered root route cannot paint its style.
+                      // Reader/video annotations still override this default.
+                      return AnnotatedRegion<SystemUiOverlayStyle>(
+                        value:
+                            (palette.dark
+                                    ? SystemUiOverlayStyle.light
+                                    : SystemUiOverlayStyle.dark)
+                                .copyWith(
+                                  statusBarColor: palette.canvas,
+                                  systemNavigationBarColor: palette.canvas,
+                                  systemNavigationBarDividerColor:
+                                      palette.canvas,
+                                  systemNavigationBarIconBrightness:
+                                      palette.dark
+                                      ? Brightness.light
+                                      : Brightness.dark,
+                                ),
+                        child: AudioFloatingRouteScope(
+                          routes: _audioRoutes,
+                          child: isWindowsDesktop
+                              ? DesktopAppFrame(child: playback)
+                              : playback,
+                        ),
+                      );
+                    },
+                    title: '什锦铺',
+                    debugShowCheckedModeBanner: false,
+                    // OLED 纯黑只在深色下生效（浅色时 createTheme 直接忽略）。
+                    theme: _theme(
+                      Brightness.light,
+                      eink: eink,
+                      oled: oled,
+                      style: style,
+                    ),
+                    darkTheme: _theme(
+                      Brightness.dark,
+                      eink: eink,
+                      oled: oled,
+                      style: style,
+                    ),
+                    themeMode: effectiveMode,
+                    // 全 App 文案是中文，系统文本菜单（复制/粘贴/全选）与 Material
+                    // 内置文案也必须跟着中文：缺 delegates 时一律回退英文（#79）。
+                    locale: const Locale('zh', 'CN'),
+                    supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
+                    localizationsDelegates:
+                        GlobalMaterialLocalizations.delegates,
+                    home: AppBootstrap(
+                      backendStarter: BackendService.instance.start,
+                      child: const RootShell(),
+                    ),
                   ),
                 );
               },
@@ -309,7 +359,13 @@ class _FqAppState extends State<FqApp> {
     Brightness brightness, {
     bool eink = false,
     bool oled = false,
-  }) => AppTheme.createTheme(brightness, einkMode: eink, oledMode: oled);
+    AppThemeStyle style = AppThemeStyle.archive,
+  }) => AppTheme.createTheme(
+    brightness,
+    einkMode: eink,
+    oledMode: oled,
+    style: style,
+  );
 }
 
 /// Opens local data before any page can access LibraryStore's boxes. Failed
@@ -559,7 +615,7 @@ class _RootShellState extends State<RootShell> {
           return LazyIndexedStack(
             index: index,
             children: [
-              const HomePage(),
+              HomePage(cueLoader: ApiClient.instance.searchCue),
               const DramaPage(),
               LibraryPage(
                 onBrowse: () => desktopTab.value = 0,
@@ -613,7 +669,10 @@ class _RootShellState extends State<RootShell> {
         child: LazyIndexedStack(
           index: _index,
           children: [
-            HomePage(scrollController: _homeScroll),
+            HomePage(
+              scrollController: _homeScroll,
+              cueLoader: ApiClient.instance.searchCue,
+            ),
             // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
             // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
             if (supportsVideoPlayback)

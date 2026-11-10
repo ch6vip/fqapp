@@ -1,62 +1,45 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
+// Ported from Wenku8_Flutter (revision ebcd7f1):
+//   lib/reader_selection.dart -> _selectionAction / the glass selection bar
+//
+// fqapp keeps its paragraph/range geometry and existing listening/underline
+// actions. The source glass surface exposes local bookmarks and AI feedback;
+// narrow viewports scroll the actions without changing the selection anchor.
+// Mechanical substitutions: shared Wenku8 controls replace upstream app_ui;
+// GlassOverlaySurface is the shared port and uses the reader's Theme.
+// Arrow tips are omitted, as in the upstream selection toolbar.
+import 'package:flutter/cupertino.dart';
+
+import '../wenku/wenku_ui.dart';
 
 /// What the reader can do with a long-pressed paragraph.
-enum ReaderParagraphAction { copy, listen, underline, removeUnderline }
+enum ReaderParagraphAction {
+  copy,
+  listen,
+  underline,
+  removeUnderline,
+  bookmark,
+  missedChange,
+}
 
-/// Floating action bar for a long-pressed paragraph or a dragged selection,
-/// matching the official one.
+/// Floating action bar for a long-pressed paragraph or a dragged selection.
 ///
-/// The official client builds this from three decompiled pieces:
-///
-/// * `com/dragon/read/story/impl/feeds/selection/m.java` — a wrap-content
-///   `PopupWindow` with an 8dp rounded background, one 15x8dp arrow on the side
-///   facing the paragraph, and horizontal padding of 32dp for a single item or
-///   10dp for several.
-/// * `res/layout/wr.xml` — the root: up arrow, the item row, down arrow.
-/// * `res/layout/wt.xml` — one item: 60x48dp, a 24dp icon, then a 10sp label
-///   2dp below it, on a #FF303030 (day) / #FF1C1C1C (night) bar with #FFFFFFFF
-///   text.
-///
-/// The official paragraph bar offers 从本句听 / 写段评 / 一键生图 / 分享, and its
-/// selection toolbar (a sibling surface, `com/dragon/read/ui/paragraph/i.java`)
-/// offers 复制 / 划线 / 查询 / 写笔记 / 错字反馈. The account- and capability-gated
-/// items need endpoints the backend does not have, so this bar shows only the
-/// actions it can actually perform: a whole-paragraph selection (long press)
-/// gets 从本段听 when enabled, plus 复制 / 划线; a dragged character range gets
-/// 复制 / 划线. Local-only reading hides the listening item.
-///
-/// Note: 官方长按工具的版式与颜色取自反编译 m.java / wt.xml / wr.xml，见
-/// .agents/notes/implemented/feature/2026-09-18-reader-paragraph-actions.md
+/// Upstream Wenku8 shows its selection actions in a single glass bar with a
+/// leading icon and a label. The fqapp reader keeps the same action set it can
+/// actually perform: a whole-paragraph selection (long press) gets 从本段听
+/// when enabled, plus 复制 / 划线; a dragged character range gets 复制 / 划线.
 class ReaderParagraphMenu extends StatelessWidget {
-  /// See `res/layout/wt.xml`.
-  static const _itemWidth = 60.0;
-  static const _itemHeight = 48.0;
-  static const _iconSize = 24.0;
-  static const _labelTopGap = 2.0;
-  static const _labelSize = 10.0;
+  /// Width reserved for one action in the anchor maths. The item itself is
+  /// centred inside this slot so the bar width matches [resolvePosition].
+  static const _itemWidth = 100.0;
+  static const _itemHeight = 44.0;
+  static const _iconSize = 20.0;
+  static const _labelSize = 14.0;
 
-  /// See `selection/m.java`: it uses 32dp horizontally for a single item and
-  /// 10dp once there are several; current paragraph/selection bars have at least
-  /// two actions.
-  static const _multiPadding = 10.0;
-  static const _verticalPadding = 4.0;
+  /// Upstream action padding: 12dp horizontal and vertical.
+  static const _multiPadding = 6.0;
 
-  /// The arrow is 15x8dp and overlaps the bar by 1dp (`wr.xml`).
-  static const _arrowWidth = 15.0;
+  /// The bar floats 8dp away from the anchor (upstream `anchorAbove - 8`).
   static const _arrowHeight = 8.0;
-
-  /// `UiUtils.getRoundRectDrawable(UIKt.getDp(8), color)` in `m.java`.
-  static const _radius = 8.0;
-
-  /// `selection/m.java#o`, confirmed against its smali: the black theme takes
-  /// `s7` #FF1C1C1C and the day theme `u_` #FF303030 (the first branch jadx
-  /// shows there is dead code, its result is never assigned).
-  static const _barColor = Color(0xFF303030);
-  static const _barColorDark = Color(0xFF1C1C1C);
-
-  /// `@color/al` — pure white in both themes.
-  static const _foreground = Color(0xFFFFFFFF);
 
   static const _margin = 10.0;
 
@@ -68,9 +51,13 @@ class ReaderParagraphMenu extends StatelessWidget {
   /// toolbar has no listen item either.
   final bool paragraphScoped;
   final bool showListening;
+  final bool showBookmark;
+  final bool showAi;
+  final double? maxWidth;
 
-  /// True when the bar sits below the touched line, so its tip points up at the
-  /// paragraph (`m.java` shows downArrow instead once the popup flips above).
+  /// True when the bar sits below the touched line. Kept because the reader
+  /// page's anchor maths decides the flip side; the Wenku8 glass bar has no
+  /// arrow tip of its own.
   final bool belowAnchor;
 
   /// Fired when an item is tapped. The bar is a plain overlay child of the
@@ -85,28 +72,32 @@ class ReaderParagraphMenu extends StatelessWidget {
     this.isDark = false,
     this.paragraphScoped = true,
     this.showListening = true,
+    this.showBookmark = false,
+    this.showAi = false,
+    this.maxWidth,
     this.belowAnchor = true,
   });
-
-  Color get _background => isDark ? _barColorDark : _barColor;
 
   /// Number of items the bar will render; the caller sizes the anchor with it.
   static int itemCount({
     required bool underlined,
     required bool paragraphScoped,
     bool showListening = true,
-  }) => paragraphScoped ? (showListening ? 3 : 2) : 2;
+    bool showBookmark = false,
+    bool showAi = false,
+  }) {
+    final base = paragraphScoped ? (showListening ? 3 : 2) : 2;
+    return base + (showBookmark ? 1 : 0) + (showAi ? 1 : 0);
+  }
 
   /// Clamped top-left for the bar anchored at [anchor] (window coordinates),
-  /// plus which side of the anchor it ended up on — the geometry
-  /// `selection/m.java#l` applies to its PopupWindow: centred on the anchor
-  /// with a 10dp screen margin, flipping above when there is no room below.
+  /// plus which side of the anchor it ended up on.
   ///
   /// [anchor] sits at the selection's last line bottom (plus clearance for
   /// the end caret's dot); [topAnchor] is the selection's first line top.
-  /// The flip places the whole bar — arrow included — above [topAnchor], so
-  /// a tall selection is never covered by its own bar; without a top anchor
-  /// the flip falls back to the anchor point.
+  /// The flip places the whole bar above [topAnchor], so a tall selection is
+  /// never covered by its own bar; without a top anchor the flip falls back to
+  /// the anchor point.
   ///
   /// The reader page calls this per build, so the bar never sits on the
   /// system bars or on the reader's own bottom toolbar ([avoidBottom]).
@@ -118,6 +109,8 @@ class ReaderParagraphMenu extends StatelessWidget {
     required EdgeInsets safeArea,
     required bool underlined,
     bool showListening = true,
+    bool showBookmark = false,
+    bool showAi = false,
     double avoidBottom = 0,
   }) {
     const flipClearance = 10.0;
@@ -125,13 +118,14 @@ class ReaderParagraphMenu extends StatelessWidget {
       underlined: underlined,
       paragraphScoped: paragraphScoped,
       showListening: showListening,
+      showBookmark: showBookmark,
+      showAi: showAi,
     );
-    final barWidth = count * _itemWidth + _multiPadding * 2;
-    // Only the tip facing the paragraph is laid out, exactly like `m.java`:
-    // it calls `UIKt.gone` on the other arrow, which takes no space. Total
-    // height is 8 (tip) + 56 (body) = 64dp, the same 64dp `m.java` uses when
-    // it offsets the popup above the anchor.
-    final barHeight = _verticalPadding * 2 + _itemHeight + _arrowHeight;
+    final barWidth = (count * _itemWidth + _multiPadding * 2).clamp(
+      0.0,
+      (view.width - _margin * 2).clamp(0.0, double.infinity),
+    );
+    final barHeight = _itemHeight + _arrowHeight;
 
     final minLeft = _margin;
     final maxLeft = (view.width - barWidth - _margin).clamp(
@@ -145,10 +139,8 @@ class ReaderParagraphMenu extends StatelessWidget {
     final maxTop = (bottomLimit - barHeight).clamp(minTop, double.infinity);
     final belowTop = anchor.dy + _arrowHeight;
     final below = belowTop + barHeight <= bottomLimit;
-    // Flipped above a selection: the bar's bottom (its down arrow) must sit
-    // above the selection's first line top — the start caret's dot protrudes
-    // 6dp above it, hence the extra clearance.
-    final flippedTop = (topAnchor?.dy ?? anchor.dy) -
+    final flippedTop =
+        (topAnchor?.dy ?? anchor.dy) -
         barHeight -
         _arrowHeight -
         (topAnchor == null ? 0 : flipClearance);
@@ -157,52 +149,53 @@ class ReaderParagraphMenu extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.transparent,
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // `m.java` shows upArrow when the popup hangs below the anchor and
-        // downArrow once it flips above; the other arrow is gone, so it takes
-        // no space and the painted tip always touches the paragraph.
-        if (belowAnchor)
-          _Arrow(pointingUp: true, color: _background)
-        else
-          const SizedBox.shrink(),
-        Container(
-          height: _itemHeight + _verticalPadding * 2,
-          padding: const EdgeInsets.symmetric(
-            horizontal: _multiPadding,
-            vertical: _verticalPadding,
-          ),
-          decoration: BoxDecoration(
-            color: _background,
-            borderRadius: BorderRadius.circular(_radius),
-          ),
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: BoxConstraints(
+      maxWidth: maxWidth ?? MediaQuery.sizeOf(context).width - _margin * 2,
+    ),
+    child: GlassOverlaySurface(
+      key: const ValueKey('reader-selection-glass-bar'),
+      preserveOptics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _multiPadding),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (paragraphScoped && showListening)
                 _Item(
                   key: const ValueKey('reader-action-listen'),
-                  icon: LucideIcons.headphones,
+                  icon: CupertinoIcons.headphones,
                   label: '从本段听',
                   onTap: () => onAction(ReaderParagraphAction.listen),
                 ),
               _Item(
                 key: const ValueKey('reader-action-copy'),
-                icon: LucideIcons.copy,
+                icon: CupertinoIcons.doc_on_doc,
                 label: '复制',
                 onTap: () => onAction(ReaderParagraphAction.copy),
               ),
+              if (showBookmark)
+                _Item(
+                  key: const ValueKey('reader-action-bookmark'),
+                  icon: CupertinoIcons.bookmark,
+                  label: '书签',
+                  onTap: () => onAction(ReaderParagraphAction.bookmark),
+                ),
+              if (showAi)
+                _Item(
+                  key: const ValueKey('reader-action-missed'),
+                  icon: CupertinoIcons.sparkles,
+                  label: '漏改了',
+                  onTap: () => onAction(ReaderParagraphAction.missedChange),
+                ),
               _Item(
                 key: const ValueKey('reader-action-underline'),
                 icon: underlined
-                    ? LucideIcons.eraser
-                    : LucideIcons.highlighter,
-                label: underlined
-                    ? (paragraphScoped ? '取消划线' : '删除划线')
-                    : '划线',
+                    ? CupertinoIcons.delete
+                    : CupertinoIcons.pencil,
+                label: underlined ? (paragraphScoped ? '取消划线' : '删除划线') : '划线',
                 onTap: () => onAction(
                   underlined
                       ? ReaderParagraphAction.removeUnderline
@@ -212,66 +205,13 @@ class ReaderParagraphMenu extends StatelessWidget {
             ],
           ),
         ),
-        if (!belowAnchor)
-          _Arrow(pointingUp: false, color: _background)
-        else
-          const SizedBox.shrink(),
-      ],
+      ),
     ),
   );
 }
 
-/// The 15x8dp tip that ties the bar to the touched line (`wr.xml`).
-///
-/// The caller only builds the arrow that faces the paragraph, mirroring the
-/// `UIKt.gone`/`UIKt.visible` swap in `selection/m.java`, so no visibility
-/// flag is needed here.
-class _Arrow extends StatelessWidget {
-  final bool pointingUp;
-  final Color color;
-
-  const _Arrow({required this.pointingUp, required this.color});
-
-  @override
-  Widget build(BuildContext context) => CustomPaint(
-    size: const Size(
-      ReaderParagraphMenu._arrowWidth,
-      ReaderParagraphMenu._arrowHeight,
-    ),
-    painter: _ArrowPainter(color: color, pointingUp: pointingUp),
-  );
-}
-
-class _ArrowPainter extends CustomPainter {
-  final Color color;
-  final bool pointingUp;
-
-  const _ArrowPainter({required this.color, required this.pointingUp});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path();
-    if (pointingUp) {
-      path
-        ..moveTo(size.width / 2, 0)
-        ..lineTo(size.width, size.height)
-        ..lineTo(0, size.height);
-    } else {
-      path
-        ..moveTo(0, 0)
-        ..lineTo(size.width, 0)
-        ..lineTo(size.width / 2, size.height);
-    }
-    path.close();
-    canvas.drawPath(path, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(_ArrowPainter old) =>
-      old.color != color || old.pointingUp != pointingUp;
-}
-
-/// One icon-over-label item; geometry from `res/layout/wt.xml`.
+/// One icon + label action in the upstream glass bar; the fixed slot keeps the
+/// bar width equal to the anchor maths above.
 class _Item extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -285,29 +225,37 @@ class _Item extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(8),
-    child: SizedBox(
-      width: ReaderParagraphMenu._itemWidth,
-      height: ReaderParagraphMenu._itemHeight,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: ReaderParagraphMenu._iconSize,
-              color: ReaderParagraphMenu._foreground),
-          const SizedBox(height: ReaderParagraphMenu._labelTopGap),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.visible,
-            style: const TextStyle(
-              color: ReaderParagraphMenu._foreground,
-              fontSize: ReaderParagraphMenu._labelSize,
-              height: 1.0,
-            ),
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: label,
+    child: JellyTapSurface(
+      onTap: onTap,
+      child: SizedBox(
+        width: ReaderParagraphMenu._itemWidth,
+        height: ReaderParagraphMenu._itemHeight,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ArchiveIcon(icon, size: ReaderParagraphMenu._iconSize),
+              const SizedBox(width: 8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontSize: ReaderParagraphMenu._labelSize,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     ),
   );

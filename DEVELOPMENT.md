@@ -412,6 +412,8 @@ bash scripts/test_quick.sh home
 
 #### 2026-11-10 只读边界清理复核
 
+以下记录基于 `4c7bc6d`，早于同步最新主线；不代表合并后的源码已经验证。
+
 通过 MuMuManager 重新确认实例 `0` / Android 12 / `127.0.0.1:16385`，主 ABI 为 `x86_64`，使用 ARM 转译运行 arm64 release 包；分辨率 720x1280、`font_scale=1.0`。Flutter `3.47.9` / Dart `3.13.7` 锁定依赖后，由 `scripts/build_rust_backend.ps1` 重新生成 FRB 绑定并构建两个 ARM ABI，再执行双 ABI 的 split release 构建。版本保持 `1.0.200+205`，arm64 安装包 versionCode 为 `2205`。
 
 - 最终 arm64 APK SHA-256：`ecfa9aa1ad1a387fa91b274640ff2ac6eb9a5c0b316f80be80b623eeb0a0128d`，覆盖安装后设备侧 hash 一致。
@@ -429,6 +431,53 @@ bash scripts/test_quick.sh home
 最终包应用日志未发现 FATAL EXCEPTION、ANR 或未处理 Flutter 异常。验证结束覆盖恢复 MuMu 原已装包，SHA-256 为 `cfb1fa4ad8f80cbbf4ab08a7f7fd5dd9afaa816bf08fe69077c7d9a79e89a869`，设备侧核对一致并返回首页；没有卸载或清空数据，临时端口转发已移除。截图、响应、备份和日志保存在仓库外 `%TEMP%\fqapp-readonly-20261110`，不随源码分发。MuMu 结果不代表实体设备性能或硬件兼容性。
 
 辅助检查为 `flutter analyze --no-pub lib`、`cargo clippy --manifest-path rust/Cargo.toml --locked --offline --lib -- -D warnings` 和 `git diff --check`。本轮没有新增、修改或运行自动化测试；冻结的旧测试仍引用已删除的账号/写入契约，其中 `account_transport_tests` 导入已删除函数，会阻塞测试目标编译，不能把本次库构建视为 CI 通过。Windows 缺少 Visual Studio C++ 构建工具，已由 Flutter 工具刷新插件注册，但未完成 Windows 构建。
+
+#### 2026-11-10 Android 振动反馈开关（#303）
+
+基于 `c29b279`，在“设置 → 外观”增加默认开启的“振动反馈”；经典与档案主题共用 `haptics_enabled`，冷启动在交互页面挂载前读取。统一触感组件和书架/播放手势的直接调用都读取该偏好，Android 的 activity decor view 同时拦住 Flutter 控件自带的长按振动；不改系统振动或键盘设置。iOS 暂不显示此开关。
+
+本次由 MuMuManager 查询得到实例 `0` / Android 12 / `127.0.0.1:16385`，720x1280、字体比例 1.0、x86_64 经 ARM 转译运行 arm64 release。Flutter 3.47.9 / Dart 3.13.7，应用版本保持 `1.0.201+206`（arm64 split versionCode `2206`）；安装后设备侧 APK SHA-256 与本地产物一致：`c7778e081a31757ba4909475450e0009db3b0bee30c114b47e3546958bdc1132`。
+
+| 真实路径 | 观察结果 |
+|---|---|
+| 升级后进入档案主题的外观设置 | 开关默认开启，语义树 `checked=true`；按钮操作在 `dumpsys vibrator_manager` 中产生本应用的 `TEXTURE_TICK` 记录 |
+| 关闭后返回、重新进入外观、打开/关闭主题模式菜单 | 开关显示关闭，操作前后本应用的振动记录完全一致，没有新增 |
+| 关闭后强制停止进程并冷启动，再进入外观 | 语义树仍为 `checked=false`；启动及后续导航没有新增本应用振动记录 |
+| 从档案切换为经典主题，再长按书架中的浏览历史条目 | 两主题共用关闭状态；长按正常进入“已选择 1 本”，没有新增振动记录，随后退出编辑未删除数据 |
+| 经典主题重新开启后重复同一长按 | 正常进入编辑，系统服务新增本应用 `CLICK` 记录（15:12:23.158）；切回档案后按钮恢复 `TEXTURE_TICK` |
+| 点击设置行关闭再开启，随后冷启动 | 整行点击也生效；重启后的开关为 `checked=true` |
+
+补充检查：受影响的 10 个 Dart 文件定向分析无诊断；使用 `build_rust_backend.ps1 -SkipCodegen` 构建 ARM64/ARMv7 核心，随后 `flutter build apk --release --target-platform android-arm,android-arm64 --split-per-abi` 成功；arm64 APK 的正式签名校验成功且与原安装包一致。未新增、修改或运行测试。
+
+结束时恢复档案主题、跟随系统、沉浸式播放布局和振动开启，返回首页并保留新包；系统 `haptic_feedback_enabled` / `sound_effects_enabled` 均保持 1，分辨率和字体比例不变。未卸载、清空数据或改装调试包。截图、语义树、振动记录、日志与原包备份位于仓库外 `%TEMP%\fqapp-haptics-20261110`。
+
+这些记录证明界面、持久化与 Android 振动请求开关，不证明实体振动马达的触感或噪声；ARMv7 仅构建，未在设备上运行；视频倍速与听书定位的具体播放路径未实操。最终进程的 logcat 未见匹配的崩溃或振动通道初始化错误。iOS 构建与物理设备性能未验证。
+
+#### 2026-11-10 #304 同步主线后复核
+
+在独立工作树把 `master` 的 `16ee87b`（已含 #305）合入只读分支 `e2dd450`。两个导入页面保留主线的档案外观、AI 备份与书架分组，只移除账号读取、登录管理及对应文案；开发文档的两份既有验证记录均保留。原工作区未提交的 2026-11-06 记录未带入。相对该主线，测试文件和应用版本均无改动。
+
+Flutter 3.47.9 / Dart 3.13.7 的 `flutter analyze --no-pub lib` 与冲突页面及直接服务的定向分析无诊断；手写 Rust 改动的格式检查和 `cargo clippy --manifest-path rust/Cargo.toml --locked --offline --lib -- -D warnings` 完成。FRB 2.13.0 重新生成绑定，`scripts/build_rust_backend.ps1` 重建 ARM64 / ARMv7 核心，再构建两个 ABI 的 release APK；生成文件与合并索引内容一致。未修改生成器输出或冻结测试来绕过检查。
+
+- ARM64 APK SHA-256：`c9b99914724318c6f6bde8d2a92b56cf3995ae6a78da4c2cd91bf3a71ab1a120`。
+- ARMv7 APK SHA-256：`833a2688fe70a948434fa841cfe0a98340af9f7e3bd48b5491ddae333eefa065`，仅构建。
+- 版本沿用主线 `1.0.201+206`，arm64 split versionCode `2206`，正式签名与现有安装一致；不是额外升版或发布。
+
+MuMuManager 确认实例 `0` / Android 12 / `127.0.0.1:16385`，720x1280、字体比例 1.0、x86_64 经 ARM 转译运行。覆盖安装后设备侧 SHA-256 一致，冷启动进入首页。
+
+| 真实路径 | 合并后观察 |
+|---|---|
+| 我的 → 备份与导入 → 导入番茄书架 | 档案界面正常，AI 备份入口保留；导入页只提供本地历史文件，无账号按钮或登录管理菜单 |
+| 系统文件选择器 → 既有历史 JSON | 预览显示 3 本书及明确的最终导入按钮；退出时未点击合并 |
+| 六类已移除路由分别使用 GET / POST | 12 次均为 404；无效 ID、无账号凭证，不向上游提交写操作 |
+| 保留的真实读取 | `/health` 为 200；书评 GET 为 200 / 业务码 0（当时 2 条），回复列表 POST 为 200 / 业务码 0（3 条） |
+| loopback 来源限制 | 错误 Host 和外部 Origin 均为 403，验证用临时 ADB 转发已移除 |
+| 升级前后应用内导出 | 收藏 0、历史 3、已看标记 0，逐项一致；AI 压缩包解码后仅导出时间不同，内容集合仍为空 |
+| 设置 → 外观 | 振动开关仍为开启、跟随系统、沉浸式播放；系统服务有新包按钮的 `TEXTURE_TICK` 请求，未重复 #303 的完整开关验收 |
+
+当前进程 logcat 未见 FATAL EXCEPTION、ANR、OOM 或未处理 Flutter 异常。最终返回首页，保留合并后的新包及原应用数据；系统振动和音效仍为 1，未改变分辨率和字体比例。证据在仓库外 `%TEMP%\fqapp-readonly-sync-20261110`。
+
+限制：没有执行最终导入合并，也没有旧采集可用于分卷恢复、导出和资料补齐；Windows 本机仍缺 Visual Studio C++ 工具链。冻结测试仍引用已删除契约，会阻挡测试目标编译及含测试的 CI 步骤；本轮未新增、修改或运行自动化测试，不以库构建或 MuMu 结果宣称 CI 全绿。MuMu 不替代 Xiaomi / MIUI 等实体设备、物理马达或性能验证。
 
 ### 分层跑测试
 

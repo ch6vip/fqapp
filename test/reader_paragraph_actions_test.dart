@@ -15,6 +15,7 @@ import 'package:fqapp/services/reader_underline_store.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
 import 'package:fqapp/widgets/reader/reader_paragraph_menu.dart';
 import 'package:fqapp/widgets/reader/reader_text_selection.dart';
+import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
 import 'support/fakes.dart';
 
@@ -294,27 +295,40 @@ void main() {
     expect(find.byKey(const ValueKey('reader-action-listen')), findsOneWidget);
   });
 
-  // The official bar takes u_ #FF303030 by day and s7 #FF1C1C1C at night
-  // (selection/m.java#o); the mapping used to be recorded the other way round.
-  testWidgets('the bar background is #FF303030 by day and #FF1C1C1C at night', (
-    tester,
-  ) async {
-    Future<Color?> barColor({required bool dark}) async {
+  // The Wenku8 port replaced the official Fanqie #FF303030 PopupWindow with one
+  // live glass bar. The bar no longer pins its own tint: it inherits the shared
+  // glass tint of the ambient theme, so day keeps the milk plate and night the
+  // near-black one and the white labels stay legible either way.
+  testWidgets('the bar keeps a day and night glass tint', (tester) async {
+    Future<Color> barTint({required bool dark}) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: ReaderParagraphMenu(isDark: dark, onAction: (_) {}),
+          theme: ThemeData(
+            brightness: dark ? Brightness.dark : Brightness.light,
+          ),
+          home: Scaffold(
+            body: ReaderParagraphMenu(isDark: dark, onAction: (_) {}),
+          ),
         ),
       );
-      final containers = tester.widgetList<Container>(
-        find.byWidgetPredicate(
-          (widget) => widget is Container && widget.decoration is BoxDecoration,
-        ),
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('reader-selection-glass-bar')),
+        findsOneWidget,
       );
-      return (containers.single.decoration! as BoxDecoration).color;
+      final context = tester.element(
+        find.byKey(const ValueKey('reader-selection-glass-bar')),
+      );
+      return GlassAppearance.tintOf(
+        context,
+        opacity: GlassAppearance.of(context).opacity,
+      );
     }
 
-    expect(await barColor(dark: false), const Color(0xFF303030));
-    expect(await barColor(dark: true), const Color(0xFF1C1C1C));
+    final day = await barTint(dark: false);
+    final night = await barTint(dark: true);
+    expect(day, const Color(0xFFFEFDF8));
+    expect(night.computeLuminance(), lessThan(0.1));
   });
 
   testWidgets('long press selects the paragraph with wash and handles', (
@@ -581,7 +595,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('local-only paragraph actions offer 从本段听 via system TTS', (tester) async {
+  testWidgets('local-only paragraph actions offer 从本段听 via system TTS', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(_app(_MemoryUnderlines(), localOnly: true));

@@ -65,6 +65,8 @@ void main() {
         await _mount(tester);
         _seed(positionMs: 0, track: _shortTrack(), cue: _sentence);
         await tester.pump(const Duration(milliseconds: 150));
+        // 胶囊在 post-frame 采样高亮位置后才出现，等这一拍落地。
+        await tester.pump();
         expect(
           find.byKey(const ValueKey('reader_player_pill')),
           findsOneWidget,

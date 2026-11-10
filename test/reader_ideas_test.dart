@@ -322,6 +322,53 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('展开的回复显示头像与配图（issue #179）', (tester) async {
+      await pumpSheet(
+        tester,
+        load: (_, _) async => BookCommentPage(
+          comments: [BookComment(id: 'a1', text: '这段太真实了', replyCount: 2)],
+        ),
+        replyLoader: (_) async => const CommentReplyPage(
+          replies: [
+            CommentReply(
+              id: 'r1',
+              text: '配图回复',
+              userName: '读者乙',
+              imageUrls: ['https://example.test/reply.jpg'],
+            ),
+            // 纯图回复：没有正文也要显示配图，且不多出空行。
+            CommentReply(
+              id: 'r2',
+              userName: '读者丙',
+              imageUrls: ['https://example.test/only.jpg'],
+            ),
+          ],
+          totalCount: 2,
+        ),
+      );
+      // 父评论本身无配图。
+      expect(find.byType(ReaderIllustration), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('reader_reply_toggle_a1')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('配图回复', findRichText: true), findsOneWidget);
+      expect(find.byType(ReaderIllustration), findsNWidgets(2));
+      for (final id in ['r1', 'r2']) {
+        final avatar = find.byKey(ValueKey('reader_reply_avatar_$id'));
+        expect(avatar, findsOneWidget);
+        // 无头像地址时退回占位图标。
+        expect(
+          find.descendant(of: avatar, matching: find.byType(Icon)),
+          findsOneWidget,
+        );
+      }
+      // 名字要显示，且后面不能跟着空行。
+      expect(find.textContaining('读者丙', findRichText: true), findsOneWidget);
+      expect(find.textContaining('读者丙\n', findRichText: true), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('评论正文里的表情令牌渲染成图片（issue #173）', (tester) async {
       await pumpSheet(
         tester,
@@ -629,10 +676,13 @@ void main() {
     testWidgets('the control menu has no ideas entry any more', (tester) async {
       await pumpReader(tester, ideasLoader: (_) async => ChapterIdeas.empty);
       await openControls(tester);
-      // Bubbles replaced the menu row; the four primary actions remain.
+      // Bubbles replaced the menu row; the primary actions remain.
       expect(find.text('段评'), findsNothing);
       expect(find.text('目录'), findsOneWidget);
-      expect(find.byTooltip('缓存'), findsOneWidget);
+      // 缓存挪进了顶栏「更多阅读操作」菜单。
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reader-cache')), findsOneWidget);
     });
 
     testWidgets('a failed idea load leaves the reader usable', (tester) async {
@@ -643,9 +693,11 @@ void main() {
       await openControls(tester);
       expect(find.text('段评'), findsNothing);
       expect(tester.takeException(), isNull);
-      // The four primary actions stay available.
+      // The primary actions stay available.
       expect(find.text('目录'), findsOneWidget);
-      expect(find.byTooltip('缓存'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('reader-header-more')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('reader-cache')), findsOneWidget);
     });
 
     testWidgets('refetches ideas for the next chapter', (tester) async {

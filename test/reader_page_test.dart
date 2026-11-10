@@ -1,8 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/chapter_ideas.dart';
@@ -336,7 +336,7 @@ void main() {
       await tester.tap(find.text('目录'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byTooltip('已缓存'), findsNWidgets(3));
+      expect(find.text('已缓存'), findsNWidgets(3));
       await tester.tap(
         find.descendant(of: find.byType(ListTile), matching: find.text('尾声')),
       );
@@ -509,13 +509,25 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('目录 · 3 章'), findsOneWidget);
+    expect(find.text('目录'), findsOneWidget);
     // 目录弹层走阅读设置面板的骨架，配色跟随当前 preset（默认浅色）。
     final frame = tester.widget<ReaderSettingsSheetFrame>(
       find.byType(ReaderSettingsSheetFrame),
     );
     expect(frame.preset, ReaderThemePreset.light);
-    expect(find.byIcon(LucideIcons.search), findsOneWidget);
+    // 上游目录默认收起搜索，点搜索钮才展开输入框。
+    await tester.tap(
+      find.byKey(const ValueKey('reader-catalogue-search-toggle')),
+    );
+    // 搜索框用 AnimatedSize 展开，点清空钮前先等它完全露出。
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('reader-catalogue-search-toggle')),
+        matching: find.byIcon(CupertinoIcons.search),
+      ),
+      findsOneWidget,
+    );
     final selectedTiles = tester
         .widgetList<ListTile>(find.byType(ListTile))
         .where((tile) => tile.selected)
@@ -530,9 +542,11 @@ void main() {
     expect(filteredTiles, hasLength(1));
     expect((filteredTiles.single.title as Text).data, '尾声');
 
-    await tester.tap(find.byTooltip('清空'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('切换为倒序'));
+    // 上游搜索框的清空钮是玻璃图标钮，直接点图标本体。
+    await tester.tap(find.byIcon(CupertinoIcons.xmark_circle_fill));
+    // 清空同样走 200ms 合并；等过滤恢复后再切倒序。
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('reader-catalogue-order')));
     await tester.pump();
 
     final firstChapter = find.descendant(
@@ -566,7 +580,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reader-settings')));
     await tester.pumpAndSettle();
 
-    expect(find.text('阅读设置'), findsOneWidget);
+    // 坞上的「外观」直接进外观分类网格。
+    expect(
+      find.byKey(const ValueKey('reader-settings-category-grid')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

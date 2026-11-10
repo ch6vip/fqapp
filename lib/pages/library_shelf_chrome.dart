@@ -1,314 +1,236 @@
 part of 'library_page.dart';
 
-/// 书架页的页头部分：一级 tab 栏、L2 工具栏 / 收藏筛选行，以及编辑态的
-/// 顶栏与底栏。原来都写在 `library_page.dart` 的状态类里，把那个文件推过
-/// 了行数预算，按职责挪到这里。
+/// 书架页的页头部分：档案 masthead + 搜索 / 导入 / 更多三动作、一级 tab
+/// 分段、L2 工具条，以及编辑态的顶栏与底栏。
 mixin _LibraryShelfChrome on _LibraryPageActions {
-  /// 顶部一级 tab（选中 18sp w600，指示条宽度动画）+ 右侧搜索 / 更多。
-  Widget _tabRow(HomePalette palette) {
-    return Padding(
-      padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceM,
-        bottom: 7,
-        left: ShelfTokens.screenPadding,
+  /// 档案页头：masthead + 搜索 / 导入 / 更多。三个动作在 360dp、1.4x 字号下
+  /// 仍与 masthead 同行（masthead 内部 FittedBox 缩放）。
+  Widget _header(BuildContext context) => Row(
+    children: [
+      const Expanded(
+        child: ArchiveMasthead(title: '书架', code: '01 / LIBRARY ARCHIVE'),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Row(
-              children: [
-                for (var index = 0; index < _tabTitles.length; index++) ...[
-                  if (index > 0) const SizedBox(width: 20),
-                  _TabButton(
-                    label: _tabTitles[index],
-                    selected: _tab == index,
-                    palette: palette,
-                    onTap: () => _selectTab(index),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          _IconAction(
-            key: const Key('library-search-button'),
-            tooltip: '搜索',
-            icon: LucideIcons.search,
-            color: palette.ink,
-            onTap: _openSearch,
-          ),
-          const SizedBox(width: 6),
-          PopupMenuButton<_MenuAction>(
+      GlassIconButton(
+        key: const Key('library-search-button'),
+        icon: CupertinoIcons.search,
+        label: '搜索',
+        onPressed: _openSearch,
+      ),
+      GlassIconButton(
+        key: const Key('library-import-button'),
+        icon: CupertinoIcons.arrow_down_doc,
+        label: '导入图书',
+        onPressed: _importLocalBook,
+      ),
+      GlassMenuAnchor(
+        child: Builder(
+          builder: (anchor) => GlassIconButton(
             key: const Key('library-more-button'),
-            tooltip: '更多',
-            color: palette.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: palette.line, width: 0.6),
-            ),
-            elevation: 4,
-            onSelected: _handleMenu,
-            itemBuilder: (context) => [
-              for (final action in _MenuAction.values)
-                PopupMenuItem(
-                  key: Key('library-menu-${action.name}'),
-                  value: action,
-                  // 当前版式选中时不可再点；清空历史没有数据时也不可点。
-                  enabled: action.layout != null
-                      ? action.layout != _layout
-                      : action == _MenuAction.clearHistory
-                      ? _browseHistory.isNotEmpty
-                      : true,
-                  child: Row(
-                    children: [
-                      Icon(
-                        action.icon,
-                        size: 16,
-                        color: action.layout == _layout
-                            ? palette.muted
-                            : action == _MenuAction.clearHistory
-                            ? ShelfTokens.deleteRed
-                            : palette.ink,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        action.label,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: action.layout == _layout
-                              ? FontWeight.w400
-                              : FontWeight.w500,
-                          color: action.layout == _layout
-                              ? palette.muted
-                              : action == _MenuAction.clearHistory
-                              ? ShelfTokens.deleteRed
-                              : palette.ink,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.only(
-                right: ShelfTokens.screenPadding,
-                left: 6,
-                bottom: 2,
-              ),
-              child: Icon(LucideIcons.ellipsis, size: 22, color: palette.ink),
-            ),
+            icon: CupertinoIcons.ellipsis,
+            label: '更多',
+            onPressed: () => _openMoreMenu(anchor),
           ),
-        ],
+        ),
       ),
-    );
-  }
+    ],
+  );
 
-  /// L2 工具栏（书架 tab）：左今日已读胶囊，右版式分段控件。
-  ///
-  /// 2026-10-13 按用户要求删掉排序 / 筛选 / 编辑三个入口：排序退回固定「最近
-  /// 阅读优先」，类型筛选整个移除，编辑改由卡片长按进入（见 `_longPress`）。
-  /// 页头因此少一行；只剩两个控件，[Row] 即可放下，无需再折行。
-  Widget _toolbar(HomePalette palette) {
+  /// 一级 tab：上游 `WenkuControls.segments` 三段（书架 / 浏览历史 / 收藏）。
+  Widget _tabSegments(BuildContext context) => WenkuControls.segments<int>(
+    context,
+    key: const Key('library-tabs'),
+    groupValue: _tab,
+    children: const {0: Text('书架'), 1: Text('浏览历史'), 2: Text('收藏')},
+    onValueChanged: (value) {
+      if (value != null) _selectTab(value);
+    },
+  );
+
+  /// L2 工具条：分类 / 计数 / 筛选 / 视图。书架 tab 额外带今日已读胶囊；
+  /// 浏览历史不排序不筛来源（design #6），只保留分类；收藏 tab 在工具条
+  /// 下方加 video/manju 类型筛选。
+  Widget _toolbar(int count) => LayoutBuilder(
+    builder: (context, constraints) {
+      final category = ShelfGroupStore.instance.nameOf(_category);
+      final active = _activeFilters;
+      if (_tab == 2) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ShelfToolbar(
+              category: category,
+              count: count,
+              activeFilters: active,
+              onCategory: _openCategorySheet,
+              onFilter: _openFilterSheet,
+              onView: () => _openViewSheet(target: ShelfViewTarget.collection),
+              categoryKey: const Key('shelf-category'),
+              filterKey: const Key('shelf-filter'),
+              viewKey: const Key('shelf-view'),
+            ),
+            const SizedBox(height: 10),
+            _CollectionTypeFilter(
+              selected: _collectionFilter,
+              onChanged: (value) => setState(() => _collectionFilter = value),
+            ),
+            _cacheStatus(),
+          ],
+        );
+      }
+      // 360dp 下今日已读胶囊 + 分类 + 计数 + 筛选 + 视图放不进一行；把胶囊
+      // 移到工具条上方，工具条本身仍保持上游的窄屏计数换行规则。
+      final narrow = constraints.maxWidth < 420;
+      final toolbar = ShelfToolbar(
+        category: category,
+        count: count,
+        activeFilters: active,
+        leading: _tab == 0 && !narrow
+            ? ShelfTodayReadingPill(minutes: _todayMinutes)
+            : null,
+        onCategory: _openCategorySheet,
+        onFilter: _tab == 0 ? _openFilterSheet : null,
+        onView: _tab == 0 ? () => _openViewSheet() : null,
+        showFilter: _tab == 0,
+        showView: _tab == 0,
+        categoryKey: const Key('shelf-category'),
+        filterKey: const Key('shelf-filter'),
+        viewKey: const Key('shelf-view'),
+      );
+      // 浏览历史不筛来源，不需要缓存扫描状态。
+      if (_tab != 0) return toolbar;
+      if (!narrow) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [toolbar, _cacheStatus()],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: ShelfTodayReadingPill(minutes: _todayMinutes),
+          ),
+          const SizedBox(height: 8),
+          toolbar,
+          _cacheStatus(),
+        ],
+      );
+    },
+  );
+
+  /// 离线缓存扫描状态：完成前提示正在检查，失败时说明筛选暂不可用。
+  /// 只有带「来源」筛选的书架 / 收藏 tab 需要它（design §3.5/§7.2）。
+  Widget _cacheStatus() {
+    if (_cacheScanComplete) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceXS,
-        bottom: ShelfTokens.spaceS,
-        left: ShelfTokens.screenPadding,
-        right: ShelfTokens.screenPadding,
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: palette.soft,
-              borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
-              // 与未选中的 HomeChip 同款：常规外观无描边，墨水屏下用一圈
-              // 黑线把白底胶囊从白画布上分出来。
-              border: palette.eink ? Border.all(color: palette.line) : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  LucideIcons.clock,
-                  size: ShelfTokens.iconInline,
-                  color: palette.muted,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  '今日已读$_todayMinutes分钟',
-                  style: TextStyle(
-                    fontSize: ShelfTokens.subtitle,
-                    fontWeight: FontWeight.w500,
-                    color: palette.ink,
-                  ),
-                ),
-              ],
-            ),
+      padding: const EdgeInsets.only(top: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: AppText(
+          _cacheScanFailed ? '离线缓存暂不可用' : '正在检查离线缓存…',
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.4,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
-          const Spacer(),
-          _LayoutSegments(
-            current: _layout,
-            palette: palette,
-            onChanged: _setLayout,
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  /// L2 筛选行（收藏 tab）：全部 / 短剧 / 漫剧胶囊 + 右侧版式分段，
-  /// 形态与书架 tab 工具栏同构。
-  Widget _collectionToolbar(HomePalette palette) {
-    return Padding(
-      padding: const EdgeInsets.only(
-        top: ShelfTokens.spaceXS,
-        bottom: ShelfTokens.spaceS,
-        left: ShelfTokens.screenPadding,
-        right: ShelfTokens.screenPadding,
-      ),
-      child: Row(
-        children: [
-          HomeChip(
-            key: const Key('library-collection-filter-all'),
-            label: '全部',
-            selected: _collectionFilter == null,
-            onTap: () => setState(() => _collectionFilter = null),
+  /// 编辑态顶部操作栏：全选 / 已选择 N 本 / 完成。
+  Widget _editBar(BuildContext context) => SizedBox(
+    height: 56,
+    child: Row(
+      children: [
+        GlassTextButton(
+          key: const Key('shelf-select-all'),
+          compact: true,
+          onPressed: _toggleSelectAll,
+          child: const AppText('全选'),
+        ),
+        Expanded(
+          child: Center(
+            child: AppText(
+              '已选择 ${_selected.length} ${_tab == 2 ? '部' : '本'}',
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
           ),
-          const SizedBox(width: 8),
-          HomeChip(
-            key: const Key('library-collection-filter-video'),
-            label: '短剧',
-            selected: _collectionFilter == 'video',
-            onTap: () => setState(() => _collectionFilter = 'video'),
-          ),
-          const SizedBox(width: 8),
-          HomeChip(
-            key: const Key('library-collection-filter-manju'),
-            label: '漫剧',
-            selected: _collectionFilter == 'manju',
-            onTap: () => setState(() => _collectionFilter = 'manju'),
-          ),
-          const Spacer(),
-          _LayoutSegments(
-            current: _layout,
-            palette: palette,
-            onChanged: _setLayout,
-          ),
-        ],
-      ),
-    );
-  }
+        ),
+        GlassTextButton(
+          key: const Key('shelf-edit-done'),
+          compact: true,
+          onPressed: _exitEdit,
+          child: const AppText('完成'),
+        ),
+      ],
+    ),
+  );
 
-  /// 编辑态顶部操作栏（by1.xml）：全选 / 已选择 N 本 / 完成。
-  Widget _editBar(HomePalette palette) {
-    return Container(
-      height: ShelfTokens.editBarHeight,
-      padding: const EdgeInsets.symmetric(horizontal: ShelfTokens.spaceS),
-      decoration: BoxDecoration(
-        color: palette.canvas,
-        border: Border(bottom: BorderSide(color: palette.line, width: 0.5)),
-      ),
-      child: Row(
-        children: [
-          TextButton(
-            key: const Key('shelf-select-all'),
-            onPressed: _toggleSelectAll,
-            style: TextButton.styleFrom(
-              foregroundColor: palette.ink,
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShelfTokens.spaceM,
-              ),
-            ),
-            child: const Text(
-              '全选',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-            ),
-          ),
-          Expanded(
-            child: Center(
-              child: Text(
-                '已选择 ${_selected.length} ${_tab == 2 ? '部' : '本'}',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: palette.ink,
-                ),
-              ),
-            ),
-          ),
-          TextButton(
-            key: const Key('shelf-edit-done'),
-            onPressed: _exitEdit,
-            style: TextButton.styleFrom(
-              foregroundColor: HomePalette.accent,
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShelfTokens.spaceL,
-              ),
-            ),
-            child: const Text(
-              '完成',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 编辑态底功能栏（amb.xml）：每个条目 24dp 图标 + 11sp 文案。
-  ///
-  /// 官方底栏还有找相似书 / 移动至分组 / 分享为书单 / 加入桌面 / 云同步 /
-  /// 导入图书 / 最近删除，这些本地都没有数据源，不伪造入口；
-  /// 有数据支撑的只有「移出书架」（书架 / 收藏 tab，可撤销故直接执行）与
-  /// 「删除」（浏览历史 tab，不可撤销故保留确认）。
-  Widget _editBottomBar(HomePalette palette) {
+  /// 三个 tab 共用分类归属；移出书架可撤销，删除历史仍需确认。
+  Widget _editBottomBar(BuildContext context) {
     final removing = _tab != 1;
-    return _SlideUp(
-      child: RepaintBoundary(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: palette.surface,
-            border: Border(top: BorderSide(color: palette.line, width: 0.6)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(
-                  alpha: palette.dark ? 0.28 : 0.05,
+    final scheme = Theme.of(context).colorScheme;
+    final style = AppStyleTokens.of(context);
+    return SafeArea(
+      top: false,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border(
+            top: BorderSide(color: scheme.outlineVariant, width: .6),
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: style.pageGutter,
+            vertical: 8,
+          ),
+          child: Wrap(
+            spacing: 16,
+            runSpacing: 8,
+            children: [
+              GlassTextButton(
+                key: const Key('shelf-move-category-action'),
+                compact: true,
+                onPressed: _selected.isEmpty || _assigningCategory
+                    ? null
+                    : _moveToCategory,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ArchiveIcon(CupertinoIcons.folder, size: 20),
+                    SizedBox(width: 8),
+                    AppText('移至分类'),
+                  ],
                 ),
-                blurRadius: 16,
-                offset: const Offset(0, -4),
+              ),
+              GlassTextButton(
+                key: Key(
+                  removing ? 'shelf-remove-action' : 'history-delete-action',
+                ),
+                compact: true,
+                onPressed: _selected.isEmpty || _assigningCategory
+                    ? null
+                    : () {
+                        unawaited(
+                          removing ? _removeFromShelf() : _deleteHistory(),
+                        );
+                      },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ArchiveIcon(
+                      removing ? CupertinoIcons.bookmark : CupertinoIcons.trash,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    AppText(removing ? '移出书架' : '删除'),
+                  ],
+                ),
               ),
             ],
-          ),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: ShelfTokens.spaceL,
-                vertical: ShelfTokens.spaceXS,
-              ),
-              child: Row(
-                children: [
-                  _BottomAction(
-                    key: Key(
-                      removing
-                          ? 'shelf-remove-action'
-                          : 'history-delete-action',
-                    ),
-                    icon: removing ? LucideIcons.bookmark_x : LucideIcons.trash,
-                    label: removing ? '移出书架' : '删除',
-                    color: removing ? palette.ink : ShelfTokens.deleteRed,
-                    onTap: _selected.isEmpty
-                        ? null
-                        : removing
-                        ? _removeFromShelf
-                        : _deleteHistory,
-                  ),
-                  const Spacer(),
-                ],
-              ),
-            ),
           ),
         ),
       ),

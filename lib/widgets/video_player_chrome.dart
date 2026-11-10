@@ -11,6 +11,7 @@ import 'package:lottie/lottie.dart';
 import '../models/audio_extra.dart';
 import '../models/media_item.dart';
 import '../services/episode_source_cache.dart';
+import '../services/haptic_preferences.dart';
 import '../services/native_player.dart';
 import '../services/playback_format.dart';
 import '../services/playback_gesture_levels.dart';
@@ -584,6 +585,14 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       : widget.episodes[widget.currentIndex].title;
   String get _seriesTitle =>
       widget.title.isEmpty ? _episodeTitle : widget.title;
+
+  String get _episodeNumberLabel =>
+      widget.episodes.isNotEmpty &&
+          widget.episodes[widget.currentIndex].hasKnownIndex
+      ? '第${widget.currentIndex + 1}集'
+      : '当前视频';
+
+  bool get _completeCatalogue => hasCompleteEpisodeCatalogue(widget.episodes);
 
   /// 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon`：
   /// `saasVideoData != null && !saasVideoData.isVertical()`。竖屏剧集
@@ -1224,7 +1233,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       return;
     }
     _hideTimer?.cancel();
-    HapticFeedback.lightImpact();
+    if (HapticPreferences.instance.value) {
+      HapticFeedback.lightImpact();
+    }
     setState(() => _boosting = true);
     unawaited(_control((player) => player.setRate(2)));
   }
@@ -3825,7 +3836,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                   : Text(
                       // 官方播放页顶栏标题就是「第1集」这样的集数（截图），
                       // 剧名在底部信息层。
-                      '第${widget.currentIndex + 1}集',
+                      _episodeNumberLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -3852,7 +3863,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
     final total = widget.episodes.length;
     final status = widget.seriesStatus;
     final meta = [
-      if (total > 1) '全$total集',
+      if (_completeCatalogue && total > 1) '全$total集',
       if (status != null && status.isNotEmpty) status,
     ].join(' · ');
     return Column(
@@ -3860,7 +3871,7 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '$_seriesTitle｜第${widget.currentIndex + 1}集',
+          '$_seriesTitle｜$_episodeNumberLabel',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -4305,7 +4316,9 @@ class _VideoPlayerChromeState extends State<VideoPlayerChrome>
                 ),
                 Expanded(
                   child: Text(
-                    widget.seriesStatus == null
+                    !_completeCatalogue
+                        ? ' · 完整目录暂不可用'
+                        : widget.seriesStatus == null
                         ? ' · 全${widget.episodes.length}集'
                         : ' · ${widget.seriesStatus} · 全${widget.episodes.length}集',
                     maxLines: 1,

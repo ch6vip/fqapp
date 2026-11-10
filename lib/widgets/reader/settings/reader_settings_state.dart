@@ -7,8 +7,9 @@ import '../../../services/reader_preferences.dart';
 /// 阅读设置面板共用的编辑状态。
 ///
 /// 阅读页每次收到新的排版都会同步重排整章；滑块每帧 `onChanged` 都往上传
-/// 会掉帧。这里让面板自己的控件即时更新，向阅读页的写入按 120ms 尾随合并，
-/// 松手（[flushPreferences]）与面板销毁时把最后一次值补发出去。
+/// 会掉帧。这里让面板自己的控件即时更新，向阅读页每 120ms 合并一次，
+/// 持续拖动也能预览，而非尾随防抖一直等到停手；松手（[flushPreferences]）
+/// 与面板销毁时把最后一次值补发出去。
 abstract class ReaderSettingsState<T extends StatefulWidget> extends State<T> {
   ReaderPreferences get initialPreferences;
 
@@ -20,11 +21,10 @@ abstract class ReaderSettingsState<T extends StatefulWidget> extends State<T> {
   bool _pending = false;
 
   /// 面板内改动：立即刷新自身，稍后合并通知阅读页。
-  void updatePreferences(ReaderPreferences next) {
+  void commitPreferences(ReaderPreferences next) {
     setState(() => value = next.normalized());
     _pending = true;
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 120), flushPreferences);
+    _debounce ??= Timer(const Duration(milliseconds: 120), flushPreferences);
   }
 
   /// 只同步本地值（子面板已经负责通知阅读页），不再触发二次通知。

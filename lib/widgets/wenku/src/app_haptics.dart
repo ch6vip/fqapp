@@ -4,8 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../../services/haptic_preferences.dart';
+
 /// Interaction cues retain the upstream meaning; fqapp uses Flutter's native
-/// presets instead of importing the upstream persisted haptic settings.
+/// presets and its own app-wide preference instead of upstream settings.
 enum HapticCue {
   selection,
   shelfStep,
@@ -56,6 +58,7 @@ abstract final class AppHaptics {
   static final _gate = HapticGate();
 
   static void play(BuildContext context, HapticCue? cue) {
+    if (!HapticPreferences.instance.value) return;
     if (cue == null || !context.mounted || kIsWeb) return;
     if (defaultTargetPlatform != TargetPlatform.android &&
         defaultTargetPlatform != TargetPlatform.iOS) {
@@ -85,4 +88,41 @@ abstract final class AppHaptics {
       // Optional tactile feedback never interrupts the accepted action.
     }
   }
+}
+
+/// Only an explicit barrier dismissal clicks. Route transitions, timer closes
+/// and buttons inside a dialog retain their own feedback owner.
+mixin AppHapticModalBarrier<T> on ModalRoute<T> {
+  @override
+  Widget buildModalBarrier() => Builder(
+    builder: (context) {
+      void dismiss() {
+        if (!isCurrent || !barrierDismissible) return;
+        AppHaptics.play(context, HapticCue.action);
+        navigator?.maybePop();
+      }
+
+      final color = barrierColor;
+      if (color != null && color.a != 0 && !offstage) {
+        return AnimatedModalBarrier(
+          color: animation!.drive(
+            ColorTween(
+              begin: color.withValues(alpha: 0),
+              end: color,
+            ).chain(CurveTween(curve: barrierCurve)),
+          ),
+          dismissible: barrierDismissible,
+          semanticsLabel: barrierLabel,
+          barrierSemanticsDismissible: semanticsDismissible,
+          onDismiss: dismiss,
+        );
+      }
+      return ModalBarrier(
+        dismissible: barrierDismissible,
+        semanticsLabel: barrierLabel,
+        barrierSemanticsDismissible: semanticsDismissible,
+        onDismiss: dismiss,
+      );
+    },
+  );
 }
