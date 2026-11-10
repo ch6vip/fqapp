@@ -27,6 +27,7 @@ pub mod endpoints;
 pub mod error;
 pub mod filter;
 pub mod json;
+mod network;
 pub mod server;
 pub mod sign;
 pub mod static_files;
@@ -34,6 +35,9 @@ pub mod timeutil;
 pub mod upstream;
 
 mod frb_generated;
+
+#[cfg(test)]
+mod network_proxy_tests;
 
 #[cfg(target_os = "windows")]
 mod desktop_fetch;

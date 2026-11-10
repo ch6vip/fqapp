@@ -61,6 +61,9 @@ jobs:
           test/desktop_detail_layout_test.dart test/desktop_platform_test.dart
           test/desktop_video_layout_test.dart test/player_page_test.dart
           test/book_open_entry_test.dart
+          test/backend_service_test.dart test/network_proxy_preferences_test.dart
+          test/local_proxy_discovery_test.dart test/core_proxy_settings_panel_test.dart
+          test/proxy_startup_recovery_test.dart
       - name: Restore matching release binaries
         id: bundle-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -72,6 +75,12 @@ jobs:
       - name: Build Windows release
         if: steps.bundle-cache.outputs.cache-hit != 'true'
         run: flutter build windows --release --target lib/main.dart
+      - name: Verify Windows core proxy over real FFI
+        shell: pwsh
+        run: |
+          $env:FQAPP_RUST_HOST_LIB = (Resolve-Path 'rust/target/release/fqapi_core.dll').Path
+          flutter test --no-pub test/rust_host_integration_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Windows core proxy FFI tests failed' }
       - name: Save verified-source release binaries
         if: steps.bundle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
