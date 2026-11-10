@@ -59,9 +59,77 @@ pub struct DevInfo {
     pub user_agent: String,
 }
 
+/// Process-wide holder for the upstream identity.
+///
+/// It lives here rather than being threaded through every constructor because
+/// it is genuinely process-wide: one app version and one UA, no matter which
+/// device slot registers.
+///
+/// Publishing happens on every `init_core`: `BackendService.restartForListenMode`
+/// stops and starts the core in the same process, and a config edit has to win
+/// there too. A plain `OnceLock` would silently keep the first identity — the
+/// bug this holder exists to avoid. A `RwLock` also keeps "read before any init"
+/// from pinning the defaults for the rest of the process.
+struct IdentityCell {
+    slot: std::sync::RwLock<Option<crate::config::UpstreamIdentity>>,
+}
+
+impl IdentityCell {
+    const fn new() -> Self {
+        Self {
+            slot: std::sync::RwLock::new(None),
+        }
+    }
+
+    fn publish(&self, identity: crate::config::UpstreamIdentity) {
+        // The write guard only formats nothing and stores a clone, so poisoning
+        // is unreachable in practice; if it ever happened, keeping the previous
+        // identity is the least surprising outcome.
+        if let Ok(mut slot) = self.slot.write() {
+            *slot = Some(identity.resolved());
+        }
+    }
+
+    fn current(&self) -> crate::config::UpstreamIdentity {
+        self.slot
+            .read()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .unwrap_or_else(|| crate::config::UpstreamIdentity::default().resolved())
+    }
+}
+
+static IDENTITY: IdentityCell = IdentityCell::new();
+
+pub fn set_upstream_identity(identity: crate::config::UpstreamIdentity) {
+    IDENTITY.publish(identity);
+}
+
+/// The version code devices are currently registered with.
+///
+/// The pool records this per device so a changed identity can retire the
+/// devices that were registered under the old one.
+///
+/// This is never empty: an identity that names no version resolves to the
+/// built-in default, which is exactly the version code a device registers
+/// with when the upstream section is absent. So "no upstream configured" and
+/// "the default version" are the same thing here, and the pool compares
+/// against the default rather than skipping the comparison.
+pub fn current_version_code() -> String {
+    IDENTITY.current().version_code
+}
+
 pub fn new_dev_info() -> DevInfo {
+    dev_info_with(&IDENTITY.current())
+}
+
+/// Build the device identity from explicitly supplied upstream parameters.
+///
+/// Split out from [`new_dev_info`] so tests can exercise the substitution rules
+/// without mutating the process-wide cell.
+pub fn dev_info_with(identity: &crate::config::UpstreamIdentity) -> DevInfo {
+    let identity = identity.resolved();
     let openudid = random_hex_lower(16);
-    let version_name = "6.5.1.32".to_string();
     let mut di = DevInfo {
         device_type: "MI 12".into(),
         os_api: "29".into(),
@@ -76,19 +144,35 @@ pub fn new_dev_info() -> DevInfo {
         rom_version: String::new(),
         device_brand: "Xiaomi".into(),
         channel: "xiaomi_1967_64".into(),
-        version_code: "65132".into(),
-        version_name,
-        manifest_version_code: "65132".into(),
-        update_version_code: "65132".into(),
+        version_code: identity.version_code.clone(),
+        version_name: identity.version_name.clone(),
+        manifest_version_code: identity.manifest_version_code.clone(),
+        update_version_code: identity.update_version_code.clone(),
         user_agent: String::new(),
     };
     di.rom = format!("EMUI-{}", String::from_utf8_lossy(&random_alnum(13)));
     di.rom_version = String::from_utf8_lossy(&random_alnum(2)).into_owned();
     let tt_net = "TTNetVersion:9ac8d95c 2024-11-25 QuicVersion:3f326df4 2024-11-14";
-    di.user_agent = format!(
-        "com.dragon.read/{} (Linux; U; Android {}; zh_CN; {}; Build/MMB29M; Cronet/{})",
-        di.manifest_version_code, di.os_version, di.device_type, tt_net
-    );
+    di.user_agent = if identity.user_agent.is_empty() {
+        format!(
+            "com.dragon.read/{} (Linux; U; Android {}; zh_CN; {}; Build/MMB29M; Cronet/{})",
+            di.manifest_version_code, di.os_version, di.device_type, tt_net
+        )
+    } else {
+        identity
+            .user_agent
+            // The longer placeholder goes first: `{manifest_version_code}`
+            // contains `{version_code}`, and replacing the short one first would
+            // leave `{manifest_65132}` behind.
+            .replace("{manifest_version_code}", &di.manifest_version_code)
+            // `{version_code}` is an alias for `{manifest_version_code}`: the
+            // user agent has always carried the manifest code, and after the
+            // consistency rule in `UpstreamIdentity::resolved` the two are the
+            // same value unless the manifest code was configured explicitly.
+            .replace("{version_code}", &di.manifest_version_code)
+            .replace("{os_version}", &di.os_version)
+            .replace("{device_type}", &di.device_type)
+    };
     di
 }
 
@@ -228,6 +312,9 @@ impl Registrar {
             use_count: 0,
             cdid: di.cdid,
             openudid: di.openudid,
+            // The version this device was registered with. A later identity
+            // change retires the device instead of handing it out.
+            registered_version_code: di.version_code.clone(),
         })
     }
 
@@ -559,4 +646,132 @@ fn pick_str(v: &Value, keys: &[&str]) -> String {
 fn body_head(bytes: &[u8]) -> String {
     let head = &bytes[..bytes.len().min(256)];
     String::from_utf8_lossy(head).into_owned()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::config::UpstreamIdentity;
+
+    /// An empty section must reproduce the constants that used to be inline,
+    /// otherwise every device registered after this change looks new upstream.
+    #[test]
+    fn empty_identity_keeps_the_previous_constants() {
+        let di = dev_info_with(&UpstreamIdentity::default());
+        assert_eq!(di.version_name, "6.5.1.32");
+        assert_eq!(di.version_code, "65132");
+        assert_eq!(di.manifest_version_code, "65132");
+        assert_eq!(di.update_version_code, "65132");
+        assert!(
+            di.user_agent.starts_with(
+                "com.dragon.read/65132 (Linux; U; Android 10; zh_CN; MI 12; Build/MMB29M; Cronet/"
+            ),
+            "got {}",
+            di.user_agent
+        );
+    }
+
+    #[test]
+    fn configured_parameters_reach_every_version_field() {
+        let identity = UpstreamIdentity {
+            version_name: "7.1.3.32".into(),
+            version_code: "71332".into(),
+            manifest_version_code: "71332".into(),
+            update_version_code: "71332".into(),
+            user_agent: String::new(),
+        };
+        let di = dev_info_with(&identity);
+        assert_eq!(di.version_name, "7.1.3.32");
+        assert_eq!(di.version_code, "71332");
+        assert!(
+            di.user_agent.starts_with("com.dragon.read/71332 "),
+            "got {}",
+            di.user_agent
+        );
+    }
+
+    #[test]
+    fn a_ua_override_substitutes_placeholders_and_keeps_other_defaults() {
+        let identity = UpstreamIdentity {
+            user_agent:
+                "com.phoenix.read/{version_code} (Linux; U; Android {os_version}; {device_type})"
+                    .into(),
+            ..UpstreamIdentity::default()
+        };
+        let di = dev_info_with(&identity);
+        assert_eq!(
+            di.user_agent,
+            "com.phoenix.read/65132 (Linux; U; Android 10; MI 12)"
+        );
+        assert_eq!(
+            di.version_name, "6.5.1.32",
+            "the other fields still fall back"
+        );
+    }
+
+    /// `{version_code}` is a suffix of `{manifest_version_code}`: substituting
+    /// the short one first would leave `{manifest_900}` in the header.
+    ///
+    /// `{version_code}` is an alias for `{manifest_version_code}`, so both
+    /// placeholders carry the manifest code. The two codes only differ when
+    /// the manifest code was configured explicitly, which is what this case
+    /// does.
+    #[test]
+    fn the_long_placeholder_survives_the_short_alias() {
+        let identity = UpstreamIdentity {
+            user_agent: "ua/{version_code}|{manifest_version_code}|{os_version}|{device_type}"
+                .into(),
+            version_code: "900".into(),
+            manifest_version_code: "800".into(),
+            ..UpstreamIdentity::default()
+        };
+        let di = dev_info_with(&identity);
+        assert_eq!(di.user_agent, "ua/800|800|10|MI 12");
+    }
+
+    /// Configuring one version code moves the whole release: the registration
+    /// header must not carry a new code next to the old manifest code.
+    #[test]
+    fn a_configured_version_code_moves_every_code() {
+        let identity = UpstreamIdentity {
+            version_code: "71332".into(),
+            ..UpstreamIdentity::default()
+        };
+        let di = dev_info_with(&identity);
+        assert_eq!(di.version_code, "71332");
+        assert_eq!(di.manifest_version_code, "71332");
+        assert_eq!(di.update_version_code, "71332");
+        assert!(
+            di.user_agent.starts_with("com.dragon.read/71332 "),
+            "got {}",
+            di.user_agent
+        );
+    }
+
+    /// A stop/start pair in one process (`restartForListenMode`) reloads the
+    /// config, so the second publication must win. A `OnceLock` kept the first one
+    /// silently. This drives a local cell rather than the process-wide one: the
+    /// `api::tests` init cores concurrently, and touching the global here would
+    /// make this case race them for no benefit.
+    #[test]
+    fn the_identity_can_be_republished_for_a_restart() {
+        let cell = IdentityCell::new();
+        assert_eq!(
+            cell.current().version_name,
+            "6.5.1.32",
+            "an unset cell reads as the defaults"
+        );
+
+        cell.publish(UpstreamIdentity {
+            version_name: "1.0.0".into(),
+            ..UpstreamIdentity::default()
+        });
+        assert_eq!(cell.current().version_name, "1.0.0");
+
+        cell.publish(UpstreamIdentity {
+            version_name: "2.0.0".into(),
+            ..UpstreamIdentity::default()
+        });
+        assert_eq!(cell.current().version_name, "2.0.0");
+    }
 }
