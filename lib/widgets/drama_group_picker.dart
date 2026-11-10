@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import 'app_dropdown.dart';
 import 'home/home_chip.dart';
 import 'home/home_design.dart';
 
@@ -73,25 +74,22 @@ class DramaGroupPicker extends StatelessWidget {
             icon: const Icon(LucideIcons.chevron_left),
           ),
           Expanded(
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<int>(
-                key: const ValueKey('download-group-picker'),
-                value: group,
-                isExpanded: true,
-                borderRadius: BorderRadius.circular(12),
-                style: TextStyle(fontSize: 13, color: palette.ink),
-                onChanged: (value) {
-                  if (value != null) onSelected(value);
-                },
-                items: [
-                  for (var index = 0; index < groupCount; index++)
-                    DropdownMenuItem<int>(
-                      key: ValueKey('download-group-item-$index'),
-                      value: index,
-                      child: Text(_rangeLabel(index)),
-                    ),
-                ],
-              ),
+            child: AppDropdown<int>(
+              key: const ValueKey('download-group-picker'),
+              value: group,
+              isExpanded: true,
+              style: TextStyle(fontSize: 13, color: palette.ink),
+              onChanged: (value) {
+                if (value != null) onSelected(value);
+              },
+              items: [
+                for (var index = 0; index < groupCount; index++)
+                  AppDropdownItem(
+                    key: ValueKey('download-group-item-$index'),
+                    value: index,
+                    label: _rangeLabel(index),
+                  ),
+              ],
             ),
           ),
           IconButton(
