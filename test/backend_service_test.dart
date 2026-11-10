@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:fqapp/services/network_proxy_preferences.dart';
 import 'package:fqapp/services/backend_service.dart';
 import 'package:fqapp/services/backend_transport.dart';
 
@@ -36,6 +39,7 @@ void main() {
   }
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     directory = await Directory.systemTemp.createTemp('fqapp_backend_test_');
   });
 
@@ -87,50 +91,52 @@ void main() {
   );
 
   test('startup times out when the health endpoint never turns 200', () async {
-    final transport = _FakeRustTransport(healthy: false);
-    final backend = createBackend(
-      transport: transport,
-      timeout: const Duration(milliseconds: 200),
-    );
-
-    await expectLater(
-      backend.start().timeout(const Duration(seconds: 3)),
-      throwsStateError,
-    );
-    expect(backend.isRunning, isFalse);
-    expect(transport.healthChecks, greaterThan(0));
+    await _withControlledTimers((clock) async {
+      final transport = _FakeRustTransport(healthy: false);
+      final backend = createBackend(
+        transport: transport,
+        timeout: const Duration(seconds: 30),
+      );
+      final failure = expectLater(backend.start(), throwsStateError);
+      await transport.healthEntered.future;
+      clock.elapse(const Duration(seconds: 30));
+      await failure;
+      expect(backend.isRunning, isFalse);
+      expect(transport.healthChecks, greaterThan(0));
+    });
   });
 
   test(
     'a hung core initialization fails by the startup timeout and retries',
     () async {
-      final transport = _FakeRustTransport(blockInit: true);
-      final backend = createBackend(
-        transport: transport,
-        timeout: const Duration(seconds: 1),
-      );
-
-      // rustTransport.start() itself has no deadline of its own: a native init
-      // that never returns must still fail the launch instead of spinning.
-      await expectLater(
-        backend.start().timeout(const Duration(seconds: 5)),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message.toString(),
-            'message',
-            contains('timeout'),
+      await _withControlledTimers((clock) async {
+        final transport = _FakeRustTransport(blockInit: true);
+        final backend = createBackend(
+          transport: transport,
+          timeout: const Duration(seconds: 30),
+        );
+        final failure = expectLater(
+          backend.start(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message.toString(),
+              'message',
+              contains('timeout'),
+            ),
           ),
-        ),
-      );
-      expect(backend.isRunning, isFalse);
-      expect(transport.initCalls, 1);
+        );
+        await transport.initEntered.future;
+        clock.elapse(const Duration(seconds: 30));
+        await failure;
+        expect(backend.isRunning, isFalse);
+        expect(transport.initCalls, 1);
 
-      // The timed-out attempt must not wedge startup: the next one can succeed.
-      transport.allowInit.complete();
-      await backend.start();
-      expect(backend.isRunning, isTrue);
-      expect(transport.initCalls, 2);
-      await backend.stop();
+        transport.allowInit.complete();
+        await backend.start();
+        expect(backend.isRunning, isTrue);
+        expect(transport.initCalls, 2);
+        await backend.stop();
+      });
     },
   );
 
@@ -236,6 +242,36 @@ void main() {
     await backend.stop();
   });
 
+  test(
+    'startup and restart apply the platform routing policy without losing config',
+    () async {
+      final backend = createBackend();
+      await backend.start();
+      final file = File('${directory.path}/backend/config/config.json');
+      Map<String, dynamic> deployed() =>
+          jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      expect(deployed()['network_proxy'], {'enabled': false, 'url': ''});
+      await NetworkProxyPreferences.instance.save(
+        const NetworkProxyConfig(enabled: true, url: 'http://127.0.0.1:7890'),
+      );
+      await backend.restartForConfiguration();
+      if (Platform.isWindows) {
+        expect(deployed()['network_proxy'], {
+          'enabled': true,
+          'url': 'http://127.0.0.1:7890',
+        });
+      } else {
+        // The proxy setting belongs to the Windows client. Other hosts keep
+        // ignoring even a saved value, rather than activating a mobile feature.
+        expect(deployed()['network_proxy'], {'enabled': false, 'url': ''});
+      }
+      expect(deployed()['port'], 18921);
+      await NetworkProxyPreferences.instance.save(const NetworkProxyConfig());
+      await backend.restartForConfiguration();
+      expect(deployed()['network_proxy'], {'enabled': false, 'url': ''});
+    },
+  );
+
   test('a config.json without a usable port leaves the core default', () async {
     final transport = _FakeRustTransport();
     final assets = _BackendAssets(configPort: null);
@@ -245,6 +281,19 @@ void main() {
     expect(transport.listenPort, isNull);
     await backend.stop();
   });
+}
+
+/// Advance deadlines only after the intended stage is reached. Real file I/O
+/// and its microtasks stay in the real zone, so disk speed cannot win the timer.
+Future<void> _withControlledTimers(Future<void> Function(FakeAsync) body) {
+  final clock = FakeAsync();
+  return runZoned(
+    () => body(clock),
+    zoneSpecification: ZoneSpecification(
+      createTimer: (self, parent, zone, duration, callback) =>
+          clock.run((_) => Timer(duration, zone.bindCallbackGuarded(callback))),
+    ),
+  );
 }
 
 /// A [RustBackendTransport] with the FFI calls replaced by counters, so the
@@ -275,6 +324,8 @@ class _FakeRustTransport extends RustBackendTransport {
   int? listenPort;
   bool lanShare = false;
 
+  final initEntered = Completer<void>();
+  final healthEntered = Completer<void>();
   final stopEntered = Completer<void>();
   final allowStop = Completer<void>();
   final allowInit = Completer<void>();
@@ -292,6 +343,7 @@ class _FakeRustTransport extends RustBackendTransport {
     bool lanShare = false,
   }) async {
     initCalls += 1;
+    if (!initEntered.isCompleted) initEntered.complete();
     this.configPath = configPath;
     this.poolPath = poolPath;
     this.filterPath = filterPath;
@@ -324,6 +376,7 @@ class _FakeRustTransport extends RustBackendTransport {
   }) async {
     if (url.path == '/health') {
       healthChecks += 1;
+      if (!healthEntered.isCompleted) healthEntered.complete();
       if (!healthy) throw const SocketException('backend down');
       return BackendResponse(200, Uint8List(0), 'application/json');
     }

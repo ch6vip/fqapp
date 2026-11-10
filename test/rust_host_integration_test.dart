@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/backend_service.dart';
+import 'package:fqapp/services/network_proxy_preferences.dart';
 import 'package:fqapp/services/backend_transport.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/src/rust/api.dart' as rust;
@@ -52,6 +54,7 @@ String pooledDevicesJson() => jsonEncode({
 });
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final libraryPath = hostLibraryPath();
   final skipReason = File(libraryPath).existsSync()
       ? null
@@ -92,6 +95,7 @@ void main() {
   });
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     root = Directory.systemTemp.createTempSync('fqapp-rust-host-');
     Directory('${root.path}/config').createSync(recursive: true);
     Directory('${root.path}/src').createSync(recursive: true);
@@ -345,6 +349,55 @@ void main() {
     expect(source.url, 'https://example.invalid/legacy.mp4');
     expect(source.keyHex, isEmpty);
   }, skip: skipReason);
+
+  test(
+    'persisted proxy respects the host platform and restart restores direct mode',
+    () async {
+      final proxy = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final proxied = <Uri>[];
+      proxy.listen((request) async {
+        proxied.add(request.uri);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('{"code":0,"data":{"search_tabs":[]}}');
+        await request.response.close();
+      });
+      final backend = BackendService(
+        assets: _HostAssets(pooledDevicesJson()),
+        supportDirectory: () async => root,
+        transport: RustBackendTransport(mockUpstreamOrigin: mockOrigin),
+        startupTimeout: const Duration(seconds: 10),
+      );
+      addTearDown(() async {
+        await backend.stop();
+        await proxy.close(force: true);
+      });
+      await NetworkProxyPreferences.instance.save(
+        NetworkProxyConfig(
+          enabled: true,
+          url: 'http://127.0.0.1:${proxy.port}',
+        ),
+      );
+      await backend.start();
+      final api = ApiClient(transport: backend.transport);
+      expect(await api.health(), isTrue);
+      await api.search('proxy');
+      if (Platform.isWindows) {
+        expect(proxied, isNotEmpty);
+        expect(mockRequests, isEmpty);
+      } else {
+        expect(proxied, isEmpty);
+        expect(mockRequests, isNotEmpty);
+      }
+      final directCount = mockRequests.length;
+      final proxyCount = proxied.length;
+      await NetworkProxyPreferences.instance.save(const NetworkProxyConfig());
+      await backend.restartForConfiguration();
+      await api.search('direct');
+      expect(proxied.length, proxyCount);
+      expect(mockRequests.length, greaterThan(directCount));
+    },
+    skip: skipReason,
+  );
 
   test('BackendService and ApiClient work end to end over the real core',
       () async {
