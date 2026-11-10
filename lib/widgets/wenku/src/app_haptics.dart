@@ -4,8 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../../services/haptic_preferences.dart';
+
 /// Interaction cues retain the upstream meaning; fqapp uses Flutter's native
-/// presets instead of importing the upstream persisted haptic settings.
+/// presets and its own app-wide preference instead of upstream settings.
 enum HapticCue {
   selection,
   shelfStep,
@@ -56,6 +58,7 @@ abstract final class AppHaptics {
   static final _gate = HapticGate();
 
   static void play(BuildContext context, HapticCue? cue) {
+    if (!HapticPreferences.instance.value) return;
     if (cue == null || !context.mounted || kIsWeb) return;
     if (defaultTargetPlatform != TargetPlatform.android &&
         defaultTargetPlatform != TargetPlatform.iOS) {
