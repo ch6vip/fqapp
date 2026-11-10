@@ -122,6 +122,7 @@ void main() {
     mockChannel(tester);
     await pumpPage(tester);
 
+    // The help card sits below the fold; the list builds lazily.
     await tester.scrollUntilVisible(
       find.text('备份包含哪些内容？'),
       200,

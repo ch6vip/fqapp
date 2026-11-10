@@ -2,12 +2,15 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/app_style_tokens.dart';
+import '../app_ui/app_ui_scope.dart';
+import '../settings/settings_widgets.dart';
 
 import 'src/app_text.dart';
 import 'wenku_archive.dart';
 import 'wenku_glass.dart';
 import 'wenku_icons.dart';
 
+/// Archive feature page: milk paper, address code and the glass back affordance.
 class ArchiveFeaturePage extends StatelessWidget {
   const ArchiveFeaturePage({
     super.key,
@@ -39,14 +42,143 @@ class ArchiveFeaturePage extends StatelessWidget {
   );
 }
 
-EdgeInsets featurePadding(BuildContext context) => EdgeInsets.fromLTRB(
-  AppStyleTokens.of(context).pageGutter,
-  MediaQuery.paddingOf(context).top +
-      FrostedHeader.toolbarHeight +
-      (AppStyleTokens.of(context).isClassic ? 12 : 20),
-  AppStyleTokens.of(context).pageGutter,
-  MediaQuery.paddingOf(context).bottom + 32,
-);
+/// Classic feature page: the original settings-style shell (canvas AppBar, no
+/// archive masthead/code/backdrop) around the same business body.
+///
+/// The back affordance follows the nearest Navigator: a single embedded route
+/// (the Windows two-pane settings Navigator) keeps its content instead of
+/// popping itself blank.
+///
+/// The body extends behind the opaque AppBar on purpose: pages still use
+/// [featurePadding]'s archive header clearance, which then lands one gutter
+/// below the AppBar instead of being counted twice. A page that brings its own
+/// zero top inset must start below the AppBar itself.
+class ClassicFeaturePage extends StatelessWidget {
+  const ClassicFeaturePage({
+    super.key,
+    required this.title,
+    required this.child,
+    this.actions = const [],
+    this.bottomNavigationBar,
+  });
+
+  final String title;
+  final Widget child;
+  final List<Widget> actions;
+
+  /// Fixed action bar for pages whose pre-#291 layout pinned its primary
+  /// action (text replacement, backup, 番茄 import). The archive presentation
+  /// keeps those actions inside the page instead.
+  final Widget? bottomNavigationBar;
+
+  @override
+  Widget build(BuildContext context) => SettingsScaffold(
+    title: title,
+    actions: actions.isEmpty ? null : actions,
+    bottomNavigationBar: bottomNavigationBar,
+    // A single embedded route must not offer a back affordance that would pop
+    // the only page blank (Windows two-pane settings).
+    showBack: Navigator.of(context).canPop(),
+    // Pages migrated later still use featurePadding's archive header
+    // clearance; extending behind the opaque AppBar keeps that clearance from
+    // being counted twice (first row stays 12dp below the AppBar).
+    extendBodyBehindAppBar: true,
+    body: child,
+  );
+}
+
+/// Selects the shared business page's chrome for the live style.
+///
+/// The page content keeps one element (and State) across the shell switch: the
+/// state holds a stable [GlobalKey] above the shell branch, so an open draft,
+/// focus or scroll position is not re-inflated with the new header.
+class AppFeaturePage extends StatefulWidget {
+  const AppFeaturePage({
+    super.key,
+    required this.title,
+    required this.code,
+    required this.child,
+    this.actions = const [],
+    this.canPop,
+  });
+
+  final String title;
+  final String code;
+  final Widget child;
+  final List<Widget> actions;
+
+  /// Archive shell override; the classic shell derives this from the nearest
+  /// Navigator (see [ClassicFeaturePage]).
+  final bool? canPop;
+
+  @override
+  State<AppFeaturePage> createState() => _AppFeaturePageState();
+}
+
+class _AppFeaturePageState extends State<AppFeaturePage> {
+  /// Owned above the shell branch: the child's Element moves between shells
+  /// instead of being recreated.
+  final _contentKey = GlobalKey(debugLabel: 'app-feature-content');
+
+  @override
+  Widget build(BuildContext context) {
+    final content = KeyedSubtree(key: _contentKey, child: widget.child);
+    if (AppUiScope.isClassic(context)) {
+      return ClassicFeaturePage(
+        title: widget.title,
+        actions: widget.actions,
+        child: content,
+      );
+    }
+    return ArchiveFeaturePage(
+      title: widget.title,
+      code: widget.code,
+      actions: widget.actions,
+      canPop: widget.canPop ?? Navigator.of(context).canPop(),
+      child: content,
+    );
+  }
+}
+
+/// Clearance for the floating archive header used by `WenkuPage` /
+/// `ArchiveFeaturePage`: status bar + toolbar height + the style's extra gap.
+///
+/// [ClassicFeaturePage] extends its body behind the opaque AppBar, so a page
+/// that keeps using this padding lands 12dp below the classic AppBar instead
+/// of reserving the header height twice.
+///
+/// The gutter and gap come from the **discrete** style when [AppUiScope] is
+/// above the page, not from the interpolated `AppStyleTokens` the animated
+/// theme reports mid-transition: a padding that lerps would move the whole
+/// list while a style switch is animating, and a scroll anchor restored at the
+/// start of that animation would end up a few pixels off.
+EdgeInsets featurePadding(BuildContext context) {
+  final tokens = AppUiScope.isAvailable(context)
+      ? AppUiScope.presentationOf(context).tokens
+      : AppStyleTokens.of(context);
+  return EdgeInsets.fromLTRB(
+    tokens.pageGutter,
+    MediaQuery.paddingOf(context).top +
+        FrostedHeader.toolbarHeight +
+        (tokens.isClassic ? 12 : 20),
+    tokens.pageGutter,
+    MediaQuery.paddingOf(context).bottom + 32,
+  );
+}
+
+/// Height of the floating archive header that is painted *over* the page body
+/// (`WenkuPage` / `ArchiveFeaturePage`): status bar + glass toolbar.
+///
+/// The scroll viewport starts at the very top of the screen in those shells, so
+/// this is the distance from its top edge to the first row that is not under
+/// the glass bar. Content anchors use it instead of the raw viewport edge; the
+/// classic shell puts its Material AppBar above the body, where the inset is 0.
+double archiveChromeInset(BuildContext context) {
+  final padding = MediaQuery.paddingOf(context);
+  final viewPadding = MediaQuery.viewPaddingOf(context);
+  final status = padding.top > viewPadding.top ? padding.top : viewPadding.top;
+  return status + FrostedHeader.toolbarHeight;
+}
 
 class FeatureEntry extends StatelessWidget {
   const FeatureEntry({

@@ -6,19 +6,28 @@ import 'package:flutter/material.dart';
 import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
+import '../services/app_theme_style.dart';
 import '../services/library_store.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/app_ui/content_anchor.dart';
 import '../widgets/detail/detail_archive.dart';
 import '../widgets/detail/detail_states.dart';
+import '../widgets/detail/detail_style.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'reader_page.dart';
 
+part 'detail/shuqi_detail_classic.dart';
+
 /// 书旗书籍详情 + 目录。
 ///
-/// 页面版式来自上游 `DetailPage`（revision ebcd7f1）：磨砂头栏、档案分区、
-/// 行内目录和底部玻璃操作坞。书旗只读取上游内容，支持加入本机书架，但不写阅读
-/// 历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过番茄那套目录同步与
-/// 磁盘缓存；阅读器内部的进度/阅读时长写入则靠注入 [_ReadOnlyReaderStore]
+/// 档案主题沿用上游 `DetailPage`（revision ebcd7f1）：磨砂头栏、档案分区、
+/// 行内目录和底部玻璃操作坞；经典主题走 `detail/shuqi_detail_classic.dart`
+/// 的旧版式（Material AppBar、封面头部、简介与目录行），两者共用同一个
+/// `_ShuqiDetailPageState` 和同一批 loader。书旗只读取上游内容，支持加入本机
+/// 书架，但不写阅读历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过
+/// 番茄那套目录同步与磁盘缓存；进度/阅读时长写入靠 [_ReadOnlyReaderStore]
 /// 丢弃。
 ///
 /// 书旗 bookId 与番茄同为纯数字，所以在阅读器里加 `shuqi:` 前缀，避免两套 id
@@ -57,10 +66,51 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
   bool _tocLoading = true;
   String? _tocError;
 
+  /// Both layouts read the same chapter list, so one controller serves the
+  /// classic and the archive body.
+  final _scroll = ScrollController();
+
+  /// 经典 ⇄ 档案换的是两棵不同的树：ScrollPosition 会重建，必须按内容 ID
+  /// 恢复位置，而不是靠同一个 controller 的初始偏移。深章节在切换后通常还
+  /// 没被懒列表构建，靠 [_anchorIndexOf] 先定位到它附近，再按 ID 精确对齐。
+  late final _anchors = ContentAnchorKeeper(
+    _scroll,
+    indexOf: _anchorIndexOf,
+    visibleTopInset: _anchorTopInset,
+  );
+
+  /// 档案 的滚动区延伸到浮动玻璃头栏下方，经典是 AppBar 之后的正文；
+  /// 锚点的“可见顶部”必须按当前布局算，否则内容会落在页头后面。
+  double _anchorTopInset(BuildContext context, AppThemeStyle style) =>
+      style == AppThemeStyle.classic ? 0 : archiveChromeInset(context);
+
+  /// 目录行的数据下标；分区锚点（header/directory）没有下标。
+  int? _anchorIndexOf(String anchorId) {
+    const prefix = 'directory/chapter:';
+    if (!anchorId.startsWith(prefix)) return null;
+    final id = anchorId.substring(prefix.length);
+    final chapters = _toc?.chapters ?? const <ShuqiChapter>[];
+    final index = chapters.indexWhere((chapter) => chapter.chapterId == id);
+    return index < 0 ? null : index;
+  }
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _anchors.attach(AppUiScope.maybeOf(context)?.notifier, context);
+  }
+
+  @override
+  void dispose() {
+    _anchors.detach();
+    _scroll.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -161,27 +211,35 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
       : (widget.initialTitle.isEmpty ? '书旗' : widget.initialTitle);
 
   @override
-  Widget build(BuildContext context) => WenkuPage(
-    header: ArchiveHeaderBar(
-      leading: GlassIconButton(
-        icon: CupertinoIcons.back,
-        label: '返回',
-        onPressed: () => Navigator.maybePop(context),
-      ),
-      title: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: const AppText(
-          '书籍详情',
-          style: TextStyle(
-            fontSize: 18,
-            height: 1.2,
-            fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final style = AppUiScope.of(context);
+    _anchors.noteLayoutStyle(style);
+    if (style == AppThemeStyle.classic) {
+      return _buildClassicPage(context, palette);
+    }
+    return WenkuPage(
+      header: ArchiveHeaderBar(
+        leading: GlassIconButton(
+          icon: CupertinoIcons.back,
+          label: '返回',
+          onPressed: () => Navigator.maybePop(context),
+        ),
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: const AppText(
+            '书籍详情',
+            style: TextStyle(
+              fontSize: 18,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ),
-    ),
-    child: Builder(builder: _body),
-  );
+      child: Builder(builder: _body),
+    );
+  }
 
   Widget _body(BuildContext context) {
     final safe = MediaQuery.paddingOf(context);
@@ -243,6 +301,7 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
         Positioned.fill(
           child: CustomScrollView(
             key: const Key('shuqi-detail-scroll'),
+            controller: _scroll,
             physics: const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
@@ -258,13 +317,19 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _identity(context, book),
+                      KeyedSubtree(
+                        key: contentAnchorKey('header'),
+                        child: _identity(context, book),
+                      ),
                       if (book.intro.isNotEmpty) ...[
                         const SizedBox(height: 28),
                         DetailArchiveSynopsis(text: book.intro),
                       ],
                       const SizedBox(height: 30),
-                      _contentsHeading(context, toc, chapters),
+                      KeyedSubtree(
+                        key: contentAnchorKey('directory'),
+                        child: _contentsHeading(context, toc, chapters),
+                      ),
                       if (_tocError != null)
                         DetailInlineError(
                           message: _tocError!,
@@ -441,6 +506,18 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
 
   Widget _chapterRow(BuildContext context, ShuqiChapter chapter, int index) {
     final scheme = Theme.of(context).colorScheme;
+    return KeyedSubtree(
+      key: contentAnchorKey('directory/chapter:${chapter.chapterId}'),
+      child: _archiveChapterRow(context, chapter, index, scheme),
+    );
+  }
+
+  Widget _archiveChapterRow(
+    BuildContext context,
+    ShuqiChapter chapter,
+    int index,
+    ColorScheme scheme,
+  ) {
     return JellyTapSurface(
       key: ValueKey('shuqi-chapter-$index'),
       onTap: () => unawaited(_openChapter(index)),

@@ -1,24 +1,28 @@
 // 系统朗读设置页。
 //
-// Chrome ported from Wenku8_Flutter (revision ebcd7f1)
-// `lib/listening/system_tts_page.dart`: ArchiveFeaturePage-style header,
-// engine rows and the archive action vocabulary. The upstream page is a
-// sheet panel; fqapp keeps a full route because it is linked from Settings.
+// Two presentations, one preference model. Classic restores the pre-#291
+// `SettingsScaffold` layout from fqapp-backup@f329399 (Material dropdown, plain
+// slider, outlined system-settings button); archive keeps the ported Wenku8
+// rev ebcd7f1 surfaces (`ArchiveFeaturePage`, `SettingsPanel`,
+// `GlassSettingMenu`, `GlassControls.slider`, `ContentNotice`). Both go through
+// `SettingsArchivePage`, whose classic shell hides the back affordance in the
+// Windows right pane.
 //
-// Mechanical substitutions:
-// - The upstream engine/voice sheet (`SystemSpeechEnginesPanel`, GlassTextButton
-//   rows) maps to this page's engine selector and rate slider; fqapp's engine
-//   and preference services (`SystemTts`, `SystemTtsPreferences`) are kept.
-// - `AppControls.toggle/slider` -> `GlassControls`
-//   (`lib/widgets/wenku/glass_controls.dart`).
-// - `showNovelFeedback` -> the existing SnackBar messages (same text).
-// - Empty/error states use `ContentNotice`, the shared archive state widget.
+// `SystemTts` / `SystemTtsPreferences` and the generation-guarded load are
+// unchanged.
+
+import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/audio_floating_routes.dart';
 import '../services/system_tts.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_adaptive.dart';
+import '../widgets/settings/settings_archive_page.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
@@ -89,18 +93,22 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
     }
   }
 
-  Future<void> _save(SystemTtsPreferences prefs) async {
-    if (_saving) return;
+  /// Persists [prefs]. Returns whether the write landed: a failed write must
+  /// leave `_prefs` (and the controlled dropdown) on the committed value.
+  Future<bool> _save(SystemTtsPreferences prefs) async {
+    if (_saving) return false;
     setState(() => _saving = true);
     try {
       await prefs.save();
       if (mounted) setState(() => _prefs = prefs);
+      return true;
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('设置保存失败，请重试')));
       }
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -127,7 +135,7 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
         .where((e) => e.package == _defaultEngine)
         .firstOrNull
         ?.label;
-    return ArchiveFeaturePage(
+    return SettingsArchivePage(
       title: '系统朗读',
       code: 'AUDIO / SYSTEM ENGINES',
       child: _loading
@@ -145,29 +153,35 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
                     ),
                     const SizedBox(height: 16),
                     if (_error case final error?)
-                      ContentNotice(
+                      SettingsNotice(
                         icon: CupertinoIcons.wifi_exclamationmark,
+                        classicIcon: LucideIcons.circle_alert,
                         title: '无法读取朗读引擎',
                         message: error,
                         actionLabel: '重试',
-                        onRetry: _load,
+                        onAction: _load,
                       )
                     else if (_engines.isEmpty)
-                      const ContentNotice(
+                      const SettingsNotice(
                         icon: CupertinoIcons.volume_off,
+                        classicIcon: LucideIcons.volume_x,
                         title: '没有找到朗读引擎',
                         message: '请先安装并在引擎应用中配置中文语音。',
                       )
                     else ...[
-                      SettingsPanel(
+                      SettingsCard(
                         children: [
                           if (selectedMissing)
-                            AppText(
-                              '之前选择的引擎已不可用，请重新选择。',
-                              style: TextStyle(
-                                fontSize: 13,
-                                height: 1.5,
-                                color: Theme.of(context).colorScheme.onSurface,
+                            SettingsCardRow(
+                              classicPadding: const EdgeInsets.fromLTRB(
+                                16,
+                                14,
+                                16,
+                                0,
+                              ),
+                              child: SettingsHint(
+                                '之前选择的引擎已不可用，请重新选择。',
+                                emphasis: true,
                               ),
                             ),
                           _enginePicker(selectedMissing, defaultLabel),
@@ -182,16 +196,12 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
                     ],
                     const SizedBox(height: 20),
                     Center(
-                      child: GlassTextButton(
+                      child: SettingsAction(
+                        label: '打开系统语音设置',
+                        icon: LucideIcons.settings_2,
+                        style: SettingsActionStyle.outlined,
+                        expand: true,
                         onPressed: _openSettings,
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ArchiveIcon(CupertinoIcons.settings, size: 17),
-                            SizedBox(width: 8),
-                            AppText('打开系统语音设置'),
-                          ],
-                        ),
                       ),
                     ),
                   ],
@@ -208,6 +218,48 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
       for (final engine in _engines) engine.package: engine.label,
       ?missingEngine: '已不可用 · $missingEngine',
     };
+    if (AppUiScope.isClassic(context)) {
+      // The pre-#291 page used a Material dropdown inside the settings card.
+      // It is controlled by `_prefs.engine`, so a failed write shows the
+      // committed engine again instead of the unsubmitted choice (the old
+      // `DropdownButtonFormField` kept the failed value in its own state).
+      final selected = options.containsKey(_prefs.engine ?? '')
+          ? _prefs.engine ?? ''
+          : '';
+      return SettingsCardRow(
+        classicPadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: InputDecorator(
+          decoration: const InputDecoration(labelText: '朗读引擎'),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              key: const ValueKey('tts-engine-classic'),
+              value: selected,
+              isExpanded: true,
+              items: [
+                for (final option in options.entries)
+                  DropdownMenuItem(
+                    value: option.key,
+                    child: Text(option.value, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null || value == selected) return;
+                      unawaited(
+                        _save(
+                          SystemTtsPreferences(
+                            engine: value.isEmpty ? null : value,
+                            rate: _prefs.rate,
+                          ),
+                        ),
+                      );
+                    },
+            ),
+          ),
+        ),
+      );
+    }
     return GlassSettingMenu<String>(
       icon: CupertinoIcons.waveform,
       label: '朗读引擎',
@@ -227,6 +279,45 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
 
   Widget _ratePicker() {
     final rate = _prefs.rate;
+    if (AppUiScope.isClassic(context)) {
+      final palette = HomePalette.of(context);
+      return SettingsCardRow(
+        classicPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '语速 ${rate.toStringAsFixed(1)}×',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: palette.ink,
+              ),
+            ),
+            Slider(
+              value: rate,
+              min: 0.5,
+              max: 3,
+              divisions: 25,
+              label: '${rate.toStringAsFixed(1)}×',
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() {
+                      _prefs = SystemTtsPreferences(
+                        engine: _prefs.engine,
+                        rate: value,
+                      );
+                    }),
+              onChangeEnd: _saving
+                  ? null
+                  : (value) => _save(
+                      SystemTtsPreferences(engine: _prefs.engine, rate: value),
+                    ),
+            ),
+          ],
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

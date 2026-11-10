@@ -8,6 +8,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
+import '../app_ui/app_ui_scope.dart';
 import '../wenku/wenku_ui.dart';
 import 'reader_theme.dart';
 import 'reader_value_slider.dart';
@@ -52,7 +53,9 @@ Future<void> showReaderSettingsSheet({
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
-    barrierColor: Colors.transparent,
+    // Classic keeps the old dimmed Material scrim; archive's plate shows the
+    // page through a transparent one.
+    barrierColor: AppUiScope.isClassic(context) ? null : Colors.transparent,
     // Dragging a value must not compete with the route's dismiss gesture.
     enableDrag: false,
     sheetAnimationStyle: noMotion ? AnimationStyle.noAnimation : null,
@@ -285,6 +288,319 @@ class _ReaderAppearanceSheetState
     );
   }
 
+  Widget _buildClassic(BuildContext context) {
+    final preset = _displayPreset;
+    final noMotion = _reduceMotion;
+    final media = MediaQuery.of(context);
+    final inlineSection = switch (widget.initialSection) {
+      ReaderSettingsSection.operations => ReaderBehaviorCategory.operations,
+      ReaderSettingsSection.listening => ReaderBehaviorCategory.listening,
+      _ => null,
+    };
+    Widget panel = ReaderSettingsTheme(
+      preset: preset,
+      child: Theme(
+        data: preset.theme(Theme.of(context)),
+        child: MediaQuery(
+          data: media.copyWith(
+            disableAnimations: noMotion,
+            highContrast: media.highContrast || preset.isEink,
+          ),
+          child: ReaderSettingsSheetFrame(
+            preset: preset,
+            title: '阅读设置',
+            closeTooltip: '关闭排版设置',
+            scrollKey: const ValueKey('reader-appearance-scroll'),
+            maxHeightFactor: .82,
+            onClose: _flushAll,
+            children: [
+              if (widget.deviceAvailable) _classicBrightnessRow(),
+              _classicFontSizeRow(),
+              _classicBackgroundRow(preset),
+              if (_backgroundLocked) _classicBackgroundLockNotice(preset),
+              ReaderTurnSettings(value: value, onChanged: _apply),
+              _spacingRow(),
+              const ReaderSettingsDivider(),
+              _classicActionsRow(),
+              // The dock's 操作/听书 entries open this panel directly. Archive
+              // shows only that category; classic keeps its old one-screen
+              // layout and appends the requested section inline so the entry
+              // still lands on the thing it names.
+              if (inlineSection != null) ...[
+                const ReaderSettingsDivider(),
+                _behavior(inlineSection),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    panel = PerformanceScope(
+      preferences: preset.isEink
+          ? const PerformancePreferences(enabled: true)
+          : PerformanceScope.of(context),
+      explicitReduceMotion: noMotion,
+      child: panel,
+    );
+    return PopScope<void>(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) return;
+        _flushAll();
+        _endPreview();
+        _closing = true;
+      },
+      child: panel,
+    );
+  }
+
+  /// Brightness: the old Material [Slider] plus 跟随系统. Dragging goes to the
+  /// page immediately; release settles the device write and the last value.
+  Widget _classicBrightnessRow() {
+    const key = ValueKey('reader-brightness');
+    void change(double level) {
+      if (!_alive) return;
+      setState(
+        () => value = value.copyWith(
+          brightness: level,
+          followSystemBrightness: false,
+        ),
+      );
+      _brightnessPending = true;
+      widget.onBrightness(level);
+    }
+
+    return ReaderSettingsRow(
+      label: '亮度',
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final slider = Slider(
+            key: key,
+            value: value.followSystemBrightness
+                ? widget.systemBrightness ?? value.brightness
+                : value.brightness,
+            min: 0.02,
+            max: 1,
+            onChanged: change,
+            onChangeEnd: (level) {
+              if (!_alive) return;
+              change(level);
+              _brightnessPending = false;
+              widget.onBrightnessEnd();
+              flushPreferences();
+            },
+            semanticFormatterCallback: (level) =>
+                '亮度 ${(level * 100).round()}%',
+          );
+          final follow = TextButton(
+            key: const ValueKey('reader-follow-system'),
+            style: TextButton.styleFrom(
+              foregroundColor: value.followSystemBrightness
+                  ? _displayPreset.accentColor
+                  : _displayPreset.mutedTextColor,
+            ),
+            onPressed: _toggleFollowSystem,
+            child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
+          );
+          if (constraints.maxWidth < 220) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [slider, follow],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: slider),
+              const SizedBox(width: 4),
+              follow,
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _classicFontSizeRow() => ReaderSettingsRow(
+    label: '字号',
+    child: _ClassicFontSizeStepper(
+      value: value.fontSize,
+      onChanged: (size) => _apply(value.copyWith(fontSize: size)),
+    ),
+  );
+
+  Widget _classicBackgroundRow(ReaderThemePreset preset) => ReaderSettingsRow(
+    label: '背景',
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final count = ReaderThemePreset.values.length;
+        final diameter = (constraints.maxWidth / count - 4)
+            .clamp(24.0, 38.0)
+            .toDouble();
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            for (final choice in ReaderThemePreset.values)
+              _classicSwatch(preset, choice, diameter),
+          ],
+        );
+      },
+    ),
+  );
+
+  Widget _classicBackgroundLockNotice(ReaderThemePreset preset) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+    child: Text(
+      widget.einkOverride ? '全局墨水屏模式已开启，背景跟随全局设置' : '全局 OLED 纯黑已开启，背景跟随全局设置',
+      style: TextStyle(color: preset.mutedTextColor, fontSize: 12),
+    ),
+  );
+
+  /// Background swatch: a ring on the selected choice, tap disabled while a
+  /// global ink/OLED override owns the preset.
+  Widget _classicSwatch(
+    ReaderThemePreset preset,
+    ReaderThemePreset choice,
+    double diameter,
+  ) {
+    final selected = choice == _displayPreset;
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: '${choice.label}阅读背景',
+      child: InkWell(
+        key: ValueKey('reader-theme-${choice.name}'),
+        onTap: _backgroundLocked
+            ? null
+            : () => _apply(value.copyWith(themePreset: choice)),
+        borderRadius: BorderRadius.circular(diameter / 2),
+        child: Container(
+          width: diameter,
+          height: diameter,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? preset.accentColor : Colors.transparent,
+              width: 1.3,
+            ),
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: choice.backgroundColor,
+              border: Border.all(color: preset.borderColor, width: 0.5),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              '阅',
+              style: TextStyle(
+                color: choice.textColor,
+                fontSize: diameter * 13 / 38,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _classicActionsRow() => Padding(
+    padding: const EdgeInsets.fromLTRB(10, 2, 10, 4),
+    child: Wrap(
+      alignment: WrapAlignment.spaceEvenly,
+      spacing: 4,
+      runSpacing: 4,
+      children: [
+        _classicActionButton(
+          key: const ValueKey('reader-auto-turn'),
+          icon: widget.autoTurnActive
+              ? LucideIcons.circle_pause
+              : LucideIcons.circle_play,
+          label: widget.autoTurnActive ? '停止自动翻页' : '自动翻页',
+          onTap: widget.onAutoTurn == null
+              ? null
+              : () => _close(widget.onAutoTurn),
+        ),
+        _classicActionButton(
+          key: const ValueKey('reader-font-picker'),
+          icon: LucideIcons.type,
+          label: '字体',
+          onTap: _openFontPicker,
+        ),
+        _classicActionButton(
+          key: const ValueKey('reader-more-appearance'),
+          icon: LucideIcons.sliders_horizontal,
+          label: '更多设置',
+          trailing: true,
+          onTap: _openMore,
+        ),
+        if (widget.onMarks != null)
+          _classicActionButton(
+            key: const ValueKey('reader-settings-marks'),
+            icon: LucideIcons.bookmark,
+            label: '书签',
+            onTap: () => _close(widget.onMarks),
+          ),
+      ],
+    ),
+  );
+
+  Widget _classicActionButton({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool trailing = false,
+  }) {
+    final preset = _displayPreset;
+    final chevron = trailing
+        ? Icon(
+            LucideIcons.chevron_right,
+            size: 16,
+            color: preset.mutedTextColor,
+          )
+        : null;
+    return TextButton(
+      key: key,
+      onPressed: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 4),
+          Text(label, style: const TextStyle(fontSize: 13)),
+          if (chevron != null) ...[const SizedBox(width: 2), chevron],
+        ],
+      ),
+    );
+  }
+
+  /// 更多设置 opens the existing full sheet (typography, operations, page,
+  /// listening, video, text replacement, e-ink refresh). It is not a second
+  /// preference owner: its values land back here and are flushed on close.
+  Future<void> _openMore() async {
+    _flushAll();
+    final result = await showReaderMoreSettings(
+      context: context,
+      initialValue: value,
+      einkOverride: widget.einkOverride,
+      oledOverride: widget.oledOverride,
+      backgroundLocked: _backgroundLocked,
+      showListeningSource: widget.onListeningSource != null,
+      onChanged: (next) {
+        if (!_alive) return;
+        adoptPreferences(next);
+        widget.onChanged(next.normalized());
+      },
+    );
+    if (!_alive) return;
+    if (result == ReaderMoreSettingsResult.textReplacement) {
+      _close(widget.onTextReplacement);
+    } else if (result == ReaderMoreSettingsResult.listeningSource) {
+      _close(widget.onListeningSource);
+    }
+  }
+
   Widget _slider({
     required String id,
     required String label,
@@ -473,6 +789,11 @@ class _ReaderAppearanceSheetState
 
   @override
   Widget build(BuildContext context) {
+    // Classic restores the pre-#291 one-screen panel; archive keeps the
+    // Wenku8 category grid. Both branches own the same [value] (and therefore
+    // the same 120ms commit/flush), so a style switch under an open sheet
+    // loses neither a draft value nor the last pending write.
+    if (AppUiScope.isClassic(context)) return _buildClassic(context);
     final preset = _displayPreset;
     final noMotion = _reduceMotion;
     final media = MediaQuery.of(context);
@@ -679,22 +1000,28 @@ class _ReaderAppearanceSheetState
     );
   }
 
+  /// One shared action for both renderers: settle pending edits, flip the
+  /// local display flag, then let the reader page apply/receive the device
+  /// brightness. Classic used to bind the Align-returning builder itself as
+  /// `onPressed`, so a tap only built a discarded widget.
+  void _toggleFollowSystem() {
+    if (!_alive) return;
+    _flushAll();
+    setState(
+      () => value = value.copyWith(
+        followSystemBrightness: !value.followSystemBrightness,
+      ),
+    );
+    widget.onFollowSystem();
+  }
+
   Widget _followSystem() => Align(
     alignment: Alignment.centerRight,
     child: GlassTextButton(
       key: const ValueKey('reader-follow-system'),
       compact: true,
       selected: value.followSystemBrightness,
-      onPressed: () {
-        if (!_alive) return;
-        _flushAll();
-        setState(
-          () => value = value.copyWith(
-            followSystemBrightness: !value.followSystemBrightness,
-          ),
-        );
-        widget.onFollowSystem();
-      },
+      onPressed: _toggleFollowSystem,
       child: const Text('跟随系统', style: TextStyle(fontSize: 12)),
     ),
   );
@@ -778,4 +1105,86 @@ class _ReaderAppearanceSheetState
       ],
     ),
   );
+}
+
+/// 字号步进器：A− / 当前字号 / A+（pre-#291 panel control，M3 之前的圆角块）。
+class _ClassicFontSizeStepper extends StatelessWidget {
+  const _ClassicFontSizeStepper({required this.value, required this.onChanged});
+
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  static const _min = 14.0;
+  static const _max = 32.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final preset = ReaderSettingsTheme.of(context);
+    Widget end({
+      required String glyph,
+      required double fontSize,
+      required double delta,
+      required String tooltip,
+      required Key key,
+    }) {
+      final next = value + delta;
+      return Expanded(
+        child: Tooltip(
+          message: tooltip,
+          child: InkWell(
+            key: key,
+            borderRadius: BorderRadius.circular(90),
+            onTap: next < _min || next > _max
+                ? null
+                : () => onChanged(next.clamp(_min, _max).toDouble()),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 36),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: preset.fieldColor,
+                borderRadius: BorderRadius.circular(90),
+              ),
+              child: Text(
+                glyph,
+                style: TextStyle(
+                  color: preset.textColor,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      key: const ValueKey('reader-font-size'),
+      child: Row(
+        children: [
+          end(
+            key: const ValueKey('reader-font-size-decrease'),
+            glyph: 'A−',
+            fontSize: 14,
+            delta: -1,
+            tooltip: '减小字号',
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              value.round().toString(),
+              style: TextStyle(color: preset.accentColor, fontSize: 13),
+            ),
+          ),
+          end(
+            key: const ValueKey('reader-font-size-increase'),
+            glyph: 'A+',
+            fontSize: 20,
+            delta: 1,
+            tooltip: '增大字号',
+          ),
+        ],
+      ),
+    );
+  }
 }

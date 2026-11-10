@@ -4,19 +4,25 @@ import 'package:flutter/material.dart';
 import '../../models/book_comment.dart';
 import '../../models/book_detail.dart';
 import '../../services/poster_cache.dart';
+import '../app_ui/app_ui_scope.dart';
+import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import '../wenku/wenku_ui.dart';
+import 'detail_states.dart';
 
 export 'detail_comment_tile.dart' show DetailCommentTile, ReviewReplyLoader;
 
-/// Review block: the archive `书评` section heading with the single 「全部」
-/// entry, then the newest three reviews, each clamped to four lines.
+/// Review block: the `书评` section heading with the single 「全部」 entry, then
+/// the newest three reviews, each clamped to four lines.
 ///
 /// Upstream has no review list on its detail page (reviews live behind
 /// `BookCommunityActions`), so the section keeps fqapp's content and adopts the
-/// shared archive section/row rhythm from `wenku_archive.dart`. The aggregate
-/// rating card stays gone: the detail page shows the rating once, in the hero.
-/// Renders nothing when there are no reviews at all.
+/// shared section/row rhythm. 档案 uses the 18sp `ArchiveSection` + glass
+/// `全部` button from `wenku_archive.dart`; 经典 uses the old 15sp
+/// `DetailSectionHeader` and a plain `条数 · 全部 ›` pressable. Both share the
+/// same page/comments and the same open-all / load-more callbacks. The
+/// aggregate rating card stays gone: the detail page shows the rating once, in
+/// the hero. Renders nothing when there are no reviews at all.
 class DetailReviews extends StatelessWidget {
   final BookCommentPage page;
   final BookDetail? detail;
@@ -58,43 +64,53 @@ class DetailReviews extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: horizontal),
-          child: Row(
-            key: const Key('detail_reviews_header'),
-            children: [
-              Expanded(
-                child: ArchiveSection(
-                  title: '书评',
-                  code: '03 / REVIEWS',
-                  subtitle: countLabel,
-                ),
-              ),
-              if (action == null)
-                Text(
-                  countLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 12,
+        if (AppUiScope.isClassic(context))
+          // The classic header owns the section gutter (15sp title, plain
+          // `条数 · 全部 ›`), so it is not wrapped in the block's own padding.
+          _ClassicReviewsHeader(
+            countLabel: countLabel,
+            action: action,
+            loadingMore: loadingMore,
+            horizontal: horizontal,
+          )
+        else
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: horizontal),
+            child: Row(
+              key: const Key('detail_reviews_header'),
+              children: [
+                Expanded(
+                  child: ArchiveSection(
+                    title: '书评',
+                    code: '03 / REVIEWS',
+                    subtitle: countLabel,
                   ),
-                )
-              else
-                GlassTextButton(
-                  key: const Key('detail_reviews_more'),
-                  compact: true,
-                  onPressed: action,
-                  child: loadingMore
-                      ? const SizedBox.square(
-                          dimension: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const AppText('全部'),
                 ),
-            ],
+                if (action == null)
+                  Text(
+                    countLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  )
+                else
+                  GlassTextButton(
+                    key: const Key('detail_reviews_more'),
+                    compact: true,
+                    onPressed: action,
+                    child: loadingMore
+                        ? const SizedBox.square(
+                            dimension: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const AppText('全部'),
+                  ),
+              ],
+            ),
           ),
-        ),
         if (page.comments.isNotEmpty)
           Padding(
             padding: EdgeInsets.symmetric(horizontal: horizontal),
@@ -102,7 +118,12 @@ class DetailReviews extends StatelessWidget {
               children: [
                 for (var i = 0; i < displayed.length; i++) ...[
                   if (i > 0)
-                    Divider(height: 1, color: Theme.of(context).dividerColor),
+                    Divider(
+                      height: 1,
+                      color: AppUiScope.isClassic(context)
+                          ? HomePalette.of(context).line
+                          : Theme.of(context).dividerColor,
+                    ),
                   _PreviewReview(
                     key: ValueKey('detail_review_${displayed[i].id}'),
                     comment: displayed[i],
@@ -112,6 +133,61 @@ class DetailReviews extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Old `书评` heading: 15sp `DetailSectionHeader` with `条数 · 全部 ›` as a
+/// plain pressable, exactly the pre-#291 block. No glass, no archive code.
+class _ClassicReviewsHeader extends StatelessWidget {
+  const _ClassicReviewsHeader({
+    required this.countLabel,
+    required this.action,
+    required this.loadingMore,
+    required this.horizontal,
+  });
+
+  final String countLabel;
+  final VoidCallback? action;
+  final bool loadingMore;
+
+  /// Section gutter, once: the rows below use the same value.
+  final double horizontal;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    final action = this.action;
+    final label = action == null ? countLabel : '$countLabel · 全部 ›';
+    final style = TextStyle(color: palette.muted, fontSize: 12);
+    return DetailSectionHeader(
+      key: const Key('detail_reviews_header'),
+      title: '书评',
+      padding: EdgeInsets.fromLTRB(horizontal, homeSectionGap, horizontal, 10),
+      action: action == null
+          ? Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            )
+          : HomePressable(
+              key: const Key('detail_reviews_more'),
+              semanticLabel: '查看全部书评',
+              onTap: action,
+              borderRadius: BorderRadius.circular(6),
+              child: loadingMore
+                  ? const SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: style,
+                    ),
+            ),
     );
   }
 }

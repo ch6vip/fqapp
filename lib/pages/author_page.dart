@@ -3,28 +3,42 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/author_profile.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
+import '../services/app_theme_style.dart';
 import '../services/poster_cache.dart';
 import '../services/user_facing_error.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/app_ui/content_anchor.dart';
 import '../widgets/detail/detail_archive.dart';
+import '../widgets/home/home_back_button.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/home/home_feed_states.dart';
 import '../widgets/home/home_media_card.dart';
+import '../widgets/home/home_shelf.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'detail_page.dart';
+
+part 'detail/author_page_classic.dart';
 
 /// Loads an author profile. Injectable so the page can be tested offline.
 typedef AuthorLoader = Future<AuthorProfile> Function(String authorId);
 
 /// Author home: profile header plus the author's works.
 ///
-/// Port of Wenku8_Flutter `lib/author_works_page.dart` (revision ebcd7f1):
-/// `ArchiveFeaturePage` + `sectionHeader` + the `NovelRow` list. fqapp keeps its
-/// richer profile payload (avatar, level, followers, bio) above the works; the
-/// work rows replace the old home-style grid with upstream's cover/title rows.
+/// 档案 is the port of Wenku8_Flutter `lib/author_works_page.dart` (revision
+/// ebcd7f1): `ArchiveFeaturePage` + `sectionHeader` + the `NovelRow` list. fqapp
+/// keeps its richer profile payload (avatar, level, followers, bio) above the
+/// works; the work rows replace the old home-style grid with upstream's
+/// cover/title rows.
+///
+/// 经典 (`detail/author_page_classic.dart`) restores that old grid: a Material
+/// AppBar, the same profile header and the works as `HomeMediaCard`s. Both
+/// branches share `_AuthorPageState`, its loader/retry and `openBookDetail`.
 ///
 /// Note: the works come from `author_book_info` on the profile response, not
 /// from `/authors/{id}/bookshelf` — see
@@ -51,10 +65,50 @@ class _AuthorPageState extends State<AuthorPage> {
   String? _error;
   int _generation = 0;
 
+  /// Classic keeps works in a home-card grid, archive in the upstream rows;
+  /// both scroll the same list, so one controller serves both bodies.
+  final _scroll = ScrollController();
+
+  /// 经典 ⇄ 档案 swaps the whole tree: keep the visible work (or the section
+  /// header) instead of relying on a recreated ScrollPosition. A work deep in
+  /// the list is not built after the swap, so its data index locates it first.
+  late final _anchors = ContentAnchorKeeper(
+    _scroll,
+    indexOf: _anchorIndexOf,
+    visibleTopInset: _anchorTopInset,
+  );
+
+  /// 档案 (WenkuPage) paints the glass header over the scrolling body; 经典 puts
+  /// a Material AppBar above it. The anchor is measured from that visible edge.
+  double _anchorTopInset(BuildContext context, AppThemeStyle style) =>
+      style == AppThemeStyle.classic ? 0 : archiveChromeInset(context);
+
+  /// Data index of an anchored work row, or null for section anchors.
+  int? _anchorIndexOf(String anchorId) {
+    const prefix = 'works/work:';
+    if (!anchorId.startsWith(prefix)) return null;
+    final id = anchorId.substring(prefix.length);
+    final index = _profile.works.indexWhere((work) => work.id == id);
+    return index < 0 ? null : index;
+  }
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _anchors.attach(AppUiScope.maybeOf(context)?.notifier, context);
+  }
+
+  @override
+  void dispose() {
+    _anchors.detach();
+    _scroll.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -87,11 +141,18 @@ class _AuthorPageState extends State<AuthorPage> {
       _profile.name.isEmpty ? widget.fallbackName : _profile.name;
 
   @override
-  Widget build(BuildContext context) => ArchiveFeaturePage(
-    title: '作者作品',
-    code: 'AUTHOR / WORKS',
-    child: Builder(builder: _body),
-  );
+  Widget build(BuildContext context) {
+    final style = AppUiScope.of(context);
+    _anchors.noteLayoutStyle(style);
+    if (style == AppThemeStyle.classic) {
+      return _buildClassicPage(context, HomePalette.of(context));
+    }
+    return ArchiveFeaturePage(
+      title: '作者作品',
+      code: 'AUTHOR / WORKS',
+      child: Builder(builder: _body),
+    );
+  }
 
   /// The page body always stays inside [RefreshIndicator], like upstream's
   /// `FeedRefresh`: pulling down reloads the profile from any state, including
@@ -143,11 +204,17 @@ class _AuthorPageState extends State<AuthorPage> {
     final works = _profile.works;
     return CustomScrollView(
       key: const Key('author_scroll'),
+      controller: _scroll,
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         SliverPadding(
           padding: padding.copyWith(bottom: 0),
-          sliver: SliverToBoxAdapter(child: _profileHeader(context)),
+          sliver: SliverToBoxAdapter(
+            child: KeyedSubtree(
+              key: contentAnchorKey('header'),
+              child: _profileHeader(context),
+            ),
+          ),
         ),
         if (works.isEmpty)
           SliverPadding(
@@ -164,10 +231,13 @@ class _AuthorPageState extends State<AuthorPage> {
           SliverPadding(
             padding: padding.copyWith(top: 28, bottom: 10),
             sliver: SliverToBoxAdapter(
-              child: ArchiveSection(
-                title: '全部作品',
-                code: '02 / ARCHIVE INDEX',
-                subtitle: '${works.length} 部作品',
+              child: KeyedSubtree(
+                key: contentAnchorKey('works'),
+                child: ArchiveSection(
+                  title: '全部作品',
+                  code: '02 / ARCHIVE INDEX',
+                  subtitle: '${works.length} 部作品',
+                ),
               ),
             ),
           ),
@@ -175,7 +245,10 @@ class _AuthorPageState extends State<AuthorPage> {
             padding: padding.copyWith(top: 0),
             sliver: SliverList.builder(
               itemCount: works.length,
-              itemBuilder: (context, index) => _workRow(context, works[index]),
+              itemBuilder: (context, index) => KeyedSubtree(
+                key: contentAnchorKey('works/work:${works[index].id}'),
+                child: _workRow(context, works[index]),
+              ),
             ),
           ),
         ],

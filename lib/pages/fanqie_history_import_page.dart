@@ -1,18 +1,16 @@
-// Upstream source: Wenku8_Flutter rev ebcd7f1
-//   lib/legacy_import_page.dart (ArchiveFeaturePage shell, intro copy,
-//     FeatureEntry choose action, LoadedContentSequence preview panel,
-//     GlassTextButton merge)
-//   lib/offline_widgets.dart (ContentPanel list rhythm)
-// Mechanical substitutions:
-// - fqapp's 番茄 login / capture / preview / merge services and error mapping
-//   are unchanged; only the page chrome is ported. The upstream legacy-save
-//   directory picker has no fqapp counterpart because fqapp imports 番茄 data.
-// - The bottom action bar becomes in-panel upstream-style buttons; busy state
-//   is an inline progress row with the same cancel action.
-// - `AppText`/`ContentPanel`/`ArchiveSection`/`FeatureEntry`/`FeatureError`
-//   come from the vendored shared layer. `appText` is unnecessary (one locale).
+// Two presentations, one import pipeline.
+//
+// Archive keeps the Wenku8 rev ebcd7f1 `ArchiveFeaturePage` shell from #291
+// (`ArchiveSection` + `ContentPanel` + `GlassTextButton`, inline busy panel);
+// classic restores the pre-#291 layout from fqapp-backup@f329399
+// (`DataTransferHeader` + `SettingsGroupCard` rows + fixed bottom action bar).
+//
+// fqapp's 番茄 login / capture / preview / merge services, the private capture
+// cache, the raw-data export and the error mapping are shared by both. No
+// legacy-save directory picker is rendered: fqapp imports 番茄 data instead.
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -22,12 +20,24 @@ import '../models/fanqie_library_capture.dart';
 import '../services/backend_transport.dart';
 import '../services/fanqie_history_import_service.dart';
 import '../services/fanqie_library_capture_service.dart';
+import '../services/app_theme_style.dart';
 import '../services/fanqie_library_import_service.dart';
+import '../widgets/app_ui/app_ui_scope.dart';
+import '../widgets/data_transfer_widgets.dart';
 import '../widgets/home/home_design.dart';
+import '../widgets/settings/settings_adaptive.dart';
+import '../widgets/settings/settings_archive_page.dart';
+import '../widgets/settings/settings_scroll_anchor.dart';
 import '../widgets/wenku/wenku_ui.dart';
 
 class FanqieHistoryImportPage extends StatefulWidget {
-  const FanqieHistoryImportPage({super.key});
+  const FanqieHistoryImportPage({super.key, this.collector});
+
+  /// Test seam for the capture service. Production leaves it null and uses the
+  /// native login + local backend; the page's progress/cancel wiring is the
+  /// same service API either way.
+  @visibleForTesting
+  final FanqieLibraryCaptureService? collector;
 
   @override
   State<FanqieHistoryImportPage> createState() =>
@@ -36,7 +46,7 @@ class FanqieHistoryImportPage extends StatefulWidget {
 
 class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   final _service = FanqieHistoryImportService();
-  final _collector = FanqieLibraryCaptureService();
+  late final _collector = widget.collector ?? FanqieLibraryCaptureService();
   FanqieLibraryCapture? _capture;
   final _libraryImporter = FanqieLibraryImportService();
   FanqieImportPreview? _libraryPreview;
@@ -47,8 +57,17 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   String _previewSource = '最近采集';
   bool _busy = false;
   String? _message;
+
+  /// Expanded state of the capture details block; the page owns it so a shell
+  /// switch or a scroll-out does not collapse the block.
+  bool _captureExpanded = false;
   final _previewKey = GlobalKey();
   final _messageKey = GlobalKey();
+
+  /// One list for both presentations, so the shell switch keeps the scroll
+  /// position and the visible section can be re-anchored.
+  final _scroll = ScrollController();
+  late final _anchor = SettingsScrollAnchor(_scroll);
 
   @override
   void initState() {
@@ -59,6 +78,8 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   @override
   void dispose() {
     _cancelRead();
+    _anchor.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -253,326 +274,444 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
 
   @override
   Widget build(BuildContext context) {
+    final style = AppUiScope.of(context);
+    final classic = style == AppThemeStyle.classic;
+    _anchor.track(style);
     final scheme = Theme.of(context).colorScheme;
+    final palette = HomePalette.of(context);
     final parsed = _libraryPreview;
     final capture = _capture;
     final enabled = !_busy && !_loadingLatest;
     final muted = TextStyle(
       fontSize: 13,
       height: 1.7,
-      color: scheme.onSurfaceVariant,
+      color: classic ? palette.ink : scheme.onSurfaceVariant,
     );
-    return PopScope(
-      canPop: !_busy,
-      child: ArchiveFeaturePage(
-        title: '导入番茄书架',
-        code: 'MIGRATION / FANQIE',
-        canPop: !_busy,
-        actions: [_loginActions(enabled)],
-        child: ListView(
-          key: const ValueKey('fanqie-import-scroll'),
-          padding: featurePadding(context),
+    final subtle = muted.copyWith(
+      fontSize: 12,
+      color: classic ? palette.muted : scheme.onSurfaceVariant,
+    );
+    final captureInfo =
+        '${capture?.received ?? 0} 个响应已保存 · 无需重新登录'
+        '${capture != null && capture.stopReason.isNotEmpty ? ' · 部分采集' : ''}';
+    final content = <Widget>[
+      KeyedSubtree(
+        key: _anchor.keyFor('heading'),
+        child: const SettingsHeading(
+          icon: LucideIcons.book_open,
+          title: '书架和进度，一起带回来',
+          subtitle: '从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。',
+        ),
+      ),
+      const SizedBox(height: 24),
+      KeyedSubtree(
+        key: _anchor.keyFor('sources'),
+        child: const SettingsSection(
+          key: ValueKey('fanqie-sources-section'),
+          title: '选择导入来源',
+          code: 'MIGRATION / SOURCE',
+        ),
+      ),
+      const SizedBox(height: 14),
+      SettingsCard(
+        archiveDividers: false,
+        children: [
+          SettingsActionRow(
+            key: const ValueKey('fanqie-collect'),
+            icon: CupertinoIcons.globe,
+            classicIcon: LucideIcons.globe,
+            title: '从番茄账号读取',
+            subtitle: '打开官方页面登录，保留本机登录状态',
+            enabled: enabled,
+            onPressed: _collect,
+          ),
+          SettingsActionRow(
+            key: const ValueKey('fanqie-pick'),
+            icon: CupertinoIcons.doc_text,
+            classicIcon: LucideIcons.file_input,
+            title: '从历史文件导入',
+            subtitle: '兼容此前保存的番茄历史 JSON',
+            enabled: enabled,
+            onPressed: _pick,
+          ),
+        ],
+      ),
+      if (_loadingLatest)
+        const Padding(
+          padding: EdgeInsets.only(top: 20),
+          child: LinearProgressIndicator(minHeight: 2),
+        ),
+      if (!classic && _busy) ...[
+        const SizedBox(height: 20),
+        ContentPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Semantics(
+                liveRegion: true,
+                child: AppText(
+                  _captureProgress ?? '正在处理，请稍候…',
+                  style: muted.copyWith(fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 10),
+              const LinearProgressIndicator(minHeight: 2),
+              if (_request != null)
+                GlassTextButton(
+                  onPressed: _cancelRead,
+                  child: const AppText('取消读取'),
+                ),
+            ],
+          ),
+        ),
+      ],
+      if (capture != null) ...[
+        const SizedBox(height: 28),
+        KeyedSubtree(
+          key: _anchor.keyFor('capture'),
+          child: const SettingsSection(
+            title: '最近一次采集',
+            code: 'MIGRATION / CAPTURED',
+          ),
+        ),
+        const SizedBox(height: 14),
+        SettingsCard(
+          classicDividers: false,
           children: [
-            const AppText(
-              '书架和进度，一起带回来',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+            if (!classic)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: AppText(
+                  captureInfo,
+                  style: muted.copyWith(fontSize: 13),
+                ),
+              ),
+            SettingsActionRow(
+              key: const ValueKey('fanqie-use-capture'),
+              icon: CupertinoIcons.clock,
+              classicIcon: LucideIcons.clock,
+              title: '使用已保存的书架数据',
+              subtitle: classic ? captureInfo : null,
+              enabled: enabled,
+              onPressed: _prepareLibrary,
             ),
-            const SizedBox(height: 12),
-            AppText('从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。', style: muted),
-            const SizedBox(height: 24),
-            const ArchiveSection(title: '选择导入来源', code: 'MIGRATION / SOURCE'),
-            const SizedBox(height: 14),
-            ContentPanel(
+            _captureDetails(capture, classic: classic, muted: muted),
+          ],
+        ),
+      ],
+      if (parsed != null) ...[
+        const SizedBox(height: 28),
+        KeyedSubtree(
+          key: _anchor.keyFor('preview'),
+          child: SettingsSection(
+            key: _previewKey,
+            title: '导入预览 · $_previewSource',
+            code: 'MIGRATION / PREVIEW',
+            subtitle: parsed.records.isEmpty
+                ? ''
+                : '共 ${parsed.records.length} 本',
+          ),
+        ),
+        const SizedBox(height: 14),
+        SettingsCard(
+          classicDividers: false,
+          children: [
+            SettingsCardRow(
+              classicPadding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  GlassTextButton(
-                    key: const ValueKey('fanqie-collect'),
-                    onPressed: enabled ? _collect : null,
-                    child: const AppText('从番茄账号读取'),
+                  SettingsStats(
+                    values: {
+                      '小说': parsed.records.length,
+                      '章节已定位': parsed.matched,
+                      '待重试': parsed.unresolved,
+                    },
                   ),
-                  GlassTextButton(
-                    key: const ValueKey('fanqie-pick'),
-                    onPressed: enabled ? _pick : null,
-                    child: const AppText('从历史文件导入'),
+                  const SizedBox(height: 14),
+                  Text(
+                    '同时加入书架和历史，保留较新的本机阅读位置。',
+                    style: muted.copyWith(fontSize: 13),
                   ),
+                  const SizedBox(height: 8),
+                  Text('未取得章节的作品从头开始；已定位的作品从对应章节开头续读。', style: subtle),
+                  if (!classic) const SizedBox(height: 16),
                 ],
               ),
             ),
-            if (_loadingLatest)
-              const Padding(
-                padding: EdgeInsets.only(top: 20),
-                child: LinearProgressIndicator(minHeight: 2),
-              ),
-            if (_busy) ...[
-              const SizedBox(height: 20),
-              ContentPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Semantics(
-                      liveRegion: true,
-                      child: AppText(
-                        _captureProgress ?? '正在处理，请稍候…',
-                        style: muted.copyWith(fontSize: 13),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const LinearProgressIndicator(minHeight: 2),
-                    if (_request != null)
-                      GlassTextButton(
-                        onPressed: _cancelRead,
-                        child: const AppText('取消读取'),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-            if (capture != null) ...[
-              const SizedBox(height: 28),
-              const ArchiveSection(
-                title: '最近一次采集',
-                code: 'MIGRATION / CAPTURED',
-              ),
-              const SizedBox(height: 14),
-              ContentPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    AppText(
-                      '${capture.received} 个响应已保存 · 无需重新登录'
-                      '${capture.stopReason.isNotEmpty ? ' · 部分采集' : ''}',
-                      style: muted.copyWith(fontSize: 13),
-                    ),
-                    const SizedBox(height: 14),
-                    GlassTextButton(
-                      key: const ValueKey('fanqie-use-capture'),
-                      onPressed: enabled ? _prepareLibrary : null,
-                      child: const AppText('使用已保存的书架数据'),
-                    ),
-                    ExpansionTile(
-                      title: AppText(
-                        '采集详情与文件',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 13,
-                        ),
-                      ),
-                      tilePadding: EdgeInsets.zero,
-                      childrenPadding: EdgeInsets.zero,
-                      children: [
-                        if (capture.stopReason.isNotEmpty)
-                          FeatureError(capture.stopReason),
-                        AppText(
-                          '已保存 ${capture.parts.length} 个分卷，失败 ${capture.failed} 个响应。响应数量不是书籍数量。',
-                          style: muted.copyWith(fontSize: 12),
-                        ),
-                        for (final group in _captureSummary(capture).entries)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: AppText(
-                                    group.key,
-                                    style: TextStyle(
-                                      color: scheme.onSurface,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                                Flexible(
-                                  child: AppText(
-                                    group.value,
-                                    style: TextStyle(
-                                      color: scheme.onSurfaceVariant,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            GlassTextButton(
-                              compact: true,
-                              onPressed: enabled ? _resumeMetadata : null,
-                              child: const AppText('补齐书籍资料'),
-                            ),
-                            GlassTextButton(
-                              compact: true,
-                              onPressed: enabled
-                                  ? () => _run(() async {
-                                      final saved = await _collector.export(
-                                        capture,
-                                      );
-                                      if (mounted) {
-                                        setState(
-                                          () => _message = saved
-                                              ? '原始数据文件已导出'
-                                              : '已取消导出',
-                                        );
-                                      }
-                                    })
-                                  : null,
-                              child: const AppText('导出原始数据'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            if (parsed != null) ...[
-              const SizedBox(height: 28),
-              ArchiveSection(
-                key: _previewKey,
-                title: '导入预览 · $_previewSource',
-                code: 'MIGRATION / PREVIEW',
-                subtitle: parsed.records.isEmpty
-                    ? ''
-                    : '共 ${parsed.records.length} 本',
-              ),
-              const SizedBox(height: 14),
-              ContentPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        _previewCount(context, '小说', parsed.records.length),
-                        const SizedBox(width: 14),
-                        _previewCount(context, '章节已定位', parsed.matched),
-                        const SizedBox(width: 14),
-                        _previewCount(context, '待重试', parsed.unresolved),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    AppText(
-                      '同时加入书架和历史，保留较新的本机阅读位置。',
-                      style: muted.copyWith(fontSize: 13),
-                    ),
-                    const SizedBox(height: 8),
-                    AppText(
-                      '未取得章节的作品从头开始；已定位的作品从对应章节开头续读。',
-                      style: muted.copyWith(fontSize: 12),
-                    ),
-                    const SizedBox(height: 16),
-                    for (final record in parsed.records.take(6))
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Row(
-                          children: [
-                            _cover(record, scheme),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  AppText(
-                                    (record['title'] as String).isEmpty
-                                        ? '未注明书名'
-                                        : record['title'] as String,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: scheme.onSurface,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  AppText(
-                                    record['ep'] as String? ??
-                                        (record['chapterId'] == null
-                                            ? '未取得阅读章节'
-                                            : '打开时重新匹配章节'),
-                                    style: TextStyle(
-                                      color: scheme.onSurfaceVariant,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (parsed.records.length > 6)
-                      AppText(
-                        '仅展示前 6 本，导入包含全部 ${parsed.records.length} 本小说',
-                        style: muted.copyWith(fontSize: 12),
-                      ),
-                    const SizedBox(height: 8),
-                    GlassTextButton(
-                      key: const ValueKey('fanqie-merge'),
-                      onPressed: enabled && parsed.records.isNotEmpty
-                          ? _mergeLibrary
-                          : null,
-                      child: AppText('导入 ${parsed.records.length} 本到书架和历史'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            if (_message case final message?) ...[
-              const SizedBox(height: 20),
+            for (final record in parsed.records.take(6))
+              // Every preview row carries its data id. The section header
+              // above scrolls out of the list's build window while the rows
+              // are still on screen, so a header-only anchor cannot restore
+              // the viewport position.
               KeyedSubtree(
-                key: _messageKey,
-                child: _error
-                    ? FeatureError(message)
-                    : ContentPanel(
-                        child: AppText(
-                          message,
-                          style: muted.copyWith(fontSize: 13),
-                        ),
-                      ),
+                key: _anchor.keyFor('preview-book-${_recordKey(record)}'),
+                child: _recordRow(record, classic: classic, muted: subtle),
               ),
-            ],
-            const SizedBox(height: 24),
-            AppText(
-              '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；'
-              '导出文件不含登录凭证。',
-              style: muted.copyWith(fontSize: 12),
+            if (parsed.records.length > 6)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  '仅展示前 6 本，导入包含全部 ${parsed.records.length} 本小说',
+                  style: subtle,
+                ),
+              ),
+            // Classic keeps the merge action in the fixed bottom bar.
+            if (!classic)
+              SettingsCardRow(
+                classicPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: SettingsAction(
+                  key: const ValueKey('fanqie-merge'),
+                  label: '导入 ${parsed.records.length} 本到书架和历史',
+                  onPressed: enabled && parsed.records.isNotEmpty
+                      ? _mergeLibrary
+                      : null,
+                ),
+              ),
+          ],
+        ),
+      ],
+      if (_message case final message?) ...[
+        const SizedBox(height: 20),
+        KeyedSubtree(
+          key: _messageKey,
+          child: SettingsMessage(message: message, error: _error),
+        ),
+      ],
+      const SizedBox(height: 24),
+      KeyedSubtree(
+        key: _anchor.keyFor('footer'),
+        child: Text(
+          '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；'
+          '导出文件不含登录凭证。',
+          style: subtle,
+        ),
+      ),
+    ];
+    return PopScope(
+      canPop: !_busy,
+      child: SettingsArchivePage(
+        title: '导入番茄书架',
+        code: 'MIGRATION / FANQIE',
+        actions: [_loginActions(enabled)],
+        // The pre-#291 page owns a fixed bottom action bar (busy progress or
+        // the primary merge action); the archive keeps them inside the page.
+        classicBottomBar:
+            classic && (_busy || parsed != null || capture != null)
+            ? _classicBottomBar(context, parsed: parsed, enabled: enabled)
+            : null,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: classic ? 640 : 760),
+            child: ListView(
+              key: const ValueKey('fanqie-import-scroll'),
+              controller: _scroll,
+              padding: featurePadding(context),
+              children: content,
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Classic fixed action bar: busy progress with cancel, or the primary
+  /// action (parse the saved capture / merge the preview).
+  Widget _classicBottomBar(
+    BuildContext context, {
+    required FanqieImportPreview? parsed,
+    required bool enabled,
+  }) {
+    final palette = HomePalette.of(context);
+    return SafeArea(
+      top: false,
+      child: Container(
+        color: palette.canvas,
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_busy) ...[
+              const LinearProgressIndicator(),
+              const SizedBox(height: 10),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _captureProgress ?? '正在处理，请稍候…',
+                  style: TextStyle(color: palette.ink, fontSize: 13),
+                ),
+              ),
+              if (_request != null)
+                TextButton(onPressed: _cancelRead, child: const Text('取消读取')),
+            ] else
+              DataTransferAction(
+                label: parsed == null
+                    ? '解析并预览已保存的数据'
+                    : '导入 ${parsed.records.length} 本到书架和历史',
+                onPressed:
+                    enabled && (parsed == null || parsed.records.isNotEmpty)
+                    ? parsed == null
+                          ? _prepareLibrary
+                          : _mergeLibrary
+                    : null,
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _previewCount(BuildContext context, String label, int value) =>
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AppText(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.4,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+  /// 采集详情：来源统计与补齐/导出操作，两种展示共用同一批回调。
+  Widget _captureDetails(
+    FanqieLibraryCapture capture, {
+    required bool classic,
+    required TextStyle muted,
+  }) {
+    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return SettingsDisclosure(
+      key: const ValueKey('fanqie-capture-details'),
+      title: '采集详情与文件',
+      expanded: _captureExpanded,
+      onExpandedChanged: (value) => setState(() => _captureExpanded = value),
+      children: [
+        if (capture.stopReason.isNotEmpty)
+          SettingsMessage(message: capture.stopReason, error: true),
+        Text(
+          '已保存 ${capture.parts.length} 个分卷，失败 ${capture.failed} 个响应。'
+          '响应数量不是书籍数量。',
+          style: muted.copyWith(fontSize: 12),
+        ),
+        for (final group in _captureSummary(capture).entries)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    group.key,
+                    style: TextStyle(
+                      color: classic ? palette.ink : scheme.onSurface,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                Flexible(
+                  child: Text(
+                    group.value,
+                    style: TextStyle(
+                      color: classic ? palette.muted : scheme.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 6),
-            AppText(
-              '$value',
-              style: const TextStyle(
-                fontSize: 24,
-                height: 1.1,
-                fontWeight: FontWeight.w500,
-                letterSpacing: -.6,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
+          ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            SettingsAction(
+              label: '补齐书籍资料',
+              icon: LucideIcons.refresh_cw,
+              compact: true,
+              onPressed: _busy ? null : _resumeMetadata,
+            ),
+            SettingsAction(
+              label: '导出原始数据',
+              icon: LucideIcons.download,
+              compact: true,
+              onPressed: _busy
+                  ? null
+                  : () => _run(() async {
+                      final saved = await _collector.export(capture);
+                      if (mounted) {
+                        setState(
+                          () => _message = saved ? '原始数据文件已导出' : '已取消导出',
+                        );
+                      }
+                    }),
             ),
           ],
         ),
+      ],
+    );
+  }
+
+  /// Stable identity of one preview record: the imported book id, so a
+  /// rebuilt row keeps its [SettingsScrollAnchor] key. The identity hash only
+  /// covers a record shape without an id; it is stable for the lifetime of the
+  /// parsed list and never collides, so two rows cannot share a [GlobalKey].
+  static String _recordKey(Map<String, dynamic> record) =>
+      '${record['id'] ?? record['bookId'] ?? identityHashCode(record)}';
+
+  /// 预览里的一本：经典用 ListTile，档案保持自绘行。
+  Widget _recordRow(
+    Map<String, dynamic> record, {
+    required bool classic,
+    required TextStyle muted,
+  }) {
+    final palette = HomePalette.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final title = (record['title'] as String).isEmpty
+        ? '未注明书名'
+        : record['title'] as String;
+    final subtitle =
+        record['ep'] as String? ??
+        (record['chapterId'] == null ? '未取得阅读章节' : '打开时重新匹配章节');
+    if (classic) {
+      return ListTile(
+        key: ValueKey('fanqie-record-${_recordKey(record)}'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        leading: _cover(record, soft: palette.soft, icon: palette.muted),
+        title: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: palette.ink, fontSize: 14),
+        ),
+        subtitle: Text(subtitle, style: muted),
       );
+    }
+    return Padding(
+      key: ValueKey('fanqie-record-${_recordKey(record)}'),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          _cover(
+            record,
+            soft: scheme.surfaceContainerHighest,
+            icon: scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.onSurface, fontSize: 14),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _loginActions(bool enabled) => PopupMenuButton<String>(
     enabled: enabled,
@@ -583,30 +722,26 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     ],
   );
 
-  Widget _cover(Map<String, dynamic> record, ColorScheme scheme) => ClipRRect(
+  Widget _cover(
+    Map<String, dynamic> record, {
+    required Color soft,
+    required Color icon,
+  }) => ClipRRect(
     borderRadius: BorderRadius.circular(5),
     child: SizedBox(
       width: 34,
       height: 46,
       child: (record['cover'] as String? ?? '').isEmpty
           ? ColoredBox(
-              color: scheme.surfaceContainerHighest,
-              child: Icon(
-                LucideIcons.book_open,
-                color: scheme.onSurfaceVariant,
-                size: 18,
-              ),
+              color: soft,
+              child: Icon(LucideIcons.book_open, color: icon, size: 18),
             )
           : Image.network(
               record['cover'] as String,
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => ColoredBox(
-                color: scheme.surfaceContainerHighest,
-                child: Icon(
-                  LucideIcons.book_open,
-                  color: scheme.onSurfaceVariant,
-                  size: 18,
-                ),
+                color: soft,
+                child: Icon(LucideIcons.book_open, color: icon, size: 18),
               ),
             ),
     ),

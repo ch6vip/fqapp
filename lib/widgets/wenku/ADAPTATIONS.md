@@ -74,7 +74,9 @@ Non-identical mechanical substitutions:
   (`ReadingActivityRing`). The integration pass dropped the temporary `Misc`
   class prefix and the `misc_reading_charts.dart` filename.
 - Search is a route, not the upstream in-shell overlay. `SearchRoute` keeps
-  the upstream 420ms `ArchivePlaneTransition` diagonal entrance.
+  the upstream 420ms `ArchivePlaneTransition` diagonal entrance for the archive
+  style; the classic style delegates to the platform `PageTransitionsTheme`
+  builder and duration ([`SearchRoute.open`] resolves it at push time).
 - Search covers continue to use fqapp's existing media/cover pipeline. The
   upstream `NovelCover` and `StoryCover` widgets are not part of this slice.
 
@@ -90,7 +92,11 @@ its own mechanical substitutions; this list is the index.
   fqapp desktop extension: `FocusableActionDetector` + Enter/Space
   activation + arrow-key traversal + a visible focus ring. The confirmation
   keeps the upstream jelly sheet but exposes `confirmKey`/`cancelKey` and a
-  one-function seam back to `showDialog`.
+  one-function seam back to `showDialog`. The same popup route now follows the
+  live `AppUiScope`: archive keeps the glass/morph, classic uses a Material
+  bottom panel, anchored menu and confirmation dialog, and the caller's content
+  keeps one element (and State) across the style switch. Captured reader paper
+  is preserved while only `AppStyleTokens` is refreshed from the live style.
 - `src/glass_overlay_motion.dart` — upstream `motion_ui.dart` overlay
   transition (`GlassMenuStretch` / `GlassMenuContents` /
   `GlassOverlayTransition`).
