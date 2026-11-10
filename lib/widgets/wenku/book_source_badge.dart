@@ -2,35 +2,21 @@
 //
 // Mechanical substitution: upstream `app_language.dart` `AppText` is fqapp's
 // `src/app_text.dart` `AppText` (Chinese input returned unchanged).
+//
+// The widget itself now lives in `widgets/cover_tag_chip.dart` as
+// `ShelfCoverBadge`: the archive bookshelf ported the same upstream badge into
+// a second file, and the two copies had drifted apart while keeping identical
+// styling. This keeps the upstream provenance note and the call site, but
+// shares one implementation.
 
 import 'package:flutter/material.dart';
 
-import 'src/app_text.dart';
+import '../cover_tag_chip.dart';
 
 class BookSourceBadge extends StatelessWidget {
   const BookSourceBadge(this.label, {super.key});
   final String label;
+
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.surface.withValues(alpha: .94),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: AppText(
-          label,
-          maxLines: 1,
-          style: TextStyle(
-            color: colors.onSurface,
-            fontSize: 9,
-            height: 1.2,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ShelfCoverBadge(text: label);
 }

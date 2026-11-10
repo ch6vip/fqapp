@@ -87,14 +87,7 @@ class _AiPromptEditorPageState extends State<AiPromptEditorPage> {
                 const SizedBox(height: 8),
               ],
               Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: palette.surface,
-                    borderRadius: BorderRadius.circular(
-                      SettingsGroupCard.radius,
-                    ),
-                    border: Border.all(color: palette.line, width: 0.6),
-                  ),
+                child: SurfacePanel(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                   child: TextField(
                     controller: _controller,

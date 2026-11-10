@@ -197,6 +197,75 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     if (mounted) setState(() => _probeResult = null);
   }
 
+  /// The stored value normalised to one of the three option keys.
+  ///
+  /// Anything unknown reads as the dotted default - the same normalisation
+  /// the old `DropdownButton`'s `value:` did, so a legacy or damaged setting
+  /// still highlights a row in the picker instead of leaving it unselected.
+  static String _markStyleKey(String style) => switch (style) {
+    'off' => 'off',
+    'solid' => 'solid',
+    _ => 'dotted',
+  };
+
+  /// The label of the 「修改标记」 row.
+  ///
+  /// The stored value has three shapes - `off`, `solid` and anything else for
+  /// the dotted default - and the row shows the same words the picker offers.
+  static String _markStyleLabel(String style) => switch (style) {
+    'off' => '关闭',
+    'solid' => '实线',
+    _ => '低对比点线',
+  };
+
+  /// Picks the 「修改标记」 style.
+  ///
+  /// This uses the shared choice dialog like every other AI setting, so the
+  /// row reads the same as its neighbours. A `DropdownButton` here drew its
+  /// own 2dp menu on the canvas colour, which made this one row look like a
+  /// different control from the "播放页布局" picker beside it.
+  Future<void> _pickMarkStyle(BuildContext context, String current) async {
+    const options = [
+      (key: 'dotted', label: '低对比点线'),
+      (key: 'solid', label: '实线'),
+      (key: 'off', label: '关闭'),
+    ];
+    final choice = await showAiChoiceDialog(
+      context,
+      title: '修改标记',
+      options: [
+        for (final option in options)
+          (
+            key: option.key,
+            label: option.label,
+            selected: option.key == _markStyleKey(current),
+          ),
+      ],
+    );
+    if (choice == null || !mounted) return;
+    await _saveGlobal(_settings.global.copyWith(markStyle: choice));
+  }
+
+  /// Picks the 「预校对范围」 chapter count.
+  Future<void> _pickPrefetchRange(BuildContext context, int current) async {
+    final choice = await showAiChoiceDialog(
+      context,
+      title: '预校对范围',
+      options: [
+        for (final count in const [1, 2, 3])
+          (
+            key: '$count',
+            label: '$count 章',
+            selected: count == current.clamp(1, 3),
+          ),
+      ],
+    );
+    if (choice == null || !mounted) return;
+    final count = int.tryParse(choice);
+    if (count == null) return;
+    await _saveGlobal(_settings.global.copyWith(maxPrefetchChapters: count));
+  }
+
   Future<void> _openProviders() async {
     await Navigator.of(
       context,
@@ -390,12 +459,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     final subtitle = profile == null
         ? '尚未配置提供商'
         : '${profile.label}${model == null || model.isEmpty ? '' : '，$model'}，$status';
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: palette.line, width: 0.6),
-      ),
+    return SurfacePanel(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -560,24 +624,11 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         SettingsRow(
           icon: Icons.format_color_text,
           title: '修改标记',
-          trailing: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: global.markStyle == 'off'
-                  ? 'off'
-                  : global.markStyle == 'solid'
-                  ? 'solid'
-                  : 'dotted',
-              items: const [
-                DropdownMenuItem(value: 'dotted', child: Text('低对比点线')),
-                DropdownMenuItem(value: 'solid', child: Text('实线')),
-                DropdownMenuItem(value: 'off', child: Text('关闭')),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                _saveGlobal(_settings.global.copyWith(markStyle: value));
-              },
-            ),
-          ),
+          // The same picker the other AI settings use. A raw `DropdownButton`
+          // drew its own 2dp menu on the canvas colour, so this row looked
+          // like a different control from the "播放页布局" picker next to it.
+          value: _markStyleLabel(global.markStyle),
+          onTap: () => _pickMarkStyle(context, global.markStyle),
         ),
       ],
     );
@@ -633,22 +684,8 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         SettingsRow(
           icon: Icons.format_list_numbered,
           title: '预校对范围',
-          trailing: DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              value: global.maxPrefetchChapters.clamp(1, 3),
-              items: const [
-                DropdownMenuItem(value: 1, child: Text('1 章')),
-                DropdownMenuItem(value: 2, child: Text('2 章')),
-                DropdownMenuItem(value: 3, child: Text('3 章')),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                _saveGlobal(
-                  _settings.global.copyWith(maxPrefetchChapters: value),
-                );
-              },
-            ),
-          ),
+          value: '${global.maxPrefetchChapters.clamp(1, 3)} 章',
+          onTap: () => _pickPrefetchRange(context, global.maxPrefetchChapters),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),

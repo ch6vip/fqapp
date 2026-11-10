@@ -16,7 +16,7 @@ import 'reader_page.dart';
 /// 书旗书籍详情 + 目录。
 ///
 /// 页面版式来自上游 `DetailPage`（revision ebcd7f1）：磨砂头栏、档案分区、
-/// 行内目录和底部玻璃操作坞。书旗仍是一条**只读**链路：不写书架、不写阅读
+/// 行内目录和底部玻璃操作坞。书旗只读取上游内容，支持加入本机书架，但不写阅读
 /// 历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过番茄那套目录同步与
 /// 磁盘缓存；阅读器内部的进度/阅读时长写入则靠注入 [_ReadOnlyReaderStore]
 /// 丢弃。
@@ -132,6 +132,7 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
           bookId: 'shuqi:${widget.bookId}',
           title: book.name,
           cover: book.coverUrl,
+          shelfItem: book.toMediaItem(),
           chapters: toc.toReaderChapters(),
           startIndex: start,
           localOnly: true,
