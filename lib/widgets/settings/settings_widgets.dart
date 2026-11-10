@@ -80,15 +80,23 @@ class SettingsScaffold extends StatelessWidget {
 /// corner radius.
 ///
 /// It is the shell behind [SettingsGroupCard] and the AI reading info cards,
-/// so a panel looks the same wherever it appears. The fill is a `Material`
-/// rather than a `Container`: that is what gives the panel correct ink and
-/// clipping behaviour, and it keeps every panel on one shape.
+/// so a panel looks the same wherever it appears.
+///
+/// Two shells share the one visual definition. With `ink` (the default for
+/// [SettingsGroupCard]) the fill is a `Material` with `Clip.antiAlias`, so
+/// `InkWell` ripples are hosted and clipped to the rounded shape. Without it
+/// the fill is a plain `DecoratedBox` — visually identical, but with no clip
+/// layer and no ink host, which keeps the per-frame repaint of the whole page
+/// cheap while the keyboard animation relayouts it (a `Material` here cost
+/// about twice the paint/build work of the decorated box on the same page).
+/// Cards without an interactive ink child should stay on the default.
 class SurfacePanel extends StatelessWidget {
   const SurfacePanel({
     super.key,
     required this.child,
     this.padding = EdgeInsets.zero,
     this.radius = SettingsGroupCard.radius,
+    this.ink = false,
   });
 
   final Widget child;
@@ -97,9 +105,23 @@ class SurfacePanel extends StatelessWidget {
   /// Corner radius; the shared token by default.
   final double radius;
 
+  /// Host `InkWell` ink and clip it to the shape.
+  final bool ink;
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final body = Padding(padding: padding, child: child);
+    if (!ink) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: palette.line, width: 0.6),
+        ),
+        child: body,
+      );
+    }
     return Material(
       color: palette.surface,
       clipBehavior: Clip.antiAlias,
@@ -107,7 +129,7 @@ class SurfacePanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
         side: BorderSide(color: palette.line, width: 0.6),
       ),
-      child: Padding(padding: padding, child: child),
+      child: body,
     );
   }
 }
@@ -136,6 +158,7 @@ class SettingsGroupCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return SurfacePanel(
+      ink: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
