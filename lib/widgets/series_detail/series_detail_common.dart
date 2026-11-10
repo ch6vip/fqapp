@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../app_ui/app_ui_scope.dart';
 import '../home/home_design.dart';
 import '../wenku/wenku_ui.dart';
 
-/// 短剧详情里统一的区块头：上游 `ArchiveSection` 的档案标题（编号 + 分隔线 +
-/// 标题）右侧接一个动作。
+/// 短剧详情里统一的区块头：经典主题回到版式稿的「15sp 标题 + 右端 12sp
+/// 动作」；档案主题沿用上游 `ArchiveSection` 的编号、分隔线与 18sp 标题。
 ///
-/// 版式稿原本是「15sp 标题 + 右端 12sp 动作」；移植到详情页这套共享组件后，
-/// 编号行由 [ArchiveSection] 提供，标题升级为档案标题 18sp。动作仍然是
-/// 12sp 灰字并保持与标题同一基线、右端贴栏距，行为与既有测试不变。
+/// 两种分支都保留同一套动作和基线，行为与既有测试不变。
 class SeriesSectionHeader extends StatelessWidget {
   const SeriesSectionHeader({super.key, required this.title, this.action});
 
@@ -27,12 +26,27 @@ class SeriesSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
           Expanded(
-            child: ArchiveSection(title: title, code: _codeFor(title)),
+            child: AppUiScope.isClassic(context)
+                ? Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      // 版式稿渲染出的 `.sh` 行盒是 24（浏览器按字体度量把
+                      // 15sp 撑到 1.6 倍），不是名义上的 1.5。
+                      height: 1.6,
+                      fontWeight: FontWeight.w700,
+                      color: palette.ink,
+                    ),
+                  )
+                : ArchiveSection(title: title, code: _codeFor(title)),
           ),
           if (action != null) ...[const SizedBox(width: 8), action!],
         ],
