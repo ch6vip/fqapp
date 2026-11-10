@@ -13,8 +13,9 @@
 //   `setting_menu.dart` / `glass_controls.dart`.
 // - Upstream items fqapp does not have (force portrait, start page, combined
 //   shelf, language, fonts, dictionaries, lane sync, widgets, frame rate,
-//   low-performance mode, haptics) are intentionally absent, per the product
+//   low-performance mode) are intentionally absent, per the product
 //   boundary: "do not add upstream settings fqapp lacks".
+// - Haptics use fqapp's app-wide preference, shared by both UI styles (#303).
 // - Windows keeps the existing two-pane `DesktopSettingsBody` inside the
 //   archive shell so the desktop settings workflow is unchanged.
 
@@ -35,6 +36,7 @@ import '../services/player_layout_preferences.dart';
 import '../services/player_preferences.dart';
 import '../services/book_open_preferences.dart';
 import '../services/drama_mute_preferences.dart';
+import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
 import '../widgets/desktop_settings_body.dart';
 import '../widgets/settings/settings_archive_rows.dart';
@@ -66,12 +68,15 @@ class SettingsPage extends StatelessWidget {
       SettingsCategory(
         icon: SettingsCategoryIcons.appearance,
         title: '外观',
-        subtitle: '主题模式、OLED 纯黑、播放页布局',
+        subtitle: HapticPreferences.supported
+            ? '主题模式、振动反馈、播放页布局'
+            : '主题模式、OLED 纯黑、播放页布局',
         // 用 builder 而不是固定 items：切到深色 / 切回浅色后，分类页重建
         // 时会重新判定，OLED 行不必退出重进就能出现或消失。
         // 播放页布局只在手机端有效（Windows 由 DesktopVideoChrome 承担）。
         itemsBuilder: (context) => [
           _themeModeItem(),
+          if (HapticPreferences.supported) _hapticsItem(),
           if (isDarkAppearance(
             systemBrightness: MediaQuery.platformBrightnessOf(context),
           ))
@@ -392,6 +397,29 @@ class SettingsPage extends StatelessWidget {
       }
     }
   }
+
+  SettingsItem _hapticsItem() => SettingsItem(
+    icon: CupertinoIcons.waveform,
+    title: '振动反馈',
+    rowBuilder: (context) => ValueListenableBuilder<bool>(
+      valueListenable: HapticPreferences.instance,
+      builder: (context, value, _) => SettingsToggleRow(
+        key: const ValueKey('settings-haptics'),
+        icon: CupertinoIcons.waveform,
+        title: '振动反馈',
+        description: '控制按钮、书架与播放手势的振动，不影响系统键盘',
+        value: value,
+        onChanged: (enabled) async {
+          final saved = await HapticPreferences.instance.setEnabled(enabled);
+          if (!saved && context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('未能完整应用或保存振动设置，请重试')));
+          }
+        },
+      ),
+    ),
+  );
 
   /// OLED 纯黑：画布纯黑省电，卡片 / 弹层保持近黑，靠描边撑住层次。
   /// 只在深色外观下显示（浅色 / 墨水屏没有可省的黑）。
