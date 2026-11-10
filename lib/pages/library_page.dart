@@ -19,6 +19,7 @@ import '../services/chapter_cache_store.dart';
 import '../services/classic_shelf_layout.dart';
 import '../services/connectivity_status.dart';
 import '../services/imported_book_store.dart';
+import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
