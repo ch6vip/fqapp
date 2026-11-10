@@ -250,6 +250,42 @@ Future<bool> showAiBudgetDialog(BuildContext context, String message) async {
   return result == true;
 }
 
+/// Keeps dialog-scoped resources (text controllers) alive until the dialog
+/// subtree has fully unmounted. `showDialog`'s future completes as soon as the
+/// pop starts while the exit animation is still playing, so a controller
+/// disposed from the caller side is still held by the mounted TextField, and
+/// the unmount pass then trips framework assertions (`_dependents.isEmpty`)
+/// on desktop IME paths.
+class AiDialogHost extends StatefulWidget {
+  const AiDialogHost({
+    super.key,
+    required this.builder,
+    required this.onDispose,
+  });
+
+  /// Rebuilt whenever [State.setState] is called, like a [StatefulBuilder];
+  /// the second argument is that setState (validation errors and such).
+  final Widget Function(BuildContext context, StateSetter setState) builder;
+
+  /// Called from [State.dispose], after every descendant (TextField included)
+  /// has unmounted.
+  final VoidCallback onDispose;
+
+  @override
+  State<AiDialogHost> createState() => _AiDialogHostState();
+}
+
+class _AiDialogHostState extends State<AiDialogHost> {
+  @override
+  void dispose() {
+    widget.onDispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, setState);
+}
+
 Future<String?> showAiTextInputDialog(
   BuildContext context, {
   required String title,
@@ -259,30 +295,41 @@ Future<String?> showAiTextInputDialog(
 }) async {
   final controller = TextEditingController(text: initial);
   final palette = HomePalette.of(context);
+  // showDialog's future resolves the moment the pop starts, while the exit
+  // animation is still playing; resolve only after the host unmounts so the
+  // caller's follow-up work stays out of the animation frames.
+  final removed = Completer<void>();
   final result = await showDialog<String>(
     context: context,
-    builder: (context) => AlertDialog(
-      backgroundColor: palette.surface,
-      title: Text(title),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        maxLines: maxLines,
-        decoration: InputDecoration(hintText: hint),
+    builder: (context) => AiDialogHost(
+      onDispose: () {
+        controller.dispose();
+        removed.complete();
+      },
+      builder: (dialogContext, setState) => AlertDialog(
+        backgroundColor: palette.surface,
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: maxLines,
+          decoration: InputDecoration(hintText: hint),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, controller.text.trim()),
-          child: const Text('保存'),
-        ),
-      ],
     ),
   );
-  controller.dispose();
+  await removed.future;
   return result;
 }
 
@@ -363,13 +410,8 @@ class AiInfoCard extends StatelessWidget {
         palette.eink ? Colors.black : const Color(0xFF9C3D33),
       AiStatusTone.neutral => palette.muted,
     };
-    return Container(
+    return SurfacePanel(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(SettingsGroupCard.radius),
-        border: Border.all(color: palette.line, width: 0.6),
-      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

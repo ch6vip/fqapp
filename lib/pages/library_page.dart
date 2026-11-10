@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/media_item.dart';
 import '../models/shelf_categories.dart';
@@ -11,11 +12,14 @@ import '../models/shelf_identity.dart';
 import '../models/shelf_view_state.dart';
 import '../models/shuqi_book.dart';
 import '../services/app_log.dart';
+import '../services/app_style_tokens.dart';
 import '../services/book_open_preferences.dart';
 import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/classic_shelf_layout.dart';
 import '../services/connectivity_status.dart';
 import '../services/imported_book_store.dart';
+import '../services/haptic_preferences.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/reader_history.dart';
@@ -24,6 +28,9 @@ import '../services/shelf_projection.dart';
 import '../services/shelf_store.dart';
 import '../services/shelf_view_store.dart';
 import '../services/update_check_gate.dart';
+import '../widgets/bookshelf_card.dart';
+import '../widgets/home/home_chip.dart';
+import '../widgets/home/home_design.dart';
 import '../widgets/shelf/book_collection_tiles.dart';
 import '../widgets/shelf/shelf_collection_view.dart';
 import '../widgets/shelf/shelf_design.dart';
@@ -52,6 +59,9 @@ import 'detail_page.dart';
 import 'reader_page.dart';
 import 'search_page.dart';
 
+part 'library_classic_chrome.dart';
+part 'library_classic_views.dart';
+part 'library_classic_widgets.dart';
 part 'library_page_actions.dart';
 part 'library_shelf_chrome.dart';
 part 'library_shelf_entry.dart';
@@ -79,9 +89,10 @@ enum _MenuAction {
   final IconData icon;
 }
 
-/// 书架页：Wenku8 档案风格的三 tab 书架（书架 / 浏览历史 / 收藏）。
+/// 书架页：同一份状态下切换档案书架与旧版经典书架（三 tab）。
 ///
-/// 版式、排序、阅读状态、来源、分类、宫格密度与立体书架参数全部来自
+/// 经典版式由 [ClassicShelfLayout] 独立持久化，使用原三档卡片与页头；
+/// 档案版式、排序、阅读状态、来源、分类、宫格密度与立体书架参数来自
 /// [ShelfViewStore]；分组来自 [ShelfGroupStore]；排序/筛选由
 /// [ShelfProjection] 完成。视觉按上游 1:1（WenkuPage / ShelfToolbar /
 /// ArchiveFileCarousel / ShelfNovelRow / ShelfBookGridTile / showJellySheet /
@@ -165,6 +176,7 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
   late final Listenable _readTimeChanges;
   late final ValueListenable<int> _shelfChanges;
   late final Listenable _viewChanges;
+  late final ClassicShelfLayout _classicLayout;
   late final ValueListenable<int> _groupChanges;
 
   /// 立体书架宽屏信息栏的按钮文案取决于「书架点书直达阅读器」偏好。
@@ -182,6 +194,8 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
       ..addListener(_storeChanged);
     _shelfChanges = ShelfStore.instance.listenable..addListener(_storeChanged);
     _viewChanges = ShelfViewStore.instance..addListener(_storeChanged);
+    _classicLayout = ClassicShelfLayout.instance..addListener(_storeChanged);
+    unawaited(_classicLayout.load());
     _groupChanges = ShelfGroupStore.instance.listenable
       ..addListener(_storeChanged);
     _shelfDirectReader = BookOpenPreferences.instance.shelfDirectReader
@@ -405,6 +419,7 @@ mixin _LibraryPageStateBase on State<LibraryPage>, WidgetsBindingObserver {
     _readTimeChanges.removeListener(_storeChanged);
     _shelfChanges.removeListener(_storeChanged);
     _viewChanges.removeListener(_storeChanged);
+    _classicLayout.removeListener(_storeChanged);
     _groupChanges.removeListener(_storeChanged);
     _shelfDirectReader.removeListener(_storeChanged);
     super.dispose();
@@ -419,9 +434,12 @@ class _LibraryPageState extends State<LibraryPage>
         _LibraryPageStateBase,
         _LibraryPageActions,
         _LibraryShelfChrome,
-        _LibraryShelfViews {
+        _LibraryShelfViews,
+        _LibraryClassicChrome,
+        _LibraryClassicViews {
   @override
   Widget build(BuildContext context) {
+    final classic = AppStyleTokens.of(context).isClassic;
     final topInset = featurePadding(context).top;
     return PopScope<Object?>(
       // 编辑态拦下系统返回 / 侧滑：先退出编辑态，而不是把整页 pop 掉。
@@ -431,35 +449,39 @@ class _LibraryPageState extends State<LibraryPage>
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _editing) _exitEdit();
       },
-      child: WenkuPage(
-        header: _header(context),
-        bottomNavigationBar: _editing ? _editBottomBar(context) : null,
-        child: ShelfPerformanceScope(
-          shelf3d: ShelfViewStore.instance.state.shelf3d,
-          child: Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
-                child: _editing ? _editBar(context) : _tabSegments(context),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: TabSwipeArea(
-                  index: _tab,
-                  count: _tabTitles.length,
-                  onSelect: _selectTab,
-                  // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
-                  enabled: !_editing,
-                  child: RefreshIndicator(
-                    onRefresh: () => _refreshUpdates(force: true),
-                    child: _content(context),
-                  ),
+      child: classic
+          ? _classicPage(context)
+          : WenkuPage(
+              header: _header(context),
+              bottomNavigationBar: _editing ? _editBottomBar(context) : null,
+              child: ShelfPerformanceScope(
+                shelf3d: ShelfViewStore.instance.state.shelf3d,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(24, topInset, 24, 0),
+                      child: _editing
+                          ? _editBar(context)
+                          : _tabSegments(context),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: TabSwipeArea(
+                        index: _tab,
+                        count: _tabTitles.length,
+                        onSelect: _selectTab,
+                        // 编辑态里横向拖动留给列表自身（多选/滑动删除的起手）。
+                        enabled: !_editing,
+                        child: RefreshIndicator(
+                          onRefresh: () => _refreshUpdates(force: true),
+                          child: _content(context),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 }

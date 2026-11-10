@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/app_style_tokens.dart';
+
 import 'home_archive.dart';
 import 'home_design.dart';
 
@@ -47,8 +49,10 @@ class HomeMasthead extends StatelessWidget {
                     color: palette.ink,
                   ),
                 ),
-                const SizedBox(height: 3),
-                const HomeCode(brandCode, size: 8),
+                if (AppStyleTokens.of(context).showDecorativeCodes) ...[
+                  const SizedBox(height: 3),
+                  const HomeCode(brandCode, size: 8),
+                ],
               ],
             ),
           ),

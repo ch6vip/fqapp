@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../services/app_theme.dart';
+import '../services/app_style_tokens.dart';
+import 'classic_shell_dock.dart';
 import 'wenku/src/easy_glass.dart';
 import 'wenku/wenku_ui.dart';
 
@@ -44,6 +46,13 @@ class ShellDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (AppStyleTokens.of(context).isClassic) {
+      return ClassicShellDock(
+        selectedIndex: selectedIndex,
+        onSelected: onSelected,
+        overVideo: overVideo,
+      );
+    }
     Widget dock = WenkuScope(
       entrance: false,
       performance: staticMaterial

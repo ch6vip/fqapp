@@ -23,6 +23,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../wenku/wenku_ui.dart';
+import '../../services/app_style_tokens.dart';
+import 'classic_settings_icons.dart';
+import 'settings_widgets.dart';
 
 /// Upstream `ContentPanel` with the settings-section dividers between rows.
 class SettingsPanel extends StatelessWidget {
@@ -75,6 +78,25 @@ class SettingsToggleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = onChanged;
+    if (AppStyleTokens.of(context).isClassic) {
+      void toggle(bool next) {
+        if (change != null) unawaited(Future<void>.sync(() => change(next)));
+      }
+
+      return SettingsRow(
+        icon: classicSettingsIcon(title, icon),
+        iconTile: true,
+        title: title,
+        subtitle: description,
+        showChevron: false,
+        onTap: change == null ? null : () => toggle(!value),
+        trailing: SettingsSwitch(
+          value: value,
+          semanticLabel: title,
+          onChanged: change == null ? null : toggle,
+        ),
+      );
+    }
     return JellyTapSurface(
       onTap: change == null ? null : () => change(!value),
       child: Column(

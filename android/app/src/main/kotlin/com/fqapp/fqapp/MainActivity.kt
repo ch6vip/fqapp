@@ -13,6 +13,7 @@ class MainActivity : FlutterActivity() {
     // 过渡事件漏发导致的 HardwareKeyboard 派发丢失影响。
     private var volumeKeyEnabled = false
     private var volumeChannel: MethodChannel? = null
+    private var hapticsChannel: MethodChannel? = null
 
     /** Read by the AI foreground-service bridge; a FGS may only start while this is true. */
     internal var isResumed = false
@@ -46,6 +47,24 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(FairMemoryPlugin())
         flutterEngine.plugins.add(AiRequestPlugin())
 
+        hapticsChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "fqapp/haptics",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                if (call.method != "setEnabled") {
+                    result.notImplemented()
+                } else if (call.arguments !is Boolean) {
+                    result.error("BAD_ARGUMENT", "Expected a boolean", null)
+                } else {
+                    // Flutter's platform haptics target this view, including
+                    // Material long presses that bypass our Dart cue helper.
+                    window.decorView.isHapticFeedbackEnabled = call.arguments as Boolean
+                    result.success(true)
+                }
+            }
+        }
+
         // 音量键翻页通道：Dart -> 原生 setEnabled 控制是否拦截；原生 -> Dart
         // volumeKey 回调翻页方向（+1 下一页 / -1 上一页）。
         volumeChannel = MethodChannel(
@@ -62,6 +81,12 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        hapticsChannel?.setMethodCallHandler(null)
+        hapticsChannel = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     override fun onResume() {
