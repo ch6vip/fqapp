@@ -22,7 +22,9 @@ import 'package:flutter/services.dart';
 
 import '../services/backend_service.dart';
 import '../services/lan_share_preferences.dart';
+import '../services/desktop_platform.dart';
 import '../widgets/settings/settings_archive_page.dart';
+import '../widgets/settings/core_proxy_settings_panel.dart';
 import '../widgets/settings/settings_archive_rows.dart';
 import '../widgets/settings/settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
@@ -391,6 +393,16 @@ class _ApiServicePageState extends State<ApiServicePage> {
                   ],
                 ),
               ),
+
+              if (isWindowsDesktop) ...[
+                const SizedBox(height: 14),
+                CoreProxySettingsPanel(
+                  applyChanges: () async {
+                    await BackendService.instance.restartForConfiguration();
+                    if (mounted) await _refresh();
+                  },
+                ),
+              ],
 
               // 接口是参考信息，默认收起；要用的人自己点开。
               const SizedBox(height: 10),

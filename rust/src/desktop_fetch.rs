@@ -3,10 +3,7 @@
 use reqwest::{blocking::Client, header};
 use std::{
     io::Read,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        OnceLock,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::Duration,
 };
@@ -79,19 +76,19 @@ const BACKOFF: [Duration; 2] = [Duration::from_millis(300), Duration::from_milli
 
 /// One pool for every session: switching episodes reuses the CDN connection
 /// (and its TLS session) of the previous episode instead of a new handshake.
-pub(crate) fn shared_client() -> Option<&'static Client> {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    if let Some(client) = CLIENT.get() {
-        return Some(client);
-    }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .pool_idle_timeout(Duration::from_secs(120))
-        .build()
-        .ok()?;
-    let _ = CLIENT.set(client);
-    CLIENT.get()
+pub(crate) fn shared_client() -> Option<Client> {
+    static CLIENT: crate::network::ClientCache<Client> = crate::network::ClientCache::new();
+    CLIENT
+        .get(|policy| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            policy
+                .configure_blocking(Client::builder())
+                .connect_timeout(Duration::from_secs(5))
+                .pool_idle_timeout(Duration::from_secs(120))
+                .build()
+                .map_err(|e| format!("build media client: {e}"))
+        })
+        .ok()
 }
 
 /// Fetches `bytes=start-end` and checks the answer describes exactly that span.
@@ -251,7 +248,7 @@ mod tests {
         let client = shared_client().unwrap();
         let cancelled = AtomicBool::new(false);
         let (data, total) = with_retries(&cancelled, || {
-            fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
         })
         .unwrap();
         assert_eq!((data.as_slice(), total), (&b"x"[..], 42));
@@ -266,7 +263,7 @@ mod tests {
         let client = shared_client().unwrap();
         let cancelled = AtomicBool::new(false);
         let error = with_retries(&cancelled, || {
-            fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
         })
         .unwrap_err();
         assert_eq!(error, FetchError::Status(403));
@@ -291,7 +288,7 @@ mod tests {
         let client = shared_client().unwrap();
         let cancelled = AtomicBool::new(false);
         let error = with_retries(&cancelled, || {
-            fetch_range(client, &url, 0, 0, PROBE_TIMEOUT)
+            fetch_range(&client, &url, 0, 0, PROBE_TIMEOUT)
         })
         .unwrap_err();
         assert_eq!(error, FetchError::Status(200));

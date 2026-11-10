@@ -1277,20 +1277,20 @@ const VIDEO_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15);
 /// transport (`upstream/http.rs`) only exposes a whole-body API, so the
 /// download path keeps its own client; it sends the same unsigned GET with
 /// the same User-Agent as `unsigned_get` (no signing, no device headers).
-/// Built lazily so a missing TLS provider (e.g. in a unit-test embedding,
-/// where the transport never installed one) degrades to the whole-body
-/// fallback instead of failing the download.
-static STREAMING_CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
-
-fn streaming_client() -> Option<&'static reqwest::Client> {
-    STREAMING_CLIENT
-        .get_or_init(|| {
-            reqwest::Client::builder()
+/// Rotates with the core's outbound policy so downloads never reuse an old proxy pool.
+fn streaming_client() -> Option<reqwest::Client> {
+    static CLIENT: crate::network::ClientCache<reqwest::Client> =
+        crate::network::ClientCache::new();
+    CLIENT
+        .get(|policy| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            policy
+                .configure(reqwest::Client::builder())
                 .timeout(VIDEO_DOWNLOAD_TIMEOUT)
                 .build()
-                .ok()
+                .map_err(|e| format!("build streaming client: {e}"))
         })
-        .as_ref()
+        .ok()
 }
 
 /// Streams a video body to `part_path` chunk by chunk, never holding the
@@ -1305,7 +1305,7 @@ async fn stream_download_to_file(
     stream_download_to_file_with_cap(url, user_agent, part_path, MAX_VIDEO_DOWNLOAD_BYTES).await
 }
 
-async fn stream_download_to_file_with_cap(
+pub(crate) async fn stream_download_to_file_with_cap(
     url: &str,
     user_agent: &str,
     part_path: &Path,

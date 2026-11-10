@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'backend_transport.dart';
 import 'lan_share_preferences.dart';
+import 'network_proxy_preferences.dart';
 
 /// Manages the local backend core.
 ///
@@ -136,10 +137,24 @@ class BackendService {
     final configDir = Directory('${dir.path}/config');
     await configDir.create(recursive: true);
 
-    await _copyAsset(
-      'assets/config/config.json',
-      File('${dir.path}/config/config.json'),
-    );
+    // Rebuild from bundled defaults and persisted user routing on every start;
+    // copying the asset alone would silently discard the user's proxy choice.
+    final config =
+        jsonDecode(
+              await _assets.loadString(
+                'assets/config/config.json',
+                cache: false,
+              ),
+            )
+            as Map<String, dynamic>;
+    config['network_proxy'] =
+        (Platform.isWindows
+                ? await NetworkProxyPreferences.instance.load()
+                : const NetworkProxyConfig())
+            .toJson();
+    await File(
+      '${dir.path}/config/config.json',
+    ).writeAsString(jsonEncode(config), flush: true);
     await _copyAsset(
       'assets/config/device_pool.example.json',
       File('${dir.path}/config/device_pool.example.json'),
@@ -346,7 +361,10 @@ class BackendService {
   /// are cancelled by that shutdown - the UI asks for confirmation before
   /// calling this. The caller owns the persisted preference; this method only
   /// acts on whatever [LanSharePreferences] currently says.
-  Future<void> restartForListenMode() async {
+  Future<void> restartForListenMode() => restartForConfiguration();
+
+  /// Redeploys persisted settings and retires requests owned by the old core.
+  Future<void> restartForConfiguration() async {
     await stop();
     await start();
   }
