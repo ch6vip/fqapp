@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -18,6 +19,8 @@ import 'package:fqapp/services/api_client.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/connectivity_status.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/reader_underline_store.dart';
+import 'package:fqapp/services/secure_key_provider.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/shelf_view_store.dart';
 import 'package:fqapp/widgets/home/home_reading_row.dart';
@@ -27,10 +30,29 @@ import 'package:fqapp/widgets/wenku/wenku_reveal.dart';
 import 'support/fakes.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+  const secureStorage = MethodChannel(
+    'plugins.it_nomads.com/flutter_secure_storage',
+  );
   late Directory directory;
 
   setUp(() async {
+    // These fixtures use plaintext boxes; an absent native store must not
+    // depend on the key provider's wall-clock retry cooldown.
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      secureStorage,
+      (_) => throw PlatformException(code: 'unavailable'),
+    );
+    SecureKeyProvider.instance.resetForTest();
+    final underlineHiveReady = ReaderUnderlineStore.hiveReady;
+    addTearDown(() {
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        secureStorage,
+        null,
+      );
+      SecureKeyProvider.instance.resetForTest();
+      ReaderUnderlineStore.hiveReady = underlineHiveReady;
+    });
     // Interaction tests use the plain list so every row is mounted without
     // scrolling past the 3D carousel; the default shelfList mode is asserted
     // explicitly in the four-mode test.
@@ -40,6 +62,9 @@ void main() {
     Hive.init(directory.path);
     await LibraryStore.instance.init();
     await ShelfStore.instance.init();
+    // Shelf/navigation fixtures do not initialize annotation storage. Keep
+    // its lazy I/O and singleton queue out of the widget fake-async zone.
+    ReaderUnderlineStore.hiveReady = false;
   });
 
   tearDown(() async {
