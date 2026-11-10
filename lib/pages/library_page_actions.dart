@@ -411,7 +411,9 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
 
   /// 非编辑态长按条目：触感反馈后进编辑态并选中该项。
   void _longPress(_ShelfEntry entry) {
-    HapticFeedback.mediumImpact();
+    if (HapticPreferences.instance.value) {
+      HapticFeedback.mediumImpact();
+    }
     _enterEdit(entry);
   }
 
