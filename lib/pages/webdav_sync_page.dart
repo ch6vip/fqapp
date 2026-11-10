@@ -90,9 +90,12 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
       animation: Listenable.merge([_service.busy, _service.status]),
       builder: (context, _) {
         final busy = _saving || _service.busy.value;
+        final classic = AppStyleTokens.of(context).isClassic;
         return _shell(
           context,
           SafeArea(
+            top: classic,
+            bottom: classic,
             child: Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
@@ -100,7 +103,9 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
                 child: Form(
                   key: _form,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: classic
+                        ? const EdgeInsets.all(16)
+                        : featurePadding(context),
                     children: [
                       const Text(
                         '云端优先覆盖书架与阅读进度',
@@ -205,6 +210,7 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
                       const SizedBox(height: 24),
                       const Text(
                         '云端已有同步文件时，强制覆盖本机在线书架、阅读进度与已看剧集。本机独有收藏会移除，本机新增收藏和阅读进度不会自动上传；删除已同步的收藏、历史和已看记录会同步到云端，离线删除将在联网后补传。只有云端文件不存在时，才用本机数据建立初始备份。AI 资产沿用备份恢复的合并规则。\n\n'
+                        '同步期间的本机修改不会被本次云端响应覆盖；期间删除的记录会继续同步。若云端包含本机存储无法区分的同 ID 跨类型历史，将停止同步并保留双方数据。\n\n'
                         '不上传本地书籍、下载缓存或账号密码。密码保存在设备安全存储中；云端同步文件包含书架与进度，请使用私人目录。服务器需支持 ETag 和条件写入。',
                       ),
                     ],

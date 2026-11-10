@@ -178,30 +178,6 @@ class ShelfStore {
     return missing.length;
   }
 
-  /// Cloud-authoritative restore; device-local imported files stay on device.
-  Future<void> replaceSyncedShelf(List<ShelfRecord> incoming) async {
-    final box = _openBox;
-    if (box == null) throw StateError('书架尚未初始化');
-    final deleting = records()
-        .where(
-          (record) => !ShelfIdentity.isLocalContentKey(
-            ShelfIdentity.contentKeyOf(record.item),
-          ),
-        )
-        .map((record) => keyOf(record.item))
-        .toList();
-    try {
-      await box.deleteAll(deleting);
-      await box.putAll({
-        for (final record in incoming)
-          keyOf(record.item): _recordOf(record.item, record.addedAt),
-      });
-      await box.flush();
-    } finally {
-      _revision.value++;
-    }
-  }
-
   /// Apply a remote shelf only where it still matches the snapshot taken
   /// before networking. A tap made during the request keeps its local result.
   Future<void> applySyncedShelf({
