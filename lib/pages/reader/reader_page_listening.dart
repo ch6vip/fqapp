@@ -481,6 +481,8 @@ extension _ReaderPageListening on _ReaderPageState {
     _syncNarrationHighlight(
       target == null ? (block.start, block.end) : (target.start, target.end),
     );
-    HapticFeedback.selectionClick();
+    if (HapticPreferences.instance.value) {
+      HapticFeedback.selectionClick();
+    }
   }
 }
