@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'wenku/src/app_text.dart';
+
 /// Small chip overlaid on a cover.
 ///
 /// Used for the card's kind label and for the optional corner tag the upstream
@@ -41,6 +43,45 @@ class CoverTagChip extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(color: Colors.white, fontSize: 9, height: 1.2),
+      ),
+    );
+  }
+}
+
+/// A small cover badge (更新 / 缓存 / source). [inverse] flips it to an ink
+/// plate for light artwork.
+///
+/// This is the one badge both bookshelf themes use. It and the Wenku8
+/// `BookSourceBadge` were the same upstream widget ported twice — once per
+/// theme — and the two copies had drifted into separate files with identical
+/// styling. They now share this implementation.
+class ShelfCoverBadge extends StatelessWidget {
+  const ShelfCoverBadge({super.key, required this.text, this.inverse = false});
+  final String text;
+  final bool inverse;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: inverse
+            ? scheme.onSurface
+            : scheme.surface.withValues(alpha: .94),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: AppText(
+          text,
+          maxLines: 1,
+          style: TextStyle(
+            color: inverse ? scheme.surface : scheme.onSurface,
+            fontSize: 9,
+            height: 1.2,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }
