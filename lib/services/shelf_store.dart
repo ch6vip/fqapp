@@ -3,6 +3,7 @@ import 'package:hive_ce/hive.dart';
 
 import '../models/media_item.dart';
 import '../models/shelf_identity.dart';
+import '../models/shuqi_book.dart';
 import 'encrypted_hive.dart';
 
 /// One 加入书架 record.
@@ -64,8 +65,56 @@ class ShelfStore {
 
   Future<void> init() async {
     if (_openBox != null) return;
-    _box = await EncryptedHive.openBox<dynamic>(Hive, boxName);
+    final box = await EncryptedHive.openBox<dynamic>(Hive, boxName);
+    await _migrateShuqiReaderEntries(box);
+    _box = box;
     _revision.value++;
+  }
+
+  Future<void> _migrateShuqiReaderEntries(Box<dynamic> box) async {
+    final readerId = RegExp(r'^shuqi:([0-9]+)$');
+    final additions = <String, dynamic>{};
+    final oldKeys = <String>[];
+    for (final key in box.keys) {
+      final raw = box.get(key);
+      if (key is! String || raw is! Map || raw['kind'] != 'book') continue;
+      final id = raw['id'];
+      if (id is! String || key != keyFor('book', id)) continue;
+      final bookId = readerId.firstMatch(id)?.group(1);
+      if (bookId == null || !ShelfIdentity.isValidContentId(bookId)) continue;
+      if ((raw['source'] != null && raw['source'] != ShelfIdentity.fanqie) ||
+          raw['seriesId'] != null ||
+          raw['episodeId'] != null) {
+        continue;
+      }
+      final target = keyFor('book', bookId, source: shuqiSourceId);
+      if (box.containsKey(target)) {
+        final existing = box.get(target);
+        final item = existing is Map
+            ? _itemFrom(existing, storageKey: target)
+            : null;
+        if (item == null ||
+            item.id != bookId ||
+            item.kind != 'book' ||
+            !isShuqiItem(item) ||
+            item.seriesId != null ||
+            item.episodeId != null) {
+          continue;
+        }
+      } else {
+        additions[target] = {...raw, 'id': bookId, 'source': shuqiSourceId};
+      }
+      oldKeys.add(key);
+    }
+    if (oldKeys.isNotEmpty) {
+      // Older readers saved their session ID as a fanqie shelf entry (#270).
+      // Keep addedAt and any canonical record; flush before removing old keys
+      // so an interrupted migration can retry without losing the book.
+      if (additions.isNotEmpty) await box.putAll(additions);
+      await box.flush();
+      await box.deleteAll(oldKeys);
+    }
+    await box.flush();
   }
 
   bool contains(String kind, String id, {String source = 'fanqie'}) {

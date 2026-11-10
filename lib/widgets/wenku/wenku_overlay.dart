@@ -297,6 +297,23 @@ class GlassOverlaySurface extends StatefulWidget {
   State<GlassOverlaySurface> createState() => _GlassOverlaySurfaceState();
 }
 
+/// The corner radii of a glass overlay and the rows inside it.
+///
+/// The menu's frame and its rows are one object: a selected row that fills a
+/// corner needs the frame's radius less the inset the menu pads its content
+/// by, so the two stay concentric instead of reading as two shapes.
+class GlassOverlayRadii {
+  const GlassOverlayRadii._();
+
+  /// The menu's frame.
+  static const double menu = 28;
+
+  /// A row inside the menu: the frame's radius less the 8dp the menu insets
+  /// its content by, so a selected row that fills a corner stays concentric
+  /// with the frame instead of reading as a square block.
+  static const double menuItem = 20;
+}
+
 class _GlassOverlaySurfaceState extends State<GlassOverlaySurface> {
   // Keep the active slider/gesture state when switching between the filtered
   // surface and its transparent preview, including lightweight renderers.
@@ -307,7 +324,7 @@ class _GlassOverlaySurfaceState extends State<GlassOverlaySurface> {
     final content = KeyedSubtree(key: _contentKey, child: widget.child);
     return LiquidGlass(
       transparent: widget.transparent,
-      radius: 28,
+      radius: GlassOverlayRadii.menu,
       thickness: 20,
       elevated: false,
       preserveOptics: widget.preserveOptics,
@@ -542,9 +559,12 @@ class _GlassMenuItemState extends State<GlassMenuItem> {
                 color: selected
                     ? scheme.onSurface.withValues(alpha: .9)
                     : Colors.transparent,
-                borderRadius: BorderRadius.circular(
-                  AppStyleTokens.of(context).panelRadius,
-                ),
+                // The selected row is a block *inside* the menu, so it takes
+                // the menu's own corner radius less the 8dp the menu pads its
+                // content by. It used to use `panelRadius` (4dp) against a
+                // 28dp frame, which put a small square block in a large round
+                // sheet - the one control that carried two shapes.
+                borderRadius: BorderRadius.circular(GlassOverlayRadii.menuItem),
                 border: _focused && widget.enabled
                     // Invert against the fill so the ring stays visible on the
                     // selected row, whose fill is `onSurface`.

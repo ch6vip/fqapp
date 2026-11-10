@@ -1,5 +1,6 @@
 import '../models/book_detail.dart' show formatWordCount;
 import '../models/media_item.dart';
+import '../models/shuqi_book.dart' show isShuqiItem;
 
 /// Kind labels shared by the detail page and the search result rows.
 ///
@@ -36,3 +37,19 @@ String mediaLengthLabel(MediaItem item) {
   }
   return '';
 }
+
+/// Joins the segments of a card's metadata line with the middle dot.
+///
+/// The separator is one definition because the same line is built in three
+/// places (the archive list row, the archive grid footer and the two search
+/// tiles) and the rules about which segments exist differ per surface — but
+/// not the way they are joined.
+String joinMetaSegments(List<String> segments) =>
+    segments.where((s) => s.isNotEmpty).join(' · ');
+
+/// The 「书旗」 marker, shown only in the classic style.
+///
+/// 书旗 is a separate source, not a category: the label says so, and the
+/// classic style is the only one where the source is spelled out.
+String? shuqiMarker(MediaItem item, {required bool isClassic}) =>
+    isClassic && isShuqiItem(item) ? '书旗' : null;

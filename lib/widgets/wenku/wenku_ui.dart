@@ -1,3 +1,7 @@
+// `ShelfCoverBadge` used to reach this barrel through
+// `../shelf/book_collection_tiles.dart`; it now lives beside `CoverTagChip`,
+// so it is exported from there to keep the barrel's surface unchanged.
+export '../cover_tag_chip.dart';
 export '../shelf/book_collection_tiles.dart';
 export '../shelf/shelf_collection_view.dart';
 export '../shelf/shelf_cover_image.dart';

@@ -22,15 +22,15 @@ String _fileCode(MediaItem item) {
   return id.isEmpty ? '$prefix-UNFILED' : '$prefix-$id';
 }
 
-String searchMediaMeta(MediaItem item) => [
+String searchMediaMeta(MediaItem item) => joinMetaSegments([
   if (item.author.isNotEmpty) item.author,
   kindLabels[item.kind] ?? item.kind,
-  if (mediaLengthLabel(item).isNotEmpty) mediaLengthLabel(item),
+  mediaLengthLabel(item),
   if (item.score != null)
     '${item.score!.toStringAsFixed(1)}分'
   else if (!isShuqiItem(item))
     '暂无评分',
-].join(' · ');
+]);
 
 /// MediaItem adapter for the upstream `NovelRow` result grammar.
 class SearchNovelRow extends StatelessWidget {
@@ -92,10 +92,10 @@ class SearchNovelRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 7),
                     Text(
-                      [
-                        if (style.isClassic && isShuqiItem(item)) '书旗',
+                      joinMetaSegments([
+                        shuqiMarker(item, isClassic: style.isClassic) ?? '',
                         searchMediaMeta(item),
-                      ].join(' · '),
+                      ]),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -168,10 +168,10 @@ class SearchBookGridTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  [
-                    if (style.isClassic && isShuqiItem(item)) '书旗',
+                  joinMetaSegments([
+                    shuqiMarker(item, isClassic: style.isClassic) ?? '',
                     searchMediaMeta(item),
-                  ].join(' · '),
+                  ]),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
