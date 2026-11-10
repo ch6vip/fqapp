@@ -14,6 +14,7 @@
 | [check_so_freshness.cjs](check_so_freshness.cjs) | 打版前检查 `libfqapi_core.so` 是否比 `rust/` 的最新改动新（判据 CRIT-011）；mtime 不是内容证明，`--expect-sha256` 可比对内容哈希 | Node.js、git；只读取文件时间与 git 历史；未接入 CI（CI 每次重编 Rust） |
 | [verify_audio_cenc.cjs](verify_audio_cenc.cjs) | 检查播放响应和加密 AAC 样本 | Node.js；会按响应中的地址有限下载 HTTPS 音频，属于在线诊断 |
 | [generate_app_icons.py](generate_app_icons.py) | 从品牌源图生成 Android 图标、Windows 图标及应用 Logo | Python 3、Pillow ≥ 9.1；修改已提交图片，普通构建直接使用现有图片 |
+| [make_test_media.py](make_test_media.py) | 用 ffmpeg 内置信号源合成播放夹具（MP4 + HLS + 密钥素材） | Python 3、ffmpeg/ffprobe；缺工具时 `--check` 退出码 2，输出到 `build/test-media/`；参数错误先于工具链检查报告，回归见 `test/make_test_media_test.cjs` |
 
 ## Rust 构建与宿主集成
 
@@ -55,6 +56,37 @@ node --test test/web_assets_test.cjs test/verify_audio_cenc_test.cjs test/build_
 `flutter test` 在宿主动态库存在时会运行 FRB 集成；库缺失时相关测试会明确跳过。`run_rust_host_tests.*` 可先重建宿主库再执行这组测试。C/JNI 主机回归和编译器要求见 [native/README.md](../native/README.md)。Android JVM 测试须在 `android/` 目录中执行：Windows 使用 `.\gradlew.bat :app:testDebugUnitTest`，Linux/macOS 使用 `./gradlew :app:testDebugUnitTest`。
 
 ## APK、诊断与资源
+
+### 合成媒体夹具
+
+真机播放检查不必依赖上游抓包（文案、域名、凭据都会变，换台机器就复现不了）。
+`make_test_media.py` 用 ffmpeg 内置信号源生成一份可重放的夹具：
+
+```powershell
+python scripts/make_test_media.py --check            # 只报工具链是否齐全，缺工具退出码 3
+python scripts/make_test_media.py                    # build/test-media/：clear.mp4 + HLS + key.bin
+python scripts/make_test_media.py --seconds 12 --size 640x360 --force
+```
+
+产物全部落在 `build/`（已忽略）。给定 `--seconds/--size` 时，**同一套 ffmpeg 构建**下逐字节可复现，
+因此 `fixture.json` 里的 `clip_sha256` 可以当断言用；`fixture.json` 同时记录了 `ffmpeg` 版本，
+换机器后哈希不同先对版本，而不是怀疑夹具本身。
+
+生成的 `clear.m3u8` 是**明文**播放列表（分片没有加密，播放列表里没有 `EXT-X-KEY` 行）。
+`key.bin` 只是提供与解密清单同形的密钥素材——16 字节原始密钥加一个 `key-info.txt` 指针，
+供需要加密播放列表的用例自行用 `-hls_key_info_file` 重新生成，不要以为它已经被接上了。
+
+顺带说清上游身份参数的位置：`version_name`/`version_code`/UA 这类**设备注册**用的值改
+`assets/config/config.json` 的 `upstream` 段、重新打包即可（缺省值与改动前一致）。范围仅限
+设备注册：正文 / 目录 / 搜索 / 短剧端点的版本号仍写死在 `rust/src/endpoints/*.rs`，通用请求 UA
+在 `rust/src/upstream/client.rs` 的 `DEFAULT_USER_AGENT`。`config.json` 随包发布，设备上的部署
+副本每次启动都会被包内副本覆盖；身份在后端每次启动时重新读取，但要换配置仍需重新打包并重启
+App。上游改的是签名算法或注册协议（逻辑）时同样要发版。
+
+改的时候注意三点（细节见 `DEVELOPMENT.md`）：`version_name` 和 `version_code` 是同一个版本的两种
+写法、无法互相推导，**必须一起写**，只写一个后端会当作配置错误拒绝启动；段内字段名写错
+（`useragent` 而不是 `user_agent`）同样会让 `Config::load` 失败，不会被静默忽略；改了版本号后，
+**用旧版本号注册的设备会在后端启动时退役**，不会继续被发出去。
 
 ### 番茄采集的本机转换
 
