@@ -272,6 +272,7 @@ class AiSettingsStore extends ChangeNotifier {
     return aiResolvePrompt(
       bookPrompt: overrides['behaviorPrompt'] as String?,
       globalPrompt: _global.behaviorPrompt,
+      restoreCensoredWords: _global.restoreCensoredWords,
     );
   }
 
