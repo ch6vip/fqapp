@@ -51,10 +51,18 @@ class WebDavSyncService with WidgetsBindingObserver {
     _generation++;
     _detach();
     config = next;
+    final generation = _generation;
+    try {
+      await _running;
+    } catch (_) {
+      // The retired target must not prevent activating the saved one.
+    }
+    if (generation != _generation) return;
     await _activate();
   }
 
   Future<void> _activate() async {
+    final generation = _generation;
     if (config?.enabled != true) {
       status.value = config == null ? '尚未配置' : '自动同步已关闭';
       return;
@@ -64,6 +72,7 @@ class WebDavSyncService with WidgetsBindingObserver {
       'webdav_sync_state',
       requireEncryption: true,
     );
+    if (generation != _generation || config?.enabled != true) return;
     if (!_attached) {
       _attached = true;
       ShelfStore.instance.listenable.addListener(_changed);
@@ -135,6 +144,7 @@ class WebDavSyncService with WidgetsBindingObserver {
         'webdav_sync_state',
         requireEncryption: true,
       );
+      if (!current()) return;
       final scope = sha256
           .convert(utf8.encode('${settings.fileUri}\n${settings.username}'))
           .toString();
@@ -142,9 +152,12 @@ class WebDavSyncService with WidgetsBindingObserver {
         if (!current()) return;
         final prior = _state!.get(scope);
         final previous = prior is Map ? prior : const {};
+        final localHistory = await LibraryStore.instance.backupSnapshot();
+        if (!current()) return;
         final localSnapshot = await LibraryBackupService().capture(
           includeAi: false,
         );
+        if (!current()) return;
         final localKeys = _snapshotKeys(localSnapshot);
         final pending = <String, Set<String>>{};
         for (final type in localKeys.keys) {
@@ -160,6 +173,7 @@ class WebDavSyncService with WidgetsBindingObserver {
           for (final type in pending.keys)
             'pending_$type': pending[type]!.toList(),
         });
+        if (!current()) return;
         final remote = await client.read();
         if (!current()) return;
         // Only an absent cloud file may be seeded from this device.
@@ -172,17 +186,20 @@ class WebDavSyncService with WidgetsBindingObserver {
           if (!await client.write(WebDavSyncDocument(local).encode(), null)) {
             continue;
           }
+          if (!current()) return;
           await _state!.put(scope, _snapshotKeys(local));
           if (current()) status.value = '已建立云端备份 · 书架 ${local.shelf.length} 本';
           return;
         }
         final document = WebDavSyncDocument.decode(remote.bytes!);
         var incoming = document.backup;
+        try {
+          LibraryStore.validateSyncedHistory(incoming.history);
+        } on FormatException catch (error) {
+          throw WebDavException(error.message);
+        }
         if (pending.values.any((keys) => keys.isNotEmpty)) {
           final deletedHistory = pending['history']!;
-          final deletedIds = deletedHistory
-              .map((key) => key.substring(key.indexOf(':') + 1))
-              .toSet();
           incoming = LibraryBackup.capture(
             shelf: incoming.shelf
                 .where(
@@ -198,8 +215,7 @@ class WebDavSyncService with WidgetsBindingObserver {
                 .toList(),
             watched: {
               for (final entry in incoming.watched.entries)
-                if (!pending['watched']!.contains(entry.key) &&
-                    !deletedIds.contains(entry.key))
+                if (!pending['watched']!.contains(entry.key))
                   entry.key: entry.value,
             },
             aiData: incoming.aiData,
@@ -218,6 +234,7 @@ class WebDavSyncService with WidgetsBindingObserver {
         final latestKeys = _snapshotKeys(
           await LibraryBackupService().capture(includeAi: false),
         );
+        if (!current()) return;
         if (localKeys.keys.any(
           (type) =>
               localKeys[type]!.any((key) => !latestKeys[type]!.contains(key)),
@@ -241,11 +258,19 @@ class WebDavSyncService with WidgetsBindingObserver {
         }
         _applying = true;
         try {
-          await ShelfStore.instance.replaceSyncedShelf(incoming.shelf);
-          await LibraryStore.instance.replaceSyncedHistory(
+          await ShelfStore.instance.applySyncedShelf(
+            before: localSnapshot.shelf,
+            incoming: incoming.shelf,
+          );
+          if (!current()) return;
+          await LibraryStore.instance.applySyncedHistory(
+            beforeHistory: localHistory.history,
+            beforeWatched: localHistory.watched,
             history: incoming.history,
             watched: incoming.watched,
+            isCurrent: current,
           );
+          if (!current()) return;
           await _state!.put(scope, {
             ..._snapshotKeys(incoming),
             'aiHash': aiHash,
@@ -253,10 +278,22 @@ class WebDavSyncService with WidgetsBindingObserver {
         } finally {
           _applying = false;
         }
-        if (current()) {
-          final stamp = DateTime.now().toLocal().toString().split('.').first;
-          status.value = '云端覆盖完成 · 书架 ${incoming.shelf.length} 本 · $stamp';
+        if (!current()) return;
+        // Local deletions during application were preserved by the stores.
+        // Compare against the new baseline instead of dropping their events.
+        final appliedKeys = _snapshotKeys(incoming);
+        final afterKeys = _snapshotKeys(
+          await LibraryBackupService().capture(includeAi: false),
+        );
+        if (!current()) return;
+        if (appliedKeys.keys.any(
+          (type) =>
+              appliedKeys[type]!.any((key) => !afterKeys[type]!.contains(key)),
+        )) {
+          continue;
         }
+        final stamp = DateTime.now().toLocal().toString().split('.').first;
+        status.value = '云端覆盖完成 · 书架 ${incoming.shelf.length} 本 · $stamp';
         return;
       }
       throw const WebDavException('其他设备正在更新，请稍后重试');

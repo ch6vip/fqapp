@@ -403,83 +403,102 @@ class LibraryStore implements ReaderStore {
     };
   }
 
-  /// Sync differs from backup import: a newer remote reading position replaces
-  /// an older local one. Re-check inside the write queue so reading while a
-  /// WebDAV request is in flight cannot be overwritten by that response.
-  Future<void> replaceSyncedHistory({
+  /// The legacy player and novel stores still share bare IDs. Refuse an
+  /// unrepresentable snapshot before any cloud or local data is replaced.
+  static void validateSyncedHistory(List<Map<String, dynamic>> history) {
+    final keys = <String>{};
+    for (final record in history) {
+      if (!keys.add(_syncedHistoryKey(record))) {
+        throw const FormatException('云端存在同 ID 的不同类型历史，已停止同步，数据未覆盖');
+      }
+    }
+  }
+
+  static String _syncedHistoryKey(Map<String, dynamic> record) {
+    final (kind, id) = _historyIdentity(record);
+    return kind == 'audio' || kind == 'manga' ? '$kind:$id' : id;
+  }
+
+  /// Cloud data wins only where the local snapshot is still unchanged.
+  /// Check inside the queue, then stage all Hive mutations before yielding.
+  Future<void> applySyncedHistory({
+    required List<Map<String, dynamic>> beforeHistory,
+    required Map<String, Map<String, int>> beforeWatched,
     required List<Map<String, dynamic>> history,
     required Map<String, Map<String, int>> watched,
+    required bool Function() isCurrent,
   }) {
-    ReadingDataWriteGuard._forStore(this).history++;
     return _serialize(() async {
-      final deleting = <dynamic>[];
+      if (!isCurrent()) return;
+      validateSyncedHistory(history);
+      final expected = {
+        for (final record in beforeHistory) _historyIdentity(record): record,
+      };
+      final current = {
+        for (final record in historySnapshot())
+          _historyIdentity(record): record,
+      };
+      final target = {for (final record in history) _historyIdentity(record)};
+      bool unchanged((String, String) identity) =>
+          mapEquals(expected[identity], current[identity]);
+
+      final deleting = <dynamic>{};
       for (final key in _histBox.keys) {
         final record = _historyRecord(_histBox.get(key), id: key.toString());
-        if (record == null ||
-            !_historyIdentity(record).$2.startsWith('local_')) {
+        if (record == null) continue;
+        final identity = _historyIdentity(record);
+        if (!identity.$2.startsWith('local_') &&
+            (!target.contains(identity) || key != _syncedHistoryKey(record)) &&
+            unchanged(identity)) {
           deleting.add(key);
         }
       }
-      await _histBox.deleteAll(deleting);
-      await _watchedBox.deleteAll(
-        _watchedBox.keys
-            .where((key) => !key.toString().startsWith('local_'))
-            .toList(),
-      );
+      final writes = <String, Map<String, dynamic>>{};
       for (final incoming in history) {
         final kind = incoming['kind'] as String;
         final id = incoming['id'] as String;
+        if (!unchanged((kind, id))) continue;
         final scoped = kind == 'audio' || kind == 'manga';
-        final key = scoped ? '$kind:$id' : id;
-        await _histBox.put(key, {
-          ...incoming,
-          'id': key,
-          if (scoped) 'contentId': id,
-        });
+        final key = _syncedHistoryKey(incoming);
+        final occupied = _historyRecord(_histBox.get(key), id: key);
+        if (occupied != null &&
+            _historyIdentity(occupied) != (kind, id) &&
+            !deleting.contains(key)) {
+          throw StateError('同步期间本机历史标识冲突，请重试');
+        }
+        writes[key] = {...incoming, 'id': key, if (scoped) 'contentId': id};
       }
-      await _watchedBox.putAll(watched);
+      bool watchedUnchanged(String id) => beforeWatched.containsKey(id)
+          ? _watchedBox.containsKey(id) &&
+                mapEquals(
+                  beforeWatched[id],
+                  _watchedRecord(_watchedBox.get(id)),
+                )
+          : !_watchedBox.containsKey(id);
+
+      final removedWatched = beforeWatched.keys
+          .where(
+            (id) =>
+                !id.startsWith('local_') &&
+                !watched.containsKey(id) &&
+                watchedUnchanged(id),
+          )
+          .toList();
+      final watchedWrites = {
+        for (final entry in watched.entries)
+          if (watchedUnchanged(entry.key)) entry.key: entry.value,
+      };
       _localHistoryCount = null;
+      await Future.wait([
+        _histBox.deleteAll(deleting),
+        _histBox.putAll(writes),
+        _watchedBox.deleteAll(removedWatched),
+        _watchedBox.putAll(watchedWrites),
+      ]);
       await _histBox.flush();
       await _watchedBox.flush();
     });
   }
-
-  Future<void> mergeSyncedHistory(List<Map<String, dynamic>> records) =>
-      _serialize(() async {
-        final byIdentity = {
-          for (final entry in historySnapshot()) _historyIdentity(entry): entry,
-        };
-        for (final incoming in records) {
-          final kind = incoming['kind'] as String;
-          final id = incoming['id'] as String;
-          final existing = byIdentity[(kind, id)];
-          if (existing != null) {
-            final localTime = (existing['time'] as num?) ?? 0;
-            final remoteTime = (incoming['time'] as num?) ?? 0;
-            final same = incoming.entries.every(
-              (entry) =>
-                  entry.key == 'id' || existing[entry.key] == entry.value,
-            );
-            if (localTime > remoteTime || (localTime == remoteTime && same)) {
-              continue;
-            }
-          }
-          final scoped = kind == 'audio' || kind == 'manga';
-          final key = scoped ? '$kind:$id' : id;
-          final occupied = _historyRecord(_histBox.get(key), id: key);
-          if (occupied != null && _historyIdentity(occupied) != (kind, id)) {
-            continue;
-          }
-          await _histBox.put(key, {
-            ...incoming,
-            'id': key,
-            if (scoped) 'contentId': id,
-          });
-          byIdentity[(kind, id)] = incoming;
-        }
-        _localHistoryCount = null;
-        await _histBox.flush();
-      });
 
   /// Import only novels. Older history-only imports receive missing metadata
   /// and chapter IDs; a newer local reading position always wins.
