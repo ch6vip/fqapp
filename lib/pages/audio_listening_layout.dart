@@ -483,10 +483,9 @@ extension _AudioListeningLayout on _AudioPageState {
     for (final tone in [...c._ttsTones, ...c._narratorTones]) {
       if (tone.id == id && tone.title.isNotEmpty) return tone.title;
     }
-    for (final voice in c._voices) {
-      if (voice.id == id && voice.label.isNotEmpty) return voice.label;
-    }
-    return id == '0' ? '默认音色' : '当前音色';
+    final localVoice = c._restoredLocalVoice;
+    if (localVoice != null && localVoice.id == id) return localVoice.label;
+    return '默认音色';
   }
 
   void _showRateLockedHint() {
