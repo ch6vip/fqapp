@@ -118,10 +118,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
       final request = resultRequest ?? (_running ? _request! : _capture());
       Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) => AiSandboxRequestPage(
-            request: request,
-            captured: resultRequest != null || _running,
-          ),
+          builder: (_) => AiSandboxRequestPage(request: request),
         ),
       );
     } on AiSnapshotException catch (error) {
