@@ -311,6 +311,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
             ),
           ],
           child: AiSandboxLayout(
+            padding: featurePadding(context),
             input: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -346,19 +347,24 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
                   onTap: _running ? null : _editBehavior,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Row(
-                      children: [
-                        const Expanded(child: Text('行为提示词')),
-                        const SizedBox(width: 12),
-                        Flexible(
-                          child: Text(
-                            _customBehavior == null ? '全局' : '本次自定义',
-                            textAlign: TextAlign.end,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => Row(
+                        children: [
+                          const Expanded(child: Text('行为提示词')),
+                          const SizedBox(width: 12),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: (constraints.maxWidth - 44) / 2,
+                            ),
+                            child: Text(
+                              _customBehavior == null ? '全局' : '本次自定义',
+                              textAlign: TextAlign.end,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.chevron_right),
-                      ],
+                          const SizedBox(width: 8),
+                          const Icon(Icons.chevron_right),
+                        ],
+                      ),
                     ),
                   ),
                 ),
