@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -39,17 +38,23 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
   Completer<void>? _cancel;
   final _settings = AiSettingsStore.instance;
 
-  String get _prompt => aiResolvePrompt(
+  String get _behaviorPrompt => aiResolvePrompt(
     bookPrompt: null,
     globalPrompt: _settings.global.behaviorPrompt,
-    restoreCensoredWords: _restore,
   ).text;
 
-  String get _protocol =>
-      _settings.provider(_settings.global.providerId)?.outputMode ==
-          AiOutputMode.jsonSchema
-      ? jsonEncode(aiJsonSchemaProjection())
-      : kAiJsonObjectProtocol;
+  AiOutputMode get _outputMode =>
+      _settings.provider(_settings.global.providerId)?.outputMode ??
+      AiOutputMode.jsonObject;
+
+  /// The exact system message the sandbox request sends, built by the same
+  /// helper the coordinator uses, so the preview cannot drift or duplicate
+  /// program-owned segments.
+  String get _systemPrompt => aiBuildSystemPrompt(
+    behaviorPrompt: _behaviorPrompt,
+    outputMode: _outputMode,
+    restoreCensoredWords: _restore,
+  );
 
   ChapterContent get _content => ChapterContent(
     blocks: [
@@ -99,7 +104,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
       return;
     }
     final content = _content;
-    final prompt = _prompt;
+    final prompt = _behaviorPrompt;
     final watch = Stopwatch()..start();
     final cancel = Completer<void>();
     _cancel = cancel;
@@ -121,6 +126,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
         content: content,
         kind: AiRunKind.trial,
         behaviorPromptOverride: prompt,
+        restoreCensoredWords: _restore,
         cancelTrigger: cancel.future,
       );
       if (!mounted) return;
@@ -193,9 +199,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
             ),
             ExpansionTile(
               title: const Text('实际提示词与输出协议'),
-              children: [
-                SelectableText('$_prompt\n$kAiEditContract\n$_protocol'),
-              ],
+              children: [SelectableText(_systemPrompt)],
             ),
             FilledButton(
               onPressed: _running ? null : _run,

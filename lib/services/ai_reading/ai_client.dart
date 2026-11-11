@@ -568,12 +568,7 @@ class AiChatCompletionsClient {
         apiKey: apiKey,
         model: model,
         messages: [
-          {
-            'role': 'system',
-            'content': outputMode == AiOutputMode.jsonObject
-                ? '只输出 json。$kAiJsonObjectProtocol'
-                : '只输出符合给定 schema 的 JSON。',
-          },
+          {'role': 'system', 'content': aiBuildProbeSystemPrompt(outputMode)},
           {'role': 'user', 'content': '这是连接测试。请返回 {"edits":[]}。'},
         ],
         outputMode: outputMode,

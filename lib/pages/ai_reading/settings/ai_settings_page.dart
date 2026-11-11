@@ -117,36 +117,23 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
     await _saveGlobal(_settings.global.copyWith(enabled: true));
   }
 
+  /// Withdraws the consent that was granted when the AI master switch was first
+  /// enabled. Granting stays in that dialog, so no second consent entry exists.
   Future<void> _toggleConsent() async {
-    if (_settings.device.cloudConsent) {
-      final confirmed = await showSettingsConfirmDialog(
-        context: context,
-        title: '撤回云端正文传输同意？',
-        message: '撤回后不会再发起新请求；已保存的校对结果仍可查看。',
-        confirmLabel: '撤回同意',
-        destructive: true,
-      );
-      if (!confirmed) return;
-      try {
-        await _controller.setCloudConsent(false);
-      } catch (error) {
-        if (!mounted) return;
-        aiShowSnack(context, '撤回失败：$error');
-      }
-      return;
-    }
-    final profile = _settings.provider(_settings.global.providerId);
-    final agreed = await showAiConsentDialog(
-      context,
-      host: profile?.host ?? '尚未配置的提供商',
-      model: _settings.global.modelId,
+    if (!_settings.device.cloudConsent) return;
+    final confirmed = await showSettingsConfirmDialog(
+      context: context,
+      title: '撤回云端正文传输同意？',
+      message: '撤回后不会再发起新请求；已保存的校对结果仍可查看。',
+      confirmLabel: '撤回同意',
+      destructive: true,
     );
-    if (!agreed) return;
+    if (!confirmed) return;
     try {
-      await _controller.setCloudConsent(true);
+      await _controller.setCloudConsent(false);
     } catch (error) {
       if (!mounted) return;
-      aiShowSnack(context, '保存云端同意失败：$error');
+      aiShowSnack(context, '撤回失败：$error');
     }
   }
 
@@ -641,9 +628,7 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
         SettingsRow(
           icon: Icons.text_fields,
           title: '去屏蔽词',
-          subtitle:
-              '根据上下文推测补全星号，并还原拼音和谐音替换词；修改可审核、撤销。'
-              '对新校对生效，已有结果需重新校对。',
+          subtitle: '根据上下文补全屏蔽词和谐音替换词',
           trailing: SettingsSwitch(
             value: global.restoreCensoredWords,
             onChanged: (value) => _saveGlobal(
@@ -922,36 +907,23 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
               ),
             ),
           ),
-        SettingsRow(
-          icon: Icons.cloud_outlined,
-          title: '云端正文传输',
-          subtitle: '隐私同意，不是日常开关',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                consented ? '已同意' : '未同意',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: HomePalette.of(context).muted,
-                ),
+        if (consented)
+          SettingsRow(
+            icon: Icons.cloud_outlined,
+            title: '正文上传授权',
+            trailing: TextButton(
+              onPressed: _toggleConsent,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              TextButton(
-                onPressed: _toggleConsent,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: const Size(0, 32),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(consented ? '撤回' : '去同意'),
-              ),
-            ],
+              child: const Text('撤销'),
+            ),
           ),
-        ),
         SettingsRow(
           icon: Icons.inventory_2_outlined,
           title: 'AI 数据备份',
-          value: '包含',
           onTap: () => Navigator.of(context).push<void>(
             MaterialPageRoute(builder: (_) => const LibraryBackupPage()),
           ),
