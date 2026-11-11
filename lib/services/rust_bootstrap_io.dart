@@ -1,5 +1,6 @@
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 import 'dart:io';
+import 'desktop_media.dart';
 
 import '../src/rust/frb_generated.dart';
 
@@ -21,9 +22,7 @@ Future<void> initRustRuntime() {
   }
   if (Platform.isLinux) {
     return RustLib.init(
-      externalLibrary: ExternalLibrary.open(
-        '${File(Platform.resolvedExecutable).parent.path}/lib/libfqapi_core.so',
-      ),
+      externalLibrary: ExternalLibrary.open(desktopCoreLibraryPath()),
     );
   }
   return RustLib.init();

@@ -71,8 +71,10 @@ set_target_properties(${BINARY_NAME}
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
-# Media support is deferred; keep the optional video plugin inert.
-set(MEDIA_KIT_LIBS_AVAILABLE OFF)
+# Use the system libmpv and allocator; never download a separate allocator.
+set(MIMALLOC_USE_STATIC_LIBS OFF CACHE BOOL "" FORCE)
+set(MEDIA_KIT_LIBS_AVAILABLE ON)
+find_library(FQAPP_MPV NAMES mpv REQUIRED)
 include(flutter/generated_plugins.cmake)
 # The locked storage plugin vendors JSON headers with deprecated literal syntax.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

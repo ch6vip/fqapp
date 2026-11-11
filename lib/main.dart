@@ -112,7 +112,7 @@ Future<void> _prepareRuntime() async {
       AudioDownloader.instance.pauseAll();
       await FairMemoryService.instance.flushForExit();
       try {
-        if (isWindowsDesktop) await NativePlayer.pauseOthers();
+        if (isMediaDesktop) await NativePlayer.pauseOthers();
       } catch (error, stack) {
         // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
         AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
