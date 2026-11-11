@@ -22,6 +22,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../models/playlet_comment.dart';
+import '../comment_emoji.dart';
 
 class PlayletHotCommentBar extends StatefulWidget {
   const PlayletHotCommentBar({
@@ -182,8 +183,8 @@ class _PlayletHotCommentBarState extends State<PlayletHotCommentBar>
             color: const Color(0x4DFFFFFF),
           ),
           Flexible(
-            child: Text(
-              _label(comment),
+            child: CommentEmojiText(
+              text: _label(comment),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 14, color: Color(0xB3FFFFFF)),
@@ -193,7 +194,10 @@ class _PlayletHotCommentBarState extends State<PlayletHotCommentBar>
           // （`InfoPanelHotCommentView.l2()` 的 withExpand 压缩）。
           if (showExpand) ...[
             const SizedBox(width: 6),
-            const Text('展开', style: TextStyle(fontSize: 14, color: Colors.white)),
+            const Text(
+              '展开',
+              style: TextStyle(fontSize: 14, color: Colors.white),
+            ),
           ],
         ],
       ),

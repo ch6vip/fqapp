@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../comment_emoji.dart';
 import '../comment_images.dart';
 import '../home/home_design.dart';
 
@@ -63,8 +64,8 @@ class PlayletDiscussionTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 if (text.isNotEmpty)
-                  Text(
-                    text,
+                  CommentEmojiText(
+                    text: text,
                     style: TextStyle(fontSize: 15, color: palette.ink),
                   ),
                 if (imageUrls.isNotEmpty) ...[
@@ -94,7 +95,10 @@ class PlayletDiscussionTile extends StatelessWidget {
                           const SizedBox(width: 4),
                           Text(
                             '$diggCount',
-                            style: TextStyle(fontSize: 12, color: palette.muted),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: palette.muted,
+                            ),
                           ),
                         ],
                       ),
