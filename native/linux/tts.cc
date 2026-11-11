@@ -34,6 +34,7 @@ class Speech final : public Tts {
   bool quitting = false;
   std::thread worker;
   static std::atomic<Speech *> active;
+  static std::mutex active_mutex;
   void emit(const char *type, const std::string &id, unsigned generation) {
     auto e = events;
     std::string t = type;
@@ -48,12 +49,13 @@ class Speech final : public Tts {
     });
   }
   static void callback(size_t msg, size_t, SPDNotificationType type) {
+    std::lock_guard<std::mutex> guard(active_mutex);
     auto *self = active.load();
     if (!self)
       return;
     unsigned generation = self->events->generation;
     self->post([self, msg, type, generation] {
-      if (generation != self->events->generation)
+      if (!self->events->alive || generation != self->events->generation)
         return;
       auto found = self->ids.find(msg);
       if (found == self->ids.end())
@@ -93,7 +95,11 @@ class Speech final : public Tts {
                            nullptr, 0, nullptr);
     if (!connection)
       return false;
-    active = this;
+    {
+      std::lock_guard<std::mutex> guard(active_mutex);
+      if (events->alive)
+        active = this;
+    }
     connection->callback_begin = callback;
     connection->callback_end = callback;
     connection->callback_cancel = callback;
@@ -112,13 +118,16 @@ class Speech final : public Tts {
     return !connection || spd_cancel(connection) >= 0;
   }
   void close() {
-    active = nullptr;
+    {
+      std::lock_guard<std::mutex> guard(active_mutex);
+      if (active == this)
+        active = nullptr;
+    }
     cancel();
     if (connection) {
       spd_close(connection);
       connection = nullptr;
     }
-    active = nullptr;
   }
   void post(std::function<void()> f) {
     {
@@ -160,7 +169,13 @@ public:
           close();
         }) {}
   ~Speech() override {
-    events->alive = false;
+    {
+      // Fence pointer acquisition and enqueue before draining the worker.
+      std::lock_guard<std::mutex> guard(active_mutex);
+      if (active == this)
+        active = nullptr;
+      events->alive = false;
+    }
     {
       std::lock_guard<std::mutex> guard(jobs_mutex);
       quitting = true;
@@ -330,6 +345,7 @@ public:
   }
 };
 std::atomic<Speech *> Speech::active{nullptr};
+std::mutex Speech::active_mutex;
 std::unique_ptr<Tts> make_tts(FlEventChannel *c) {
   return std::make_unique<Speech>(c);
 }
