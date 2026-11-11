@@ -10,12 +10,13 @@ import 'package:fqapp/widgets/player/playlet_hot_comment_bar.dart';
 /// 取值依据 `SeriesHotCommentView.java:600`（取第 0 条）、`:98-129`
 /// （CountDownTimer(5000,5000)）、`:287-296`（200ms 位移+淡入）。
 void main() {
-  PlayletComment comment(String id, {int roleType = 0}) => PlayletComment(
-    id: id,
-    text: '内容$id',
-    userName: '小明',
-    playletRoleType: roleType,
-  );
+  PlayletComment comment(String id, {int roleType = 0, String? text}) =>
+      PlayletComment(
+        id: id,
+        text: text ?? '内容$id',
+        userName: '小明',
+        playletRoleType: roleType,
+      );
 
   Widget app(
     List<PlayletComment> comments, {
@@ -151,5 +152,24 @@ void main() {
     expect(find.text('展开').hitTestable(), findsOneWidget);
     await tester.tap(find.text('展开'));
     expect(tapped, ['long']);
+  });
+
+  testWidgets('renders bracket emoji tokens in the preview as images', (
+    tester,
+  ) async {
+    await tester.pumpWidget(app([comment('c1', text: '这条热评[赞]')]));
+    await tester.pumpAndSettle();
+
+    final emoji = tester
+        .widgetList<Image>(find.byType(Image))
+        .where(
+          (image) =>
+              (image.image as AssetImage).assetName ==
+              'assets/images/emoji/emoji_32.webp',
+        );
+    expect(emoji, isNotEmpty);
+    expect(find.textContaining('[赞]'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
