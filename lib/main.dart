@@ -525,10 +525,39 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> {
+class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   int _index = 0;
   bool _backendReady = false;
   bool _legacyNoticeScheduled = false;
+
+  /// 页面滑动过渡动画：dock 点击 / 拖动松手 / 页面回调统一经 [_selectTab]
+  /// 驱动。页面用 Stack + Transform.translate 按动画值平移（与 PageView
+  /// 的滑动观感一致），但挂载时机完全可控——首次访问的目标页先在静止帧
+  /// 挂载完，再启动滑动，页面构建不会冻住滑动中的 dock 高亮。
+  late final AnimationController _pageMotion = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  )..value = 1;
+
+  /// 滑动动画的起点页码（可为小数：打断上一次动画时从当前显示位置继续）。
+  double _pageFrom = 0;
+
+  /// 首次访问延迟挂载的目标页：静止帧里先挂载（不 Offstage 但 Transform
+  /// 放在屏外），挂载帧结束后清除并启动滑动。
+  int? _premount;
+
+  /// 预挂载世代令牌：每次实际切换自增，使待执行的预挂载 post-frame 回调
+  /// 失效——同帧多次选择时只有最新一次生效，过期回调不得覆盖 _index。
+  int _premountGeneration = 0;
+
+  /// 已挂载过的 tab。未访问的页不进 Stack，避免跨多页切换把沿途页面
+  /// （短剧视频流等）全部提前挂载。
+  final Set<int> _visitedTabs = {0};
+
+  /// 页面 widget 缓存：避免 AnimatedBuilder 每帧重建 widget 对象。
+  /// State 由框架保活，缓存的 widget 只是配置描述，不影响主题等
+  /// inherited 依赖的正常更新。
+  final Map<int, Widget> _tabCache = {};
 
   /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
   final ScrollController _homeScroll = ScrollController();
@@ -547,7 +576,39 @@ class _RootShellState extends State<RootShell> {
   /// 分类栏会自己重新吸住。
   void _selectTab(int index) {
     if (index != _index) {
-      setState(() => _index = index);
+      // 任何实际切换都使待执行的预挂载回调失效，防止过期回调覆盖新选择。
+      final generation = ++_premountGeneration;
+      if (_visitedTabs.contains(index) ||
+          einkModeNotifier.value ||
+          MediaQuery.disableAnimationsOf(context)) {
+        // 已访问过 / eink / 减弱动态效果：目标页已挂载（或不需要动画），
+        // 直接切换，不走预挂载帧。
+        final from = _currentPage();
+        setState(() {
+          _index = index;
+          _premount = null;
+          _visitedTabs.add(index);
+        });
+        _startPageMotion(from, index);
+        return;
+      }
+      // 首次访问：先在静止帧把目标页挂载完（不 Offstage 但 Transform
+      // 放在屏外，页面还停在旧 tab、dock 高亮未动），挂载帧结束后再
+      // 同步启动页面滑动与 dock 弹簧。页面构建的开销发生在动画开始前
+      // 而不是滑动中段，dock 高亮不会被冻结在中途项上再跳变。
+      setState(() {
+        _visitedTabs.add(index);
+        _premount = index;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || generation != _premountGeneration) return;
+        final from = _currentPage();
+        setState(() {
+          _index = index;
+          _premount = null;
+        });
+        _startPageMotion(from, index);
+      });
       return;
     }
     if (index != 0) return; // 只有首页有 feed 需要回顶
@@ -560,6 +621,56 @@ class _RootShellState extends State<RootShell> {
     _homeScroll.jumpTo(_homeScroll.position.minScrollExtent);
   }
 
+  /// 启动页面滑动：与 dock 高亮的弹簧滑动同帧开始、同起同终。
+  /// [from] 必须在 setState 改变 [_index] 之前捕获（否则起点=终点，
+  /// 动画无效）。eink / 系统减弱动态效果不做动画，直接落位。
+  void _startPageMotion(double from, int index) {
+    if (einkModeNotifier.value || MediaQuery.disableAnimationsOf(context)) {
+      _pageMotion.value = 1;
+      _pageFrom = index.toDouble();
+      return;
+    }
+    _pageFrom = from;
+    _pageMotion.forward(from: 0);
+  }
+
+  /// 当前显示的连续页码（动画中为小数，静止时等于 [_index]）。
+  double _currentPage() =>
+      _pageFrom +
+      (_index - _pageFrom) * Curves.easeOutCubic.transform(_pageMotion.value);
+
+  Widget _tabChild(int index) =>
+      _tabCache.putIfAbsent(index, () => _buildTabChild(index));
+
+  Widget _buildTabChild(int index) {
+    switch (index) {
+      case 0:
+        return HomePage(
+          scrollController: _homeScroll,
+          cueLoader: ApiClient.instance.searchCue,
+        );
+      case 1:
+        // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
+        // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
+        return supportsVideoPlayback
+            ? const DramaPage()
+            : const UnsupportedFeaturePage(
+                icon: LucideIcons.clapperboard,
+                title: '短剧暂不支持',
+                description: '当前平台没有内置视频播放器。搜书、书架和阅读可以正常使用。',
+              );
+      case 2:
+        // 空书架上的「去书城找书」切回首页 tab；收藏空态的「找短剧」
+        // 切到短剧 tab。
+        return LibraryPage(
+          onBrowse: () => _selectTab(0),
+          onFindDrama: () => _selectTab(1),
+        );
+      default:
+        return const MinePage();
+    }
+  }
+
   String? _backendError;
 
   @override
@@ -568,11 +679,22 @@ class _RootShellState extends State<RootShell> {
     // 短剧频道在推荐（视频流）与浅色页之间切换时，悬浮 dock 和系统导航栏
     // 要跟着换肤，所以停在壳层的 build 里监听。
     dramaLightPageNotifier.addListener(_onDramaChromeChanged);
+    _pageMotion.addStatusListener(_onPageMotionStatus);
     _startBackend();
   }
 
   void _onDramaChromeChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// 页面滑动动画结束时触发一次 rebuild：让 dock 恢复 BackdropFilter
+  /// 实时模糊（动画期间跳过了模糊以避免逐帧全屏高斯开销）。
+  void _onPageMotionStatus(AnimationStatus status) {
+    if ((status == AnimationStatus.completed ||
+            status == AnimationStatus.dismissed) &&
+        mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _startBackend() async {
@@ -645,7 +767,9 @@ class _RootShellState extends State<RootShell> {
   @override
   void dispose() {
     dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
+    _pageMotion.removeStatusListener(_onPageMotionStatus);
     _homeScroll.dispose();
+    _pageMotion.dispose();
     super.dispose();
   }
 
@@ -766,31 +890,50 @@ class _RootShellState extends State<RootShell> {
                       ? Brightness.light
                       : Brightness.dark,
                 ),
-        child: LazyIndexedStack(
-          index: _index,
-          children: [
-            HomePage(
-              scrollController: _homeScroll,
-              cueLoader: ApiClient.instance.searchCue,
-            ),
-            // iOS 首版没有原生播放器实现：把短剧页换成「暂不支持」占位，
-            // 避免进入播放页时触发缺失的 fqapp/native_player 通道。
-            if (supportsVideoPlayback)
-              const DramaPage()
-            else
-              const UnsupportedFeaturePage(
-                icon: LucideIcons.clapperboard,
-                title: '短剧暂不支持',
-                description: '当前平台没有内置视频播放器。搜书、书架和阅读可以正常使用。',
-              ),
-            // 空书架上的「去书城找书」切回首页 tab；收藏空态的「找短剧」
-            // 切到短剧 tab。
-            LibraryPage(
-              onBrowse: () => setState(() => _index = 0),
-              onFindDrama: () => setState(() => _index = 1),
-            ),
-            const MinePage(),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            return AnimatedBuilder(
+              animation: _pageMotion,
+              builder: (context, _) {
+                final page = _currentPage();
+                return Stack(
+                  key: const ValueKey('root-page-stack'),
+                  fit: StackFit.expand,
+                  children: [
+                    for (var i = 0; i < 4; i++)
+                      if (_visitedTabs.contains(i))
+                        KeyedSubtree(
+                          key: ValueKey('root-tab-$i'),
+                          child: Offstage(
+                            key: ValueKey('root-tab-offstage-$i'),
+                            // 静止时只显示当前页；预挂载帧额外显示目标页
+                            // （Transform 放在屏外，完成 layout 但不显示）；
+                            // 动画中显示视口范围内的页（旧页滑出 + 新页滑入）。
+                            offstage:
+                                !(i == _index ||
+                                    i == _premount ||
+                                    (_pageMotion.isAnimating &&
+                                        (i - page).abs() < 1)),
+                            child: Transform.translate(
+                              offset: Offset((i - page) * width, 0),
+                              // RepaintBoundary 把页面内容缓存为独立图层：
+                              // 动画期间 Transform 只移动图层（GPU 合成），
+                              // 不触发页面内容的逐帧 repaint。
+                              child: RepaintBoundary(
+                                child: TickerMode(
+                                  enabled: i == _index,
+                                  child: _tabChild(i),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
       // 上游 Wenku8 GlassDock：胶囊、拖动预览和液态玻璃选中区；短剧视频流
@@ -800,6 +943,7 @@ class _RootShellState extends State<RootShell> {
         onSelected: _selectTab,
         overVideo: dramaOnVideo,
         staticMaterial: shellDockStaticMaterial(overVideo: dramaOnVideo),
+        animating: _pageMotion.isAnimating,
       ),
     );
   }
