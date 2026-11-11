@@ -1,0 +1,172 @@
+name: Preview Release
+
+# Rolling preview release: every time master moves and BOTH build
+# workflows have succeeded for that commit, refresh the single
+# "preview" prerelease with the fresh artifacts, so testers can always
+# grab the newest build without a formal release. Formal releases stay
+# manual (version bump + v* tag are the maintainer's own gate).
+#
+# Fires once per build completion; the run that arrives first finds the
+# other build missing and exits, the second one does the publish.
+# Re-running is safe: the preview release is rebuilt from scratch.
+
+on:
+  workflow_run:
+    workflows: ['Android APK', 'Windows build and regression']
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: preview-release
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # The first step runs before any checkout, so there is no git remote for
+      # gh to infer the repository from; GH_REPO is the only thing gh reads.
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      PREVIEW_TAG: preview
+      # Formal signing certificate (SHA-256) every APK must carry, so a
+      # preview build installs over the formal one and vice versa.
+      EXPECTED_CERT: e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550
+    steps:
+      - name: Resolve both build runs for this commit
+        id: runs
+        run: |
+          set -euo pipefail
+          runs=$(gh run list --commit "$SHA" --limit 30 \
+            --json databaseId,name,conclusion,status)
+          android_id=$(echo "$runs" | jq -r '[.[] | select(.name=="Android APK" and .conclusion=="success")][0].databaseId // empty')
+          windows_id=$(echo "$runs" | jq -r '[.[] | select(.name=="Windows build and regression" and .conclusion=="success")][0].databaseId // empty')
+          if [ -z "$android_id" ] || [ -z "$windows_id" ]; then
+            echo "Both builds not finished yet (android=$android_id windows=$windows_id); the other completion will retrigger this workflow."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "ready=true"
+            echo "android_id=$android_id"
+            echo "windows_id=$windows_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the commit
+        if: steps.runs.outputs.ready == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        if: steps.runs.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "${{ steps.runs.outputs.android_id }}" --dir artifacts
+          gh run download "${{ steps.runs.outputs.windows_id }}" --dir artifacts
+
+      - name: Assemble and verify preview assets
+        if: steps.runs.outputs.ready == 'true'
+        id: assemble
+        run: |
+          set -euo pipefail
+          pubspec_version=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
+          base_version="${pubspec_version%%+*}"
+          echo "base_version=$base_version" >> "$GITHUB_OUTPUT"
+
+          mkdir -p out
+          arm64_apk=$(find artifacts -name 'app-arm64-v8a-release.apk' | head -1)
+          armv7_apk=$(find artifacts -name 'app-armeabi-v7a-release.apk' | head -1)
+          windows_zip=$(find artifacts -name 'fqapp-windows-x64-preview.zip' | head -1)
+          [ -n "$arm64_apk" ] && [ -n "$armv7_apk" ] && [ -n "$windows_zip" ] \
+            || { echo "::error::missing build artifacts"; find artifacts -type f | head -30; exit 1; }
+          cp "$arm64_apk" out/app-arm64-v8a-release.apk
+          cp "$armv7_apk" out/app-armeabi-v7a-release.apk
+          cp "$windows_zip" "out/fqapp-windows-v$base_version.zip"
+
+          # Both APKs must be signed with the formal certificate and carry
+          # the pubspec versionName (from CI's own verification logs).
+          for abi in arm64-v8a armeabi-v7a; do
+            signer_log=$(find artifacts -path "*$abi/apksigner.log" | head -1)
+            badging_log=$(find artifacts -path "*$abi/aapt-badging.log" | head -1)
+            [ -n "$signer_log" ] && [ -n "$badging_log" ] \
+              || { echo "::error::verification logs missing for $abi"; exit 1; }
+            grep -q "Signer #1 certificate SHA-256 digest: $EXPECTED_CERT" "$signer_log" \
+              || { echo "::error::$abi APK is not signed with the formal certificate"; exit 1; }
+            grep -q "versionName='$base_version'" "$badging_log" \
+              || { echo "::error::$abi APK versionName does not match pubspec $pubspec_version"; exit 1; }
+          done
+
+          (cd out && sha256sum * > SHA256SUMS)
+          built_at=$(date -u '+%Y-%m-%d %H:%M UTC')
+          echo "built_at=$built_at" >> "$GITHUB_OUTPUT"
+          {
+            echo "# 预览版核验（自动生成）"
+            echo
+            echo "- 类型：滚动预览版（master 最新成功构建），非正式发布"
+            echo "- 版本：$pubspec_version，提交：$SHA，构建时间：$built_at"
+            echo "- CI：Android APK run ${{ steps.runs.outputs.android_id }}；Windows run ${{ steps.runs.outputs.windows_id }}（均为 master 推送触发且成功）"
+            echo "- 签名证书 SHA-256：$EXPECTED_CERT（两 ABI 的 CI apksigner 日志已核对一致，可与正式版互相覆盖安装）"
+            echo
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } > out/VALIDATION.md
+          ls -la out
+
+      - name: Publish the rolling preview release
+        if: steps.runs.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          base_version="${{ steps.assemble.outputs.base_version }}"
+          built_at="${{ steps.assemble.outputs.built_at }}"
+          short_sha="${SHA:0:7}"
+
+          {
+            echo "## 最新预览版（滚动更新）"
+            echo
+            echo "这是 master 分支最新成功构建的**预览版**，每次主干更新后自动刷新，不是正式发布。正式版请看 Releases 里的 Latest。"
+            echo
+            echo "- 包含版本：$base_version（提交 \`$short_sha\`，构建于 $built_at）"
+            echo "- Android：\`app-arm64-v8a-release.apk\`（主流机型）、\`app-armeabi-v7a-release.apk\`（老设备/墨水屏）"
+            echo "- Windows：\`fqapp-windows-v$base_version.zip\`（便携版，解压即用）"
+            echo
+            echo "与正式版同一签名，可互相覆盖安装。校验值见 \`SHA256SUMS\`，核验见 \`VALIDATION.md\`。"
+            echo
+            echo "### 自上个正式版以来的变更"
+            echo
+          } > notes.md
+          prev_tag=$(git tag -l 'v*' | sort -V | tail -1 || true)
+          if [ -n "$prev_tag" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$PREVIEW_TAG" -f target_commitish="$SHA" \
+              -f previous_tag_name="$prev_tag" \
+              --jq '.body' >> notes.md 2>/dev/null \
+              || git log --oneline "$prev_tag..$SHA" | sed 's/^/- /' >> notes.md
+          else
+            git log --oneline -20 "$SHA" | sed 's/^/- /' >> notes.md
+          fi
+
+          # Replace the old preview release + tag, then republish at the
+          # new commit. The pushes below use GITHUB_TOKEN, which does not
+          # retrigger workflows, and "preview" does not match the v* build
+          # triggers either — no release loop.
+          gh release delete "$PREVIEW_TAG" --cleanup-tag --yes 2>/dev/null || true
+          git tag -f "$PREVIEW_TAG" "$SHA"
+          git push -f origin "refs/tags/$PREVIEW_TAG"
+          gh release create "$PREVIEW_TAG" out/* \
+            --title "最新预览版（$base_version @ $short_sha）" \
+            --notes-file notes.md \
+            --prerelease
+          echo "Preview refreshed at $SHA."
