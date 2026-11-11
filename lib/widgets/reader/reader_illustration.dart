@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -39,9 +41,17 @@ class ReaderIllustration extends StatefulWidget {
 }
 
 class _ReaderIllustrationState extends State<ReaderIllustration> {
+  /// A CDN connection can stall without completing or throwing, which left the
+  /// placeholder spinning forever (#266). After this long without a first
+  /// frame, offer the failure UI and a retry instead.
+  static const _loadTimeout = Duration(seconds: 20);
+
   late ImageProvider<Object> _provider = _createProvider();
   int _attempt = 0;
   bool _retrying = false;
+  bool _stalled = false;
+  bool _frameReady = false;
+  Timer? _loadTimer;
 
   @override
   void didChangeDependencies() {
@@ -55,20 +65,35 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
   void initState() {
     super.initState();
     einkModeNotifier.addListener(_onEinkChanged);
+    _restartLoadTimer();
   }
 
   @override
   void dispose() {
+    _loadTimer?.cancel();
     einkModeNotifier.removeListener(_onEinkChanged);
     super.dispose();
+  }
+
+  /// Restarts the first-frame deadline. Called whenever the provider changes,
+  /// so a retry gets a fresh window.
+  void _restartLoadTimer() {
+    _loadTimer?.cancel();
+    _frameReady = false;
+    _loadTimer = Timer(_loadTimeout, () {
+      if (!mounted || _frameReady) return;
+      setState(() => _stalled = true);
+    });
   }
 
   void _onEinkChanged() {
     if (!mounted) return;
     setState(() {
+      _stalled = false;
       _provider = _createProvider();
       ++_attempt;
     });
+    _restartLoadTimer();
   }
 
   ImageProvider<Object> _createProvider() {
@@ -92,8 +117,10 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.image.url != widget.image.url ||
         oldWidget.providerFactory != widget.providerFactory) {
+      _stalled = false;
       _provider = _createProvider();
       ++_attempt;
+      _restartLoadTimer();
     }
   }
 
@@ -110,10 +137,12 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
     }
     if (!mounted) return;
     setState(() {
+      _stalled = false;
       _provider = _createProvider();
       ++_attempt;
       _retrying = false;
     });
+    _restartLoadTimer();
   }
 
   void _open() {
@@ -172,15 +201,31 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
         width: double.infinity,
         height: double.infinity,
         excludeFromSemantics: true,
-        frameBuilder: (context, child, frame, synchronous) =>
-            frame == null ? _message(context, failed: false) : child,
-        errorBuilder: (context, error, stack) =>
-            _message(context, failed: true),
+        frameBuilder: (context, child, frame, synchronous) {
+          if (frame != null) {
+            // A late frame after the deadline still wins; clear the stalled
+            // flag so a later build without a new timer does not show it.
+            _frameReady = true;
+            _stalled = false;
+          }
+          if (frame == null) {
+            return _message(context, failed: _stalled, timeout: _stalled);
+          }
+          return child;
+        },
+        errorBuilder: (context, error, stack) {
+          _frameReady = true;
+          return _message(context, failed: true);
+        },
       ),
     ),
   );
 
-  Widget _message(BuildContext context, {required bool failed}) => ColoredBox(
+  Widget _message(
+    BuildContext context, {
+    required bool failed,
+    bool timeout = false,
+  }) => ColoredBox(
     color: Theme.of(context).colorScheme.surfaceContainerLow,
     child: Center(
       child: Padding(
@@ -192,7 +237,13 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
             children: [
               Icon(failed ? LucideIcons.image_off : LucideIcons.image),
               const SizedBox(height: 8),
-              Text(failed ? '插图加载失败' : '正在加载插图'),
+              Text(
+                timeout
+                    ? '插图加载超时'
+                    : failed
+                    ? '插图加载失败'
+                    : '正在加载插图',
+              ),
               if (failed)
                 TextButton.icon(
                   onPressed: _retrying ? null : _retry,
