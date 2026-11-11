@@ -8,6 +8,20 @@ import 'package:fqapp/services/desktop_platform.dart';
 /// 之前阅读页把所有非 `resumed` 的状态都当「退到后台」，于是鼠标点到别的
 /// 窗口，听书跟随就不再翻页了 —— 这个文件把判定锁住。
 void main() {
+  test('Linux lock and suspend overlap cannot resume on an early unlock', () {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    final session = DesktopSystemSession.instance;
+    session.accept({'type': 'locked', 'value': true});
+    expect(playbackAppIsActive(AppLifecycleState.resumed), isFalse);
+    session.accept({'type': 'suspend', 'value': true});
+    session.accept({'type': 'locked', 'value': false});
+    expect(desktopInactiveStillVisible(AppLifecycleState.resumed), isFalse);
+    session.accept({'type': 'service', 'value': false});
+    expect(session.suspended, isTrue);
+    session.accept({'type': 'suspend', 'value': false});
+    expect(playbackAppIsActive(AppLifecycleState.inactive), isTrue);
+  });
+
   tearDown(() => debugDefaultTargetPlatformOverride = null);
 
   test('桌面三平台失焦仍算前台，最小化才算后台', () {
@@ -37,6 +51,15 @@ void main() {
         isFalse,
         reason: '$platform：挂起要停',
       );
+    }
+  });
+
+  test('Windows and Linux video focus does not trigger background pause', () {
+    for (final platform in [TargetPlatform.windows, TargetPlatform.linux]) {
+      debugDefaultTargetPlatformOverride = platform;
+      expect(playbackAppIsActive(AppLifecycleState.inactive), isTrue);
+      expect(playbackAppIsActive(AppLifecycleState.hidden), isFalse);
+      expect(playbackAppIsActive(AppLifecycleState.detached), isFalse);
     }
   });
 

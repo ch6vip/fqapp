@@ -1,4 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:fqapp/services/desktop_platform.dart';
+import 'package:fqapp/services/native_player.dart';
+import 'package:fqapp/services/platform_channel.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +16,7 @@ import 'package:fqapp/services/episode_source_cache.dart';
 import 'package:fqapp/services/player_preferences.dart';
 
 import 'support/fakes.dart';
+import 'support/controlled_player.dart';
 
 final _episodes = [
   Chapter(itemId: 'ep1', title: '第一集', volumeName: ''),
@@ -31,6 +36,117 @@ void main() {
     SharedPreferences.setMockInitialValues({'player_playback_rate': 1.0});
     AudioPreferences.instance.resetForTest();
   });
+
+  testWidgets(
+    'Linux publishes actual playing state and suspend respects manual pause',
+    (tester) async {
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('fqapp/native_player'),
+        (call) async {
+          calls.add(call);
+          return null;
+        },
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          const MethodChannel('fqapp/native_player'),
+          null,
+        ),
+      );
+      final created = <FakeNativePlayer>[];
+      final system = DesktopSystemSession.instance;
+      await _pump(tester, created: created);
+      await tester.pumpAndSettle();
+      final player = created.single;
+      player.isPlaying = false;
+      player.playingEvents.add(false);
+      await tester.pump();
+      expect((calls.last.arguments as Map)['playing'], isFalse);
+      system.accept({'type': 'suspend', 'value': true});
+      await tester.pump();
+      expect(player.playWhenReady, isFalse);
+      system.accept({'type': 'suspend', 'value': false});
+      await tester.pump();
+      expect(player.playWhenReady, isTrue);
+      system.accept({'type': 'suspend', 'value': true});
+      await tester.pump();
+      final metadata =
+          calls.lastWhere((c) => c.method == 'startListenForeground').arguments
+              as Map;
+      // Explicit remote pause while suspended fences automatic revival.
+      await PlatformChannels.notify(
+        'fqapp/native_player',
+        'onNotificationAction',
+        {'owner': metadata['owner'], 'action': 'pause'},
+      );
+      system.accept({'type': 'suspend', 'value': false});
+      await tester.pump();
+      expect(player.playWhenReady, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      NativePlayer.clearRemoteCommandHandler();
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.linux),
+  );
+
+  testWidgets('Linux drops A seek acknowledgement after switching to B', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('fqapp/native_player'),
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(
+        const MethodChannel('fqapp/native_player'),
+        null,
+      ),
+    );
+    final created = <FakeNativePlayer>[];
+    await _pump(
+      tester,
+      created: created,
+      createPlayer: ControlledNativePlayer.new,
+    );
+    await tester.pumpAndSettle();
+    final first = created.single as ControlledNativePlayer;
+    first.seekGate = Completer<void>();
+    final metadata =
+        calls.lastWhere((c) => c.method == 'startListenForeground').arguments
+            as Map;
+    await PlatformChannels.notify(
+      'fqapp/native_player',
+      'onNotificationAction',
+      {'owner': metadata['owner'], 'action': 'seekTo', 'positionMs': 5000},
+    );
+    await tester.pump();
+    await tester.tap(find.byIcon(LucideIcons.skip_forward));
+    await tester.pumpAndSettle();
+    expect(created, hasLength(2));
+    calls.clear();
+    first.seekGate!.complete();
+    await tester.pumpAndSettle();
+    expect(
+      calls.where(
+        (c) =>
+            c.method == 'startListenForeground' &&
+            (c.arguments as Map)['seeked'] == true,
+      ),
+      isEmpty,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    NativePlayer.clearRemoteCommandHandler();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
 
   // issue #123：后台媒体控件的大图必须是当前作品封面。
   _coverChannelTests();
