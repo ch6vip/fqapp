@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:fqapp/services/platform_channel.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
@@ -36,6 +38,64 @@ void main() {
       return null;
     });
   });
+
+  test(
+    'Linux transport retains seek payload and rejects stale owners',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final old = NativePlayer.allocateRemoteOwner();
+      final current = NativePlayer.allocateRemoteOwner();
+      final actions = <String>[];
+      final seeks = <int>[];
+      NativePlayer.setRemoteCommandHandler(
+        owner: old,
+        onAction: (_) => fail('stale callback'),
+      );
+      NativePlayer.setRemoteCommandHandler(
+        owner: current,
+        onAction: actions.add,
+        onSeek: seeks.add,
+      );
+      await NativePlayer.startListenForeground(
+        owner: current,
+        title: 'synthetic',
+        episode: 'one',
+      );
+      expect(calls.last.arguments, containsPair('transportV2', true));
+      expect(calls.last.arguments, containsPair('seekSupported', true));
+      await PlatformChannels.notify(
+        'fqapp/native_player',
+        'onNotificationAction',
+        {'owner': old, 'action': 'pause'},
+      );
+      NativePlayer.clearRemoteCommandHandler(owner: old);
+      for (final action in ['play', 'play', 'pause']) {
+        await PlatformChannels.notify(
+          'fqapp/native_player',
+          'onNotificationAction',
+          {'owner': current, 'action': action},
+        );
+      }
+      await PlatformChannels.notify(
+        'fqapp/native_player',
+        'onNotificationAction',
+        {'owner': current, 'action': 'seekTo', 'positionMs': 4200},
+      );
+      expect(actions, ['play', 'play', 'pause']);
+      expect(seeks, [4200]);
+      final count = calls.length;
+      await NativePlayer.startListenForeground(
+        owner: old,
+        title: 'late',
+        episode: 'old',
+      );
+      expect(calls.length, count);
+      await NativePlayer.stopListenForeground(owner: current);
+      expect(calls.last.arguments, {'owner': current});
+      NativePlayer.clearRemoteCommandHandler(owner: current);
+    },
+  );
 
   Future<void> cleanUp(WidgetTester tester, NativePlayer player) async {
     if (find.byType(VideoPlayerChrome).evaluate().isNotEmpty) {
