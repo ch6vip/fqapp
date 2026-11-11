@@ -12,6 +12,8 @@ import 'package:fqapp/pages/comic_reader_page.dart';
 import 'package:fqapp/services/comic_page_layout.dart';
 import 'package:fqapp/services/library_store.dart';
 
+import 'support/fakes.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late ui.Image portrait;
@@ -100,6 +102,9 @@ void main() {
           chapters: _chapters,
           startIndex: 0,
           readerStore: _ComicStore(),
+          // 不能落到默认 ChapterCacheStore：它要在 fake-async 下等真实密钥
+          // 存储，超时定时器会活到测试结束（A17）。
+          cache: MemoryChapterCache(),
           chapterLoader: (chapter) async => [
             const ComicImage(
               url: 'http://127.0.0.1:9/_session/cap-launch-1/src/page-1.jpg',
@@ -665,6 +670,8 @@ Widget _app({
     chapters: chapters ?? _chapters,
     startIndex: startIndex,
     readerStore: store,
+    // 同上：测试不应打开真实的加密目录缓存。
+    cache: MemoryChapterCache(),
     chapterLoader: loader ?? (chapter) async => _images(chapter),
     imageProviderFactory: provider,
   ),
