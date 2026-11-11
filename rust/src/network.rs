@@ -87,6 +87,14 @@ impl Policy {
             None => builder,
         }
     }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn configure_blocking(
+        &self,
+        builder: reqwest::blocking::ClientBuilder,
+    ) -> reqwest::blocking::ClientBuilder {
+        builder
+    }
+
     #[cfg(target_os = "windows")]
     pub(crate) fn configure_blocking(
         &self,

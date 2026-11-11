@@ -23,6 +23,11 @@ import 'desktop_media.dart';
 import 'app_log.dart';
 import 'platform_channel.dart';
 
+bool get isMediaDesktop =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux);
+
 bool get isWindowsDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
@@ -31,7 +36,7 @@ bool get isWindowsDesktop =>
 bool playbackAppIsActive(AppLifecycleState? state) =>
     state == null ||
     state == AppLifecycleState.resumed ||
-    (isWindowsDesktop && state == AppLifecycleState.inactive);
+    (isMediaDesktop && state == AppLifecycleState.inactive);
 
 /// 桌面窗口只是失焦时，是否仍算「在前台」。
 ///
@@ -138,6 +143,14 @@ class DesktopPlatform with WindowListener {
     }
   }
 
+  Future<void> disposeMedia() async {
+    final hosts = _players.values.toList();
+    _players.clear();
+    for (final host in hosts) {
+      await host.dispose();
+    }
+  }
+
   Widget videoSurface(int id, {Key? key}) {
     final host = _players[id];
     return host == null
@@ -199,6 +212,7 @@ class DesktopPlatform with WindowListener {
     switch (channel) {
       case 'fqapp/native_player':
         if (method == 'create') {
+          MediaKit.ensureInitialized();
           final id = _nextId++;
           final host = _DesktopPlayer(
             id,
@@ -211,6 +225,8 @@ class DesktopPlatform with WindowListener {
           return {'playerId': id};
         }
         if (method == 'setKeepScreenOn') {
+          // Linux idle inhibition is a later batch.
+          if (!isWindowsDesktop) return null;
           _playerAwake = args['on'] == true;
           _updateAwake();
           return null;
@@ -627,6 +643,10 @@ String decodeDesktopText(Uint8List bytes) {
 class _DesktopPlayer {
   _DesktopPlayer(this.id, this.emit) {
     video = VideoController(player);
+    // media_kit initializes textures after a frame, including on an idle window.
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      WidgetsBinding.instance.scheduleFrame();
+    }
     void event(String type, dynamic value) {
       if (!disposed) emit({'playerId': id, 'type': type, 'value': value});
     }
@@ -731,10 +751,14 @@ class _DesktopPlayer {
   Future<void> dispose() async {
     if (disposed) return;
     disposed = true;
+    if (!ready.isCompleted) ready.complete();
     for (final subscription in subscriptions) {
       await subscription.cancel();
     }
-    await player.dispose();
-    media?.close();
+    try {
+      await player.dispose();
+    } finally {
+      media?.close();
+    }
   }
 }
