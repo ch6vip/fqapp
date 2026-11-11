@@ -1592,19 +1592,14 @@ class _DetailPageState extends State<DetailPage> {
 
   /// Starts the whole-book batch from the first chapter that is not cached yet.
   ///
-  /// The range starts at the resume position (the user's own place in the book)
-  /// but skips over chapters already on disk, so a batch interrupted by the
-  /// network can be resumed instead of re-downloading from the start: an
-  /// interrupted download of chapters 11–332 used to restart at 11 and rewrite
-  /// all 322 of them. [ChapterDownload] still skips cached chapters one by one
-  /// as a safety net; this only avoids reporting progress for work that needs
-  /// no re-fetching.
+  /// Check the entire directory, including unread or evicted chapters before
+  /// the reading position. [ChapterDownload] reuses cached bodies in the rest
+  /// of the batch, so resuming a download does not re-fetch them.
   Future<void> _startWholeBookDownload(ChapterCache cache) async {
-    final from = (_resumeIndex ?? 0).clamp(0, _allChapters.length - 1);
     final cached = await cache.cachedChapterIds(_contentId);
     if (!mounted) return;
     var startIndex = -1;
-    for (var i = from; i < _allChapters.length; i++) {
+    for (var i = 0; i < _allChapters.length; i++) {
       if (!cached.contains(_allChapters[i].itemId)) {
         startIndex = i;
         break;
