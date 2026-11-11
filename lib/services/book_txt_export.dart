@@ -185,6 +185,7 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
       completed++;
       value = BookTxtExportState(
         running: true,
+        writing: completed == chapters.length,
         completed: completed,
         total: chapters.length,
         failed: failed,
@@ -192,14 +193,6 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
     }
     if (!_alive(job)) return;
 
-    value = BookTxtExportState(
-      running: true,
-      writing: true,
-      completed: completed,
-      total: chapters.length,
-      failed: failed,
-    );
-    if (!_alive(job)) return;
     final ExportTarget target;
     try {
       target = await sink.saveText(
