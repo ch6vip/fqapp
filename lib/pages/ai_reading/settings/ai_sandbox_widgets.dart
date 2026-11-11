@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/ai_reading/ai_chapter_snapshot.dart';
 import '../../../services/ai_reading/ai_models.dart';
 import '../../../services/ai_reading/ai_protocol.dart';
 import '../../../services/chapter_text_formatter.dart';
+import '../../../widgets/app_ui/app_ui_scope.dart';
 import '../../../widgets/home/home_design.dart';
 import '../../../widgets/settings/settings_widgets.dart';
 import 'ai_sandbox_request_page.dart';
@@ -77,6 +79,87 @@ class AiSandboxLayout extends StatelessWidget {
       );
     },
   );
+}
+
+class AiSandboxProviderSummary extends StatelessWidget {
+  const AiSandboxProviderSummary({
+    super.key,
+    required this.provider,
+    required this.model,
+    required this.onViewRequest,
+  });
+
+  final String provider;
+  final String model;
+  final VoidCallback onViewRequest;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = HomePalette.of(context);
+    return ConstrainedBox(
+      key: const ValueKey('sandbox-provider-summary'),
+      constraints: const BoxConstraints(minHeight: 44),
+      child: Row(
+        children: [
+          ExcludeSemantics(
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: palette.soft,
+                borderRadius: BorderRadius.circular(
+                  AppUiScope.isClassic(context) ? 9 : 4,
+                ),
+              ),
+              child: Icon(LucideIcons.sparkle, size: 17, color: palette.muted),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Tooltip(
+              message: '$provider\n$model',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    provider,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.ink,
+                      fontSize: 13,
+                      height: 1.4,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    model,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.muted,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onViewRequest,
+            style: TextButton.styleFrom(
+              textStyle: const TextStyle(fontSize: 13),
+            ),
+            child: const Text('查看请求'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class AiSandboxField extends StatelessWidget {
