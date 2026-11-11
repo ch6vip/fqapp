@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce/hive.dart';
 
 import '../models/webdav_sync_document.dart';
@@ -12,6 +11,7 @@ import '../models/library_backup.dart';
 import 'encrypted_hive.dart';
 import 'library_backup_service.dart';
 import 'library_store.dart';
+import 'native_secure_key_storage.dart';
 import 'shelf_store.dart';
 import 'webdav_client.dart';
 
@@ -20,7 +20,7 @@ class WebDavSyncService with WidgetsBindingObserver {
     : _createClient = createClient ?? WebDavClient.new;
   static final instance = WebDavSyncService();
   final WebDavClient Function(WebDavConfig) _createClient;
-  static const _storage = FlutterSecureStorage();
+  static final _storage = defaultSecureKeyStorage();
   static const _configKey = 'fqapp.webdav.config.v1';
   final status = ValueNotifier<String>('尚未配置');
   final busy = ValueNotifier<bool>(false);
@@ -34,7 +34,7 @@ class WebDavSyncService with WidgetsBindingObserver {
   Box<dynamic>? _state;
 
   Future<void> init() async {
-    final saved = await _storage.read(key: _configKey);
+    final saved = await _storage.read(_configKey);
     if (saved != null) {
       config = WebDavConfig.fromJson(jsonDecode(saved) as Map<String, dynamic>);
     }
@@ -47,7 +47,7 @@ class WebDavSyncService with WidgetsBindingObserver {
       throw const WebDavException('WebDAV 用户名不能包含冒号');
     }
     // Fail closed: passwords are never put into preferences or backup files.
-    await _storage.write(key: _configKey, value: jsonEncode(next.toJson()));
+    await _storage.write(_configKey, jsonEncode(next.toJson()));
     _generation++;
     _detach();
     config = next;
