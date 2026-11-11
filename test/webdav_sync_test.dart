@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:http/http.dart' as http;
@@ -18,6 +17,8 @@ import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/webdav_client.dart';
 import 'package:fqapp/services/webdav_sync_service.dart';
+
+import 'support/secure_key_storage_mock.dart';
 import 'package:fqapp/widgets/reader/reader_theme.dart';
 
 const config = WebDavConfig(
@@ -269,7 +270,7 @@ void main() {
     var conflict = false;
     var offline = false;
     setUp(() async {
-      FlutterSecureStorage.setMockInitialValues({});
+      mockSecureKeyStorage();
       SharedPreferences.setMockInitialValues({});
       directory = await Directory.systemTemp.createTemp('fqapp-webdav-');
       Hive.init(directory.path);

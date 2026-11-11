@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:http/http.dart' as http;
@@ -23,6 +22,8 @@ import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
 import 'package:fqapp/pages/ai_reading/settings/ai_sandbox_style.dart';
+
+import '../support/secure_key_storage_mock.dart';
 
 /// Controllable HTTP/SSE transport. Cancellation is delivered through the same
 /// AbortableRequest used in production, without a network or paid credential.
@@ -93,7 +94,7 @@ void main() {
   late Directory directory;
   final settings = AiSettingsStore.instance;
   setUpAll(() async {
-    FlutterSecureStorage.setMockInitialValues({});
+    mockSecureKeyStorage();
     directory = await Directory.systemTemp.createTemp('ai-console-');
     Hive.init(directory.path);
     await settings.init();

@@ -15,6 +15,7 @@
 - [构建 APK](#构建-apk)
 - [测试](#测试)
 - [Android 原生核心集成](#android-原生核心集成)
+- [本机密钥库（SecureKeyStorage）](#本机密钥库securekeystorage)
 - [API 对接说明](#api-对接说明)
 - [数据模型](#数据模型)
 - [页面说明](#页面说明)
@@ -685,6 +686,57 @@ Rust 核心会使用配置文件推导运行目录，过滤器和 `src/` 均按�
 loopback HTTP 适配器只绑定 `127.0.0.1`，`/health`、`/api/v1/*` 与 `/src/*` 共用同一分发器。
 读路由对任何本机客户端开放（供阅读软件等外部工具调用），写路由仍要求每次启动的能力值。
 加密播放所需的 `libshortplay_crypto.so` 由 APK 构建自动从 `native/` 生成。
+
+---
+
+## 本机密钥库（SecureKeyStorage）
+
+Hive 主密钥与设备池密钥不再经过 `flutter_secure_storage`，改由应用自己的
+`SecureKeyStorage`（`lib/services/secure_key_storage.dart`）按平台落到系统级密钥库。
+这样做的直接原因是 `flutter_secure_storage_windows 3.1.2` 把 `win32` 钉在 5.x，
+挡住了 `wakelock_plus` / `package_info_plus` 的 Built-in Kotlin 版本（#205）。
+
+| 平台 | 实现 | 位置 |
+|---|---|---|
+| Android | AndroidKeyStore 内的 AES-256-GCM 密钥，密文存 `shared_prefs/fqapp_secure_keys.xml`；条目名作为 AAD | `android/app/src/main/kotlin/com/fqapp/fqapp/SecureKeyPlugin.kt` |
+| iOS | Keychain 通用密码项，`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | `ios/Runner/AppDelegate.swift`（`SecureKeyBridge`） |
+| Windows | DPAPI（`CryptProtectData`，当前用户范围）保护的文件 `secure_keys.dpapi` | `lib/services/windows_dpapi_key_store.dart` |
+| Linux | libsecret（Secret Service）单个 JSON 条目，调用在独立 isolate 中执行 | `lib/services/linux_libsecret_key_store.dart` |
+
+失败语义与原来一致，且更严格：**“没有密钥”与“读不到密钥”必须分开**。
+
+- 只有平台回答“条目不存在”时才允许新建密钥；
+- Keystore/DPAPI/libsecret 报错一律抛给 `SecureKeyProvider`，由它失败关闭
+  （`EncryptedHive` 会拒绝明文回落或隔离箱文件，绝不静默覆盖）；
+- Windows 先写 `.tmp`、把旧文件轮换成 `.bak` 再改名，崩溃后仍能读到上一份密钥；
+- Linux 会先 `secret_service_get_sync(OPEN_SESSION | LOAD_COLLECTIONS)` 预热，
+  避免冷 keyring 首次查询误报“不存在”而另建密钥。
+
+### 迁移与回滚
+
+`defaultSecureKeyStorage()` 返回 `MigratingSecureKeyStorage`：读时先查本机密钥库，
+缺失才读旧 `flutter_secure_storage` 并回写；写时两边都写。因此：
+
+- 升级到本方案后，旧密钥在首次读取时自动搬家，书库/历史/WebDAV/AI 凭据保持可用；
+- 回滚到旧 APK 仍能读到同一把密钥（旧存储里有双写副本）；
+- 迁移成功会写一条 `keys` 标签的运行日志（“已将 … 迁移到本机密钥库”），
+  可在“设置 → 服务 → 运行日志”搜索 `keys` 核对。
+
+### 第二阶段：移除 `flutter_secure_storage`（未做，等一轮发布后）
+
+迁移完成后，旧包只剩“导入源”作用。满足下列条件即可删除：
+
+1. 线上版本全部经过一次含本方案的启动（本机密钥库已写入，日志可核对）；
+2. 删除 `lib/services/secure_key_storage.dart` 中的 `FlutterSecureKeyStorage`、
+   `MigratingSecureKeyStorage` 的 legacy 分支，以及 `pubspec.yaml` 的
+   `flutter_secure_storage` 依赖；
+3. `flutter pub upgrade`：`win32` 不再被钉住，`wakelock_plus` ≥1.8、
+   `package_info_plus` ≥10.1 自动落地；
+4. 之后才具备删除 `android/gradle.properties` 中 `android.builtInKotlin=false`
+   的前提（仍需先处理 `flutter_tts` 的 KGP，见 #205）。
+
+> macOS / Fuchsia 在本仓库没有 runner，也没有原生后端；这两个平台保持旧存储
+> （`defaultSecureKeyStorage()` 会回退），删除依赖后它们不再受支持。
 
 ---
 
