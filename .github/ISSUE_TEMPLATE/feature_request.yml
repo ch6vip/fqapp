@@ -6,10 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        建议前请先读 [CONTRIBUTING.md 的产品边界](https://github.com/ch6vip/fqapp/blob/master/CONTRIBUTING.md#二产品边界)——
+        建议前请先读 [CONTRIBUTING.md 的产品边界](https://github.com/ch6vip/novel-sound/blob/master/CONTRIBUTING.md#二产品边界)——
         登录、云同步、追剧、上游写操作等是明确的"不做"项。
 
-        另外有些功能可能**已经在最新版本里**了，请先更新到[最新版本](https://github.com/ch6vip/fqapp/releases/latest)确认。
+        另外有些功能可能**已经在最新版本里**了，请先更新到[最新版本](https://github.com/ch6vip/novel-sound/releases/latest)确认。
 
   - type: input
     id: version
