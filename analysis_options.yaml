@@ -17,6 +17,7 @@ analyzer:
     - .tools/**
     - android/**
     - ios/**
+    - linux/**
     - windows/**
 
 linter:
