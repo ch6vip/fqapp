@@ -1210,3 +1210,14 @@ flutter test --no-pub --concurrency=1 test/desktop_media_playback_test.dart，
 cargo test --manifest-path rust/Cargo.toml --locked。资源受限机器串行执行，
 使用 systemd scope 限制 CPU/内存及 CARGO_BUILD_JOBS=2、
 CMAKE_BUILD_PARALLEL_LEVEL=2。隔离 HOME/keyring，不读取真实账号/媒体缓存。
+
+真实 Linux engine 接线回归入口：
+`flutter build linux --release --no-pub -t test/support/linux_media_runtime.dart`。
+在私有 HOME/XDG、D-Bus、Xvfb 和虚拟音频会话内运行生成的 bundle，设置
+`FQAPP_RUNTIME_ORIGIN=http://127.0.0.1:<port>`。该本地 HTTP 服务需提供支持 Range 的
+8 秒合成 `audio.wav` 和 `encrypted.mp4`（AAC/CENC，测试 key 为
+`00112233445566778899aabbccddeeff`）。入口使用真实 LinuxPlatform、NativePlayer、
+media_kit 原生纹理插件和 bundle 内 Rust/C 核心，检查创建、实际进度、暂停、seek、
+释放后 CENC listener 撤销，再在活跃 CENC 播放中正常关窗；监督进程须检查退出码 0。
+它是独立测试 target，不由产品 main 引用。此 bundle 不是产品包；交付前重新构建默认 target。
+该测试不证明物理声卡/GPU、完整产品存储关窗链或 Windows/Android 运行通过。
