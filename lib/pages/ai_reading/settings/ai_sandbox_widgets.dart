@@ -7,8 +7,8 @@ import '../../../services/ai_reading/ai_protocol.dart';
 import '../../../services/chapter_text_formatter.dart';
 import '../../../widgets/app_ui/app_ui_scope.dart';
 import '../../../widgets/home/home_design.dart';
-import '../../../widgets/settings/settings_widgets.dart';
 import 'ai_sandbox_request_page.dart';
+import 'ai_sandbox_style.dart';
 
 const aiSandboxSample = '他以经在门口等了半个小时。\n“我踏马真是服了。”他叹了口气。\n他拿出手机，打开*****给朋友发消息。';
 const aiSandboxExampleResponse =
@@ -51,7 +51,11 @@ class AiSandboxLayout extends StatelessWidget {
     required this.input,
     required this.result,
     required this.padding,
+    this.header,
+    this.empty = false,
   });
+  final Widget? header;
+  final bool empty;
   final Widget input;
   final Widget result;
   // Resolve above AppFeaturePage: Scaffold changes the body MediaQuery in
@@ -61,21 +65,53 @@ class AiSandboxLayout extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final wide = constraints.maxWidth >= 720;
+      final gutter = wide ? 28.0 : 16.0;
       return SingleChildScrollView(
-        padding: padding,
-        child: wide
-            ? Row(
+        padding: padding.copyWith(left: gutter, right: gutter),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (header != null) ...[header!, const SizedBox(height: 6)],
+            if (wide)
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(child: input),
-                  const SizedBox(width: 32),
-                  Expanded(child: result),
+                  const SizedBox(width: 40),
+                  Expanded(
+                    child: empty
+                        ? Container(
+                            constraints: const BoxConstraints(minHeight: 400),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              border: Border(
+                                left: BorderSide(
+                                  color: AiSandboxStyle(context).line,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              '测试结果将在这里显示',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: HomePalette.of(context).muted,
+                              ),
+                            ),
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: result,
+                          ),
+                  ),
                 ],
               )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [input, const SizedBox(height: 24), result],
-              ),
+            else ...[
+              input,
+              const SizedBox(height: 24),
+              result,
+            ],
+          ],
+        ),
       );
     },
   );
@@ -106,7 +142,7 @@ class AiSandboxProviderSummary extends StatelessWidget {
               width: 30,
               height: 30,
               decoration: BoxDecoration(
-                color: palette.soft,
+                color: AiSandboxStyle(context).soft,
                 borderRadius: BorderRadius.circular(
                   AppUiScope.isClassic(context) ? 9 : 4,
                 ),
@@ -151,9 +187,7 @@ class AiSandboxProviderSummary extends StatelessWidget {
           const SizedBox(width: 8),
           TextButton(
             onPressed: onViewRequest,
-            style: TextButton.styleFrom(
-              textStyle: const TextStyle(fontSize: 13),
-            ),
+            style: AiSandboxStyle(context).textButton(),
             child: const Text('查看请求'),
           ),
         ],
@@ -169,27 +203,48 @@ class AiSandboxField extends StatelessWidget {
     required this.controller,
     this.action,
     this.enabled = true,
-    this.minLines = 6,
+    this.minLines = 7,
+    this.monospace = false,
   });
   final String label;
   final TextEditingController controller;
   final Widget? action;
   final bool enabled;
   final int minLines;
+  final bool monospace;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-          ?action,
-        ],
+      ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 42),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: HomePalette.of(context).ink,
+                ),
+              ),
+            ),
+            if (action != null)
+              Flexible(
+                child: TextButtonTheme(
+                  data: TextButtonThemeData(
+                    style: AiSandboxStyle(
+                      context,
+                    ).textButton(muted: true, size: 12),
+                  ),
+                  child: action!,
+                ),
+              ),
+          ],
+        ),
       ),
-      const SizedBox(height: 8),
-      SurfacePanel(
+      AiSandboxPanel(
         padding: const EdgeInsets.all(14),
         child: TextField(
           controller: controller,
@@ -197,16 +252,111 @@ class AiSandboxField extends StatelessWidget {
           minLines: minLines,
           maxLines: null,
           keyboardType: TextInputType.multiline,
-          style: const TextStyle(fontSize: 15, height: 1.75),
+          style: TextStyle(
+            color: HomePalette.of(context).ink,
+            fontSize: monospace ? 13 : 15,
+            height: monospace ? 1.65 : 1.75,
+            fontFamily: monospace ? 'monospace' : null,
+          ),
           decoration: InputDecoration(
             border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
+            contentPadding: EdgeInsets.zero,
+            filled: false,
             isDense: true,
             hintText: label,
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.sizeOf(context).width >= 720
+                  ? (minLines == 4 ? 114 : 210)
+                  : 0,
+            ),
           ),
         ),
       ),
     ],
   );
+}
+
+/// A 48dp touch area around the prototype's compact 48 × 28 switch.
+class AiSandboxRestoreOption extends StatelessWidget {
+  const AiSandboxRestoreOption({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = AiSandboxStyle(context);
+    final muted = style.palette.muted;
+    return Semantics(
+      label: '去屏蔽词',
+      onTap: onChanged == null ? null : () => onChanged!(!value),
+      toggled: value,
+      enabled: onChanged != null,
+      child: InkWell(
+        onTap: onChanged == null ? null : () => onChanged!(!value),
+        excludeFromSemantics: true,
+        child: ExcludeSemantics(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 64),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '去屏蔽词',
+                    style: TextStyle(fontSize: 14, color: style.palette.ink),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: Center(
+                    child: Opacity(
+                      opacity: onChanged == null ? .45 : 1,
+                      child: Container(
+                        width: 48,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: value ? style.primary : style.soft,
+                          border: Border.all(
+                            color: value ? style.primary : muted,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              left: value ? 22 : 4,
+                              top: value ? 2 : 4,
+                              child: Container(
+                                width: value ? 20 : 16,
+                                height: value ? 20 : 16,
+                                decoration: BoxDecoration(
+                                  color: value ? Colors.white : muted,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class AiSandboxResultView extends StatefulWidget {
@@ -250,9 +400,11 @@ class _AiSandboxResultViewState extends State<AiSandboxResultView> {
               ? '删除：${span.original}'
               : span.replacement,
           style: TextStyle(
-            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+            backgroundColor: AiSandboxStyle(context).highlight,
             color: palette.ink,
             decoration: TextDecoration.underline,
+            decorationColor: AiSandboxStyle(context).primary,
+            decorationThickness: 1,
           ),
         ),
       );
@@ -276,159 +428,293 @@ class _AiSandboxResultViewState extends State<AiSandboxResultView> {
         '${usage.reasoningTokens == null ? '' : ' / 思考 ${usage.reasoningTokens}'}';
   }
 
+  Widget _error(
+    BuildContext context,
+    String title,
+    String body, {
+    String? code,
+  }) {
+    final style = AiSandboxStyle(context);
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 16),
+      padding: const EdgeInsets.fromLTRB(12, 2, 0, 2),
+      decoration: BoxDecoration(
+        border: Border(left: BorderSide(color: style.error, width: 2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: style.error,
+            ),
+          ),
+          const SizedBox(height: 5),
+          SelectableText(
+            body,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.6,
+              color: style.palette.muted,
+            ),
+          ),
+          if (code != null) ...[
+            const SizedBox(height: 6),
+            SelectableText(
+              code,
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: style.palette.ink,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _pair(
+    BuildContext context,
+    String label,
+    String text, {
+    bool old = false,
+  }) {
+    final palette = HomePalette.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: MediaQuery.textScalerOf(context).scale(36),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, height: 1.6, color: palette.muted),
+            ),
+          ),
+        ),
+        Expanded(
+          child: SelectableText(
+            text,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.6,
+              color: old ? palette.muted : palette.ink,
+              fontWeight: old ? FontWeight.normal : FontWeight.w500,
+              decoration: old ? TextDecoration.lineThrough : null,
+              decorationColor: AiSandboxStyle(context).line,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final result = widget.result;
     if (result == null) return const SizedBox.shrink();
+    final style = AiSandboxStyle(context);
+    final palette = style.palette;
     final validation = result.validation;
     final valid = validation?.valid == true;
+    final showRawTab =
+        result.raw != null &&
+        (result.request != null || widget.onValidate != null);
+    final labels = valid
+        ? ['正文预览', '修改详情', if (showRawTab) '原始 JSON']
+        : <String>[];
+    final muted = TextStyle(fontSize: 12, height: 1.5, color: palette.muted);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          spacing: 12,
-          children: [
-            if (widget.previous) const Text('上次结果'),
-            Text(
-              result.title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            if (result.elapsed != null)
-              Text(
-                '${(result.elapsed!.inMilliseconds / 1000).toStringAsFixed(1)} s',
-              ),
-          ],
-        ),
-        if (result.request case final request?)
-          Wrap(
-            spacing: 8,
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 32),
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
-              Text(
-                '${request.settings.modelId ?? '未选择模型'} · ${request.behaviorSource} · 去屏蔽词${request.restore ? '开启' : '关闭'}',
-                key: const ValueKey('sandbox-result-config'),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: HomePalette.of(context).muted,
-                ),
+              if (widget.previous) Text('上次结果', style: muted),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (valid) ...[
+                    ExcludeSemantics(
+                      child: Icon(
+                        LucideIcons.circle_check,
+                        size: 18,
+                        color: style.success,
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                  ],
+                  Flexible(
+                    child: Text(
+                      result.title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: palette.ink,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              if (widget.onViewRequest != null && (result.requests ?? 0) > 0)
-                TextButton(
-                  onPressed: widget.onViewRequest,
-                  child: const Text('查看本次请求'),
+              if (result.elapsed != null)
+                Text(
+                  '${(result.elapsed!.inMilliseconds / 1000).toStringAsFixed(1)} s',
+                  style: muted,
                 ),
             ],
           ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 16,
-          runSpacing: 8,
-          children: [
-            if (valid) Text('${validation!.spans.length} 处修改'),
-            if (result.requests != null) Text('${result.requests} 次请求'),
-            if (result.usage != null) Text(_usage(result.usage!)),
-          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 5, bottom: 14),
+          child: DefaultTextStyle(
+            style: muted,
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 4,
+              children: [
+                if (valid) Text('${validation!.spans.length} 处修改'),
+                if (result.requests != null) Text('${result.requests} 次请求'),
+                if (result.usage != null) Text(_usage(result.usage!)),
+              ],
+            ),
+          ),
         ),
         if (result.message != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: SelectableText(result.message!),
+          _error(
+            context,
+            result.request == null ? '请检查响应内容' : '请求未完成',
+            result.message!,
           ),
         if (validation != null && !valid)
           for (final issue in validation.errors)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: SelectableText(
-                [
-                  issue.code,
-                  if (issue.path != null) issue.path!,
-                  if (issue.editIndex != null) '第 ${issue.editIndex! + 1} 条修改',
-                  if (issue.editIndices.isNotEmpty)
-                    '修改 ${issue.editIndices.map((i) => i + 1).join('、')}',
-                  if (issue.start != null)
-                    '位置 ${issue.start! + 1}${issue.end == null ? '' : '–${issue.end}'}',
-                  if (issue.detailKey != null) issue.detailKey!,
-                  if (issue.occurrences != null) '匹配 ${issue.occurrences} 处',
-                ].join(' · '),
-              ),
+            _error(
+              context,
+              '请检查响应内容',
+              [
+                if (issue.path != null) issue.path!,
+                if (issue.editIndex != null) '第 ${issue.editIndex! + 1} 条修改',
+                if (issue.editIndices.isNotEmpty)
+                  '修改 ${issue.editIndices.map((i) => i + 1).join('、')}',
+                if (issue.start != null)
+                  '位置 ${issue.start! + 1}${issue.end == null ? '' : '–${issue.end}'}',
+                if (issue.detailKey != null) issue.detailKey!,
+                if (issue.occurrences != null) '匹配 ${issue.occurrences} 处',
+              ].join(' · '),
+              code: issue.code,
             ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          children: [
-            if (valid)
-              TextButton(
-                onPressed: () => setState(() => _tab = 0),
-                child: Text(
-                  '正文预览',
-                  style: TextStyle(
-                    fontWeight: _tab == 0 ? FontWeight.bold : null,
-                  ),
-                ),
-              ),
-            if (valid)
-              TextButton(
-                onPressed: () => setState(() => _tab = 1),
-                child: Text(
-                  '修改详情',
-                  style: TextStyle(
-                    fontWeight: _tab == 1 ? FontWeight.bold : null,
-                  ),
-                ),
-              ),
-            if (result.raw != null)
-              TextButton(
-                onPressed: () => setState(() => _tab = 2),
-                child: Text(
-                  '原始 JSON',
-                  style: TextStyle(
-                    fontWeight: _tab == 2 ? FontWeight.bold : null,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const Divider(),
+        if (valid) ...[
+          DefaultTabController(
+            key: ObjectKey(result),
+            length: labels.length,
+            child: AiSandboxTabs(
+              labels: labels,
+              onTap: (value) => setState(() => _tab = value),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         if (_tab == 2 || !valid) ...[
           if (result.raw != null)
-            SelectableText(
-              result.raw!,
-              key: const ValueKey('sandbox-raw'),
-              style: const TextStyle(fontSize: 13, height: 1.65),
+            AiSandboxPanel(
+              raw: true,
+              padding: const EdgeInsets.all(12),
+              child: SelectableText(
+                result.raw!,
+                key: const ValueKey('sandbox-raw'),
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  height: 1.65,
+                  color: palette.ink,
+                ),
+              ),
             ),
         ] else if (_tab == 0)
           _preview(context, result)
         else if (validation!.spans.isEmpty)
-          const Text('没有修改。')
+          Text(
+            '没有修改。',
+            style: TextStyle(fontSize: 14, height: 1.7, color: palette.muted),
+          )
         else
-          for (final span in validation.spans)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 20),
+          for (final (index, span) in validation.spans.indexed)
+            Container(
+              margin: EdgeInsets.only(
+                bottom: index == validation.spans.length - 1 ? 0 : 16,
+              ),
+              padding: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                border: index == validation.spans.length - 1
+                    ? null
+                    : Border(bottom: BorderSide(color: style.line)),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    span.category,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                    '${index + 1} / ${validation.spans.length}　${span.category}',
+                    style: muted,
                   ),
                   const SizedBox(height: 8),
-                  SelectableText('原文  ${span.original}'),
+                  _pair(context, '原文', span.original, old: true),
+                  const SizedBox(height: 6),
+                  _pair(
+                    context,
+                    '修改',
+                    span.isDeletion ? '删除' : span.replacement,
+                  ),
+                  const SizedBox(height: 9),
                   SelectableText(
-                    '修改  ${span.isDeletion ? '删除' : span.replacement}',
+                    span.reason,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.6,
+                      color: palette.muted,
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  SelectableText(span.reason),
-                  const Divider(),
                 ],
               ),
             ),
-        if (widget.onValidate != null && result.raw != null)
+        if ((_tab == 2 || !valid) &&
+            widget.onValidate != null &&
+            result.raw != null)
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: widget.onValidate,
+              style: style.textButton(),
               child: const Text('用于 JSON 校验'),
+            ),
+          ),
+        if (result.request case final request?)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  '${request.settings.modelId ?? '未选择模型'} · ${request.behaviorSource} · 去屏蔽词${request.restore ? '开启' : '关闭'}',
+                  key: const ValueKey('sandbox-result-config'),
+                  style: muted,
+                ),
+                if (widget.onViewRequest != null && (result.requests ?? 0) > 0)
+                  TextButton(
+                    onPressed: widget.onViewRequest,
+                    style: style.textButton(size: 12),
+                    child: const Text('查看本次请求'),
+                  ),
+              ],
             ),
           ),
       ],
