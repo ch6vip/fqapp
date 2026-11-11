@@ -50,6 +50,7 @@ import '../widgets/audio/audio_subtitle_scroller.dart';
 import '../widgets/audio/voice_settings_sheet.dart';
 import '../widgets/reader/reader_listen_capsule.dart';
 import '../widgets/chapter_cache_sheet.dart';
+import '../widgets/comment_emoji.dart';
 import '../widgets/comment_images.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/home/home_sheet.dart';
@@ -1893,8 +1894,8 @@ class _AudioCommentsSheetState extends State<_AudioCommentsSheet> {
         ),
         const SizedBox(height: 6),
         if (comment.text.isNotEmpty)
-          Text(
-            comment.text,
+          CommentEmojiText(
+            text: comment.text,
             style: TextStyle(color: palette.ink, fontSize: 13, height: 1.65),
           ),
         if (comment.imageUrls.isNotEmpty) ...[
