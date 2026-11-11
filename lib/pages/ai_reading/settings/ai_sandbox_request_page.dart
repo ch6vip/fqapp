@@ -42,13 +42,8 @@ class AiSandboxRequest {
 }
 
 class AiSandboxRequestPage extends StatelessWidget {
-  const AiSandboxRequestPage({
-    super.key,
-    required this.request,
-    required this.captured,
-  });
+  const AiSandboxRequestPage({super.key, required this.request});
   final AiSandboxRequest request;
-  final bool captured;
   @override
   Widget build(BuildContext context) {
     final style = AiSandboxStyle(context);
@@ -57,8 +52,9 @@ class AiSandboxRequestPage extends StatelessWidget {
     final texts = [
       request.messages.first['content']!,
       request.messages.last['content']!,
-      const JsonEncoder.withIndent('  ')
-          .convert(AiChatCompletionsClient.responseFormat(request.mode)),
+      const JsonEncoder.withIndent(
+        '  ',
+      ).convert(AiChatCompletionsClient.responseFormat(request.mode)),
     ];
     return AppFeaturePage(
       title: '请求预览',
@@ -67,35 +63,13 @@ class AiSandboxRequestPage extends StatelessWidget {
         length: 3,
         child: Padding(
           padding: padding.copyWith(
+            top: padding.top - (style.classic ? 12 : 20),
             left: wide ? 28 : 16,
             right: wide ? 28 : 16,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 2,
-                children: [
-                  Text(
-                    captured ? '本次请求快照' : '当前配置预览',
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.5,
-                      color: style.palette.muted,
-                    ),
-                  ),
-                  Text(
-                    '${request.provider?.label ?? '未选择提供商'} / ${request.settings.modelId ?? '未选择模型'}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.5,
-                      color: style.palette.muted,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
               const AiSandboxTabs(labels: ['System', 'User', '输出格式']),
               Expanded(
                 child: TabBarView(
