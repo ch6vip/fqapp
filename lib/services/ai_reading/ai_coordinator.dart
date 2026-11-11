@@ -79,6 +79,7 @@ class AiCoordinator {
     bool confirmedOverBudget = false,
     bool automatic = false,
     String? behaviorPromptOverride,
+    bool? restoreCensoredWords,
     Future<void>? cancelTrigger,
     void Function(AiRunState state)? onState,
     void Function(AiStreamProgress progress)? onProgress,
@@ -189,15 +190,14 @@ class AiCoordinator {
             hash: _sha(behaviorPromptOverride),
             source: 'trial',
             promptId: 'trial_${_sha(behaviorPromptOverride)}',
+            restoreCensoredWords: _settings.global.restoreCensoredWords,
           );
-    final systemPrompt = aiBuildSystemPrompt(
+    final messages = aiBuildChatMessages(
       behaviorPrompt: prompt.text,
       outputMode: outputMode,
+      restoreCensoredWords: restoreCensoredWords ?? prompt.restoreCensoredWords,
+      userContent: snapshot.requestText,
     );
-    final messages = <Map<String, String>>[
-      {'role': 'system', 'content': systemPrompt},
-      {'role': 'user', 'content': snapshot.requestText},
-    ];
     final timeout = Duration(seconds: effective.requestTimeoutSeconds);
     var requestCount = 0;
     var lastValidation = AiValidationResult.failure(const []);

@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:fqapp/pages/ai_reading/settings/developer_tools_page.dart';
+import 'package:fqapp/services/ai_reading/ai_prompt.dart';
 import 'package:fqapp/services/ai_reading/ai_settings.dart';
 import 'package:fqapp/services/ai_reading/ai_models.dart';
 
@@ -40,6 +41,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('请先在 AI 设置 → 高级中开启开发者模式'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
+  });
+
+  testWidgets('prompt preview is the real request builder without duplicates', (
+    tester,
+  ) async {
+    await tester.runAsync(
+      () => settings.saveDevice(settings.device.copyWith(developerMode: true)),
+    );
+    await tester.pumpWidget(const MaterialApp(home: DeveloperToolsPage()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('实际提示词与输出协议'));
+    await tester.pumpAndSettle();
+    final preview = tester
+        .widget<SelectableText>(
+          find.descendant(
+            of: find.byType(ExpansionTile),
+            matching: find.byType(SelectableText),
+          ),
+        )
+        .data!;
+    final expected = aiBuildSystemPrompt(
+      behaviorPrompt: aiResolvePrompt(
+        bookPrompt: null,
+        globalPrompt: settings.global.behaviorPrompt,
+      ).text,
+      outputMode: AiOutputMode.jsonObject,
+      restoreCensoredWords: true,
+    );
+    expect(preview, expected);
+    // Each program-owned segment is shown exactly once, in priority order.
+    expect(
+      preview.indexOf(kAiPromptPrioritySection.trim()),
+      lessThan(preview.indexOf(kAiBehaviorPromptSectionTitle)),
+    );
+    expect(
+      preview.indexOf(kAiBehaviorPromptSectionTitle),
+      lessThan(preview.indexOf(kAiRestoreCensoredWordsPrompt.trim())),
+    );
+    expect(
+      preview.indexOf(kAiRestoreCensoredWordsPrompt.trim()),
+      lessThan(preview.indexOf(kAiJsonObjectProtocol.trim())),
+    );
+    expect(kAiRestoreCensoredWordsPrompt.trim().allMatches(preview).length, 1);
+    expect(kAiJsonObjectProtocol.trim().allMatches(preview).length, 1);
+    expect(preview, isNot(contains('original 必须与提供的原文完全一致。')));
   });
 
   testWidgets(

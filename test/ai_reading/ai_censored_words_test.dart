@@ -25,7 +25,7 @@ void main() {
     },
   );
 
-  test('recovery augments the selected prompt and changes its identity', () {
+  test('recovery is a request segment, not part of the editable prompt', () {
     for (final bookPrompt in <String?>[null, '单书校对规则']) {
       final plain = aiResolvePrompt(
         bookPrompt: bookPrompt,
@@ -36,15 +36,25 @@ void main() {
         globalPrompt: '全局规则',
         restoreCensoredWords: true,
       );
-      expect(recovery.text, startsWith(plain.text));
-      expect(recovery.text, contains(kAiRestoreCensoredWordsPrompt));
-      expect(recovery.text, contains('允许根据上下文推测'));
-      expect(recovery.text, contains('wcnm'));
-      expect(recovery.text, contains('我踏马'));
-      expect(recovery.text, contains('不要因包含粗口而擅自净化'));
-      expect(recovery.hash, isNot(plain.hash));
-      expect(recovery.promptId, isNot(plain.promptId));
+      // The editable prompt and its identity stay free of program-owned
+      // segments, so candidates and history cannot absorb or duplicate them.
+      expect(recovery.text, plain.text);
+      expect(recovery.hash, plain.hash);
+      expect(recovery.promptId, plain.promptId);
       expect(recovery.source, plain.source);
+      expect(recovery.restoreCensoredWords, isTrue);
+      expect(plain.restoreCensoredWords, isFalse);
+
+      final system = aiBuildSystemPrompt(
+        behaviorPrompt: recovery.text,
+        outputMode: AiOutputMode.jsonObject,
+        restoreCensoredWords: recovery.restoreCensoredWords,
+      );
+      expect(system, contains(kAiRestoreCensoredWordsPrompt.trim()));
+      expect(system, contains('允许根据上下文推测'));
+      expect(system, contains('wcnm'));
+      expect(system, contains('我踏马'));
+      expect(system, contains('不要因包含粗口而擅自净化'));
     }
   });
 
@@ -72,5 +82,10 @@ void main() {
     final plain = aiResolvePrompt(bookPrompt: null, globalPrompt: null);
     expect(plain.text, kAiDefaultBehaviorPrompt);
     expect(plain.text, isNot(contains(kAiRestoreCensoredWordsPrompt)));
+    final system = aiBuildSystemPrompt(
+      behaviorPrompt: plain.text,
+      outputMode: AiOutputMode.jsonObject,
+    );
+    expect(system, isNot(contains(kAiRestoreCensoredWordsPrompt.trim())));
   });
 }
