@@ -406,7 +406,7 @@ static const GDBusInterfaceVTable vtable = {
        const gchar *property, GError **, gpointer data) -> GVariant * {
       return static_cast<FqappLinuxBridge *>(data)->property(property);
     },
-    nullptr,
+    nullptr, // GLib >= 2.38 routes Properties.Set to method_call asynchronously.
     {nullptr}};
 static FlMethodChannel *channel(FlBinaryMessenger *m, const char *name,
                                 FqappLinuxBridge *b,

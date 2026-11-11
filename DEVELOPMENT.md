@@ -1225,7 +1225,7 @@ media_kit 原生纹理插件和 bundle 内 Rust/C 核心，检查创建、实际
 
 ### Linux 系统朗读与桌面集成（第三批）
 
-在前两批上增加 Speech Dispatcher（构建需 `speech-dispatcher` pkg-config；
+在前两批上增加 Speech Dispatcher（构建必需 `speech-dispatcher` pkg-config 和 libspeechd 头文件；
 Arch 运行包 `libspeechd`、`speech-dispatcher`、中文音源如 `espeak-ng`）。
 应用只连接现有 daemon，不自动启动、安装或重配置用户服务。设置页列出真实输出
 模块；初始化选择 zh/cmn 语音，无中文语音、连接/设置失败会返回 TTS_ERROR。
@@ -1272,6 +1272,23 @@ stale-stop 时确认 Playing 后写 stale-checked；released 时确认无 owner 
 released-checked。检查 PASS 标记、活跃朗读关窗退出码 0。它验证真实 channel、
 SSIP 和 D-Bus，但 null 音频/Xvfb 不证明物理音质、GPU、实际锁屏或挂起。
 测试入口不引用产品资料，不是产品包；交付前重新构建默认 target。
+
+仓库内监督器可直接复验真实 D-Bus Rate/Volume 写入、后端确认/失败回复和
+PropertiesChanged（Arch 测试依赖另需 `xorg-server-xvfb`、`dbus`、`speech-dispatcher`、`espeak-ng`）：
+
+```bash
+python test/linux_desktop_runtime_test.py
+# 需 FLUTTER_ROOT 指向同一 SDK；实际 tts.cc 在途回调与析构的 ASan 压力回归：
+python test/linux_tts_lifetime_test.py
+flutter build linux --release --no-pub -t lib/main.dart
+```
+
+GDBusInterfaceVTable 的空 set_property 是 GLib 2.38 起支持的异步属性分发方式，
+Properties.Set 会进入 method_call；不能改为同步等待 Dart 而阻塞 GTK 主线程。
+官方合同：https://docs.gtk.org/gio/struct.DBusInterfaceVTable.html 。
+TTS 回调取 active 指针并入队与析构撤销指针使用同一锁；关闭 libspeechd 前释放此锁，
+避免 spd_close 等待其回调线程时死锁。ASan 回归仅在外置编译副本插入调度钩子，
+不增加产品测试开关；它不模拟真实 daemon，须与上面的真实协议复验分别报告。
 
 第三批审查修复补充：SSIP 拒绝 CANCEL 时 pause/stop/initialize 报 TTS_ERROR 并关闭连接，
 无连接 stop 保持幂等。常亮请求串行提交，失败回滚 reader/player 意图。
