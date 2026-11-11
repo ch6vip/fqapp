@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:fqapp/pages/ai_reading/settings/developer_tools_page.dart';
 import 'package:fqapp/pages/ai_reading/settings/ai_sandbox_widgets.dart';
+import 'package:fqapp/pages/ai_reading/settings/ai_sandbox_request_page.dart';
 import 'package:fqapp/services/ai_reading/ai_client.dart';
 import 'package:fqapp/services/ai_reading/ai_controller.dart';
 import 'package:fqapp/services/ai_reading/ai_coordinator.dart';
@@ -223,7 +224,10 @@ void main() {
       await settle(tester);
       await tester.tap(find.text('查看请求'));
       await settle(tester);
-      gaps['request'] = gap(find.text('当前配置预览'));
+      gaps['request'] = gap(find.byType(AiSandboxTabs));
+      expect(find.text('当前配置预览'), findsNothing);
+      expect(find.text('本次请求快照'), findsNothing);
+      expect(find.text('Fixture / fixture-model'), findsNothing);
       await tester.tap(find.byTooltip('返回'));
       await settle(tester);
       await tester.tap(find.text('行为提示词'));
@@ -240,7 +244,11 @@ void main() {
       // Record all three first, so a failure identifies each page's real inset.
       debugPrint(jsonEncode(gaps));
       for (final entry in gaps.entries) {
-        expect(entry.value, inInclusiveRange(12, 18), reason: entry.key);
+        expect(
+          entry.value,
+          entry.key == 'request' ? closeTo(0, 1) : inInclusiveRange(12, 18),
+          reason: entry.key,
+        );
       }
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('返回'));
@@ -764,8 +772,14 @@ void main() {
       await visible(tester, find.text('查看请求'));
       await tester.tap(find.text('查看请求'));
       await settle(tester);
-      expect(find.text('本次请求快照'), findsOneWidget);
-      expect(find.text('Fixture / fixture-model'), findsOneWidget);
+      expect(
+        tester
+            .widget<AiSandboxRequestPage>(find.byType(AiSandboxRequestPage))
+            .request
+            .settings
+            .modelId,
+        'fixture-model',
+      );
       expect(find.text(system), findsOneWidget);
       expect(client.aborted.isCompleted, isFalse);
       await tester.tap(find.byTooltip('返回'));
@@ -790,16 +804,28 @@ void main() {
       await visible(tester, find.text('查看请求'));
       await tester.tap(find.text('查看请求'));
       await settle(tester);
-      expect(find.text('当前配置预览'), findsOneWidget);
-      expect(find.text('Fixture / other-model'), findsOneWidget);
+      expect(
+        tester
+            .widget<AiSandboxRequestPage>(find.byType(AiSandboxRequestPage))
+            .request
+            .settings
+            .modelId,
+        'other-model',
+      );
       expect(find.textContaining('后来修改的全局规则'), findsOneWidget);
       await tester.tap(find.byTooltip('返回'));
       await settle(tester);
       await visible(tester, find.text('查看本次请求'));
       await tester.tap(find.text('查看本次请求'));
       await settle(tester);
-      expect(find.text('本次请求快照'), findsOneWidget);
-      expect(find.text('Fixture / fixture-model'), findsOneWidget);
+      expect(
+        tester
+            .widget<AiSandboxRequestPage>(find.byType(AiSandboxRequestPage))
+            .request
+            .settings
+            .modelId,
+        'fixture-model',
+      );
       expect(find.text(system), findsOneWidget);
       await tester.tap(find.byTooltip('返回'));
       await settle(tester);
@@ -824,7 +850,6 @@ void main() {
       await visible(tester, find.text('查看请求'));
       await tester.tap(find.text('查看请求'));
       await settle(tester);
-      expect(find.text('当前配置预览'), findsOneWidget);
       expect(
         find.text(
           aiBuildSystemPrompt(
@@ -977,7 +1002,15 @@ void main() {
       await visible(tester, find.text('查看请求'));
       await tester.tap(find.text('查看请求'));
       await settle(tester);
-      expect(find.text('当前配置预览'), findsOneWidget);
+      expect(
+        tester
+            .widget<AiSandboxRequestPage>(find.byType(AiSandboxRequestPage))
+            .request
+            .settings
+            .modelId,
+        'fixture-model',
+      );
+      expect(find.text('当前配置预览'), findsNothing);
       expect(find.text('本次请求快照'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       await settle(tester);
