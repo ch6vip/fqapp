@@ -28,6 +28,8 @@ class AiTaskResult {
     this.requestCount = 0,
     this.needsBudgetConfirmation = false,
     this.budgetMessage,
+    this.rawResponse,
+    this.usage = const AiUsage(),
   });
 
   final bool ok;
@@ -40,6 +42,11 @@ class AiTaskResult {
   final int requestCount;
   final bool needsBudgetConfirmation;
   final String? budgetMessage;
+
+  /// Actual model content and provider usage of the final HTTP attempt.
+  /// Unknown usage stays unknown; estimated progress never enters this result.
+  final String? rawResponse;
+  final AiUsage usage;
 }
 
 class AiCoordinator {
@@ -79,6 +86,12 @@ class AiCoordinator {
     bool confirmedOverBudget = false,
     bool automatic = false,
     String? behaviorPromptOverride,
+    // Test-console input snapshots; privacy and budget gates still read live
+    // settings before every HTTP request. Pass both snapshots together.
+    AiEffectiveSettings? settingsSnapshot,
+    AiProviderProfile? providerSnapshot,
+    bool allowRetries = true,
+    bool? restoreCensoredWords,
     Future<void>? cancelTrigger,
     void Function(AiRunState state)? onState,
     void Function(AiStreamProgress progress)? onProgress,
@@ -88,7 +101,20 @@ class AiCoordinator {
       content,
       chapterTitle,
     );
-    final effective = _settings.resolve(bookId);
+    final effective = settingsSnapshot ?? _settings.resolve(bookId);
+    // Capture prompt and optional features before any I/O. The request and its
+    // metadata must describe the same configuration even if settings change.
+    final restore =
+        restoreCensoredWords ?? effective.global.restoreCensoredWords;
+    final prompt = behaviorPromptOverride == null
+        ? _settings.resolvedPrompt(bookId)
+        : AiResolvedPrompt(
+            text: behaviorPromptOverride,
+            hash: _sha(behaviorPromptOverride),
+            source: 'trial',
+            promptId: 'trial_${_sha(behaviorPromptOverride)}',
+            restoreCensoredWords: restore,
+          );
     final key = _generationKey(bookId, snapshot.canonicalHash);
     // Capture the fence at request start, not after the model returns. A clear
     // that happens while this request is in flight must still reject its write.
@@ -113,7 +139,9 @@ class AiCoordinator {
         );
       }
     }
-    final provider = _settings.provider(effective.providerId);
+    final provider = settingsSnapshot != null
+        ? providerSnapshot
+        : providerSnapshot ?? _settings.provider(effective.providerId);
     final model = effective.modelId;
     if (provider == null || model == null || model.trim().isEmpty) {
       debugPrint(
@@ -165,7 +193,7 @@ class AiCoordinator {
     final generation = forceRefresh ? previous + 1 : previous;
     if (forceRefresh) _generations[key] = generation;
     final runId = _newId('run');
-    final configHash = _configHash(effective, provider, model);
+    final configHash = _configHash(prompt, provider, model, restore);
     final run = AiRunRecord(
       runId: runId,
       kind: kind,
@@ -182,24 +210,16 @@ class AiCoordinator {
     await _store.putRun(run);
     onState?.call(AiRunState.running);
 
-    final prompt = behaviorPromptOverride == null
-        ? _settings.resolvedPrompt(bookId)
-        : AiResolvedPrompt(
-            text: behaviorPromptOverride,
-            hash: _sha(behaviorPromptOverride),
-            source: 'trial',
-            promptId: 'trial_${_sha(behaviorPromptOverride)}',
-          );
-    final systemPrompt = aiBuildSystemPrompt(
+    final messages = aiBuildChatMessages(
       behaviorPrompt: prompt.text,
       outputMode: outputMode,
+      restoreCensoredWords: restore,
+      userContent: snapshot.requestText,
     );
-    final messages = <Map<String, String>>[
-      {'role': 'system', 'content': systemPrompt},
-      {'role': 'user', 'content': snapshot.requestText},
-    ];
     final timeout = Duration(seconds: effective.requestTimeoutSeconds);
     var requestCount = 0;
+    String? lastRawResponse;
+    var lastUsage = const AiUsage();
     var lastValidation = AiValidationResult.failure(const []);
     var contentRepairs = 0;
     var transportRetries = 0;
@@ -228,6 +248,8 @@ class AiCoordinator {
         error: error.message,
         errorCodes: [error.code],
         requestCount: requestCount,
+        rawResponse: lastRawResponse,
+        usage: lastUsage,
       );
     }
 
@@ -237,6 +259,9 @@ class AiCoordinator {
         : cancelTrigger == null
         ? foregroundAbort
         : Future.any<void>([foregroundAbort, cancelTrigger]);
+
+    var aborted = false;
+    abortTrigger?.then((_) => aborted = true);
 
     try {
       while (true) {
@@ -271,6 +296,8 @@ class AiCoordinator {
             needsBudgetConfirmation: gate.needsBudgetConfirmation,
             budgetMessage: gate.needsBudgetConfirmation ? gate.message : null,
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
         // Admission is atomic: two chapters cannot both pass the last request
@@ -316,6 +343,8 @@ class AiCoordinator {
             needsBudgetConfirmation: reserved.needsConfirmation,
             budgetMessage: reserved.needsConfirmation ? reserved.reason : null,
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
         final reservation = reserved.reservation!;
@@ -323,7 +352,9 @@ class AiCoordinator {
         // privacy/device gates immediately before the HTTP call and give the
         // reserved slot back if the user revoked consent meanwhile.
         final live = _settings.resolve(bookId);
-        final liveBlock = !live.enabled
+        final liveBlock = aborted
+            ? 'REQUEST_ABORTED'
+            : !live.enabled
             ? 'DISABLED'
             : _settings.device.deviceDisabled
             ? 'DEVICE_DISABLED'
@@ -335,6 +366,7 @@ class AiCoordinator {
           final message = switch (liveBlock) {
             'DISABLED' => 'AI 阅读优化未开启',
             'DEVICE_DISABLED' => '本机已停用 AI 请求',
+            'REQUEST_ABORTED' => '已停止本次校对',
             _ => '还没有同意把章节正文发送给第三方',
           };
           await _store.putRun(
@@ -354,6 +386,8 @@ class AiCoordinator {
             error: message,
             errorCodes: [liveBlock],
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
         // The user's confirmation covers this one HTTP call, not every retry.
@@ -381,6 +415,8 @@ class AiCoordinator {
         }
         final latency = DateTime.now().difference(started);
         final usage = response?.usage ?? networkError?.usage ?? const AiUsage();
+        lastUsage = usage;
+        lastRawResponse = response?.content ?? networkError?.rawContent;
         final rateProfile = _settings.rateFor(provider.id, model);
         final rate = rateProfile?.snapshot();
         final requestRecord = AiRequestRecord(
@@ -428,6 +464,8 @@ class AiCoordinator {
               error: '已停止本次校对',
               errorCodes: const ['REQUEST_ABORTED'],
               requestCount: requestCount,
+              rawResponse: lastRawResponse,
+              usage: lastUsage,
             );
           }
           final truncatedThinking =
@@ -436,7 +474,8 @@ class AiCoordinator {
           final reasoningBurned =
               (networkError.usage?.reasoningTokens ?? 0) > 0 &&
               (networkError.usage?.completionTokens ?? 0) > 0;
-          if (!thinkingFallback &&
+          if (allowRetries &&
+              !thinkingFallback &&
               requestProfile.reasoningEffort != AiReasoningEffort.off &&
               truncatedThinking &&
               reasoningBurned) {
@@ -450,7 +489,8 @@ class AiCoordinator {
             );
             continue;
           }
-          if (networkError.retryable &&
+          if (allowRetries &&
+              networkError.retryable &&
               networkError.statusCode != null &&
               transportRetries < effective.transportRetryLimit) {
             transportRetries++;
@@ -473,6 +513,8 @@ class AiCoordinator {
                 error: '校对已停止',
                 errorCodes: const ['REQUEST_ABORTED'],
                 requestCount: requestCount,
+                rawResponse: lastRawResponse,
+                usage: lastUsage,
               );
             }
             continue;
@@ -497,6 +539,8 @@ class AiCoordinator {
             error: networkError.message,
             errorCodes: [networkError.code],
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
 
@@ -519,6 +563,8 @@ class AiCoordinator {
             error: '模型响应过大，已停止纠错',
             errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
         onState?.call(AiRunState.validating);
@@ -539,6 +585,8 @@ class AiCoordinator {
               snapshot: snapshot,
               validation: lastValidation,
               requestCount: requestCount,
+              rawResponse: lastRawResponse,
+              usage: lastUsage,
             );
           }
           if ((_generations[key] ?? 0) != generation) {
@@ -558,6 +606,8 @@ class AiCoordinator {
               error: '这次结果已被更新的刷新取代',
               errorCodes: const ['STALE_GENERATION'],
               requestCount: requestCount,
+              rawResponse: lastRawResponse,
+              usage: lastUsage,
             );
           }
           final entry = _formalEntry(
@@ -596,6 +646,8 @@ class AiCoordinator {
                 error: current == null ? '这次结果已被更新的刷新取代' : null,
                 errorCodes: const ['STALE_GENERATION'],
                 requestCount: requestCount,
+                rawResponse: lastRawResponse,
+                usage: lastUsage,
               );
             }
           } catch (error) {
@@ -616,6 +668,8 @@ class AiCoordinator {
               error: '校对结果写入失败，已保留旧缓存',
               errorCodes: const ['STORAGE_FAILED'],
               requestCount: requestCount,
+              rawResponse: lastRawResponse,
+              usage: lastUsage,
             );
           }
           await _store.putRun(
@@ -633,10 +687,12 @@ class AiCoordinator {
             formal: entry,
             validation: lastValidation,
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
 
-        if (contentRepairs >= effective.contentRepairLimit) {
+        if (!allowRetries || contentRepairs >= effective.contentRepairLimit) {
           final codes = lastValidation.errors
               .map((e) => e.code)
               .toSet()
@@ -663,6 +719,8 @@ class AiCoordinator {
             error: '校对结果没有通过校验，已显示原文',
             errorCodes: codes,
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
 
@@ -685,6 +743,8 @@ class AiCoordinator {
             error: '纠错上下文过长，已停止',
             errorCodes: const ['RETRY_CONTEXT_EXCEEDED'],
             requestCount: requestCount,
+            rawResponse: lastRawResponse,
+            usage: lastUsage,
           );
         }
         messages
@@ -797,9 +857,10 @@ class AiCoordinator {
   }
 
   String _configHash(
-    AiEffectiveSettings effective,
+    AiResolvedPrompt prompt,
     AiProviderProfile provider,
     String model,
+    bool restoreCensoredWords,
   ) => _sha(
     jsonEncode({
       'provider': provider.id,
@@ -808,7 +869,8 @@ class AiCoordinator {
       'mode': provider.outputMode.wire,
       'temperature': provider.temperature,
       'reasoningEffort': provider.reasoningEffort.name,
-      'prompt': effective.behaviorPrompt,
+      'prompt': prompt.text,
+      'restoreCensoredWords': restoreCensoredWords,
     }),
   );
 

@@ -1,149 +1,277 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
-import '../../../services/ai_reading/ai_apply.dart';
 import '../../../services/ai_reading/ai_chapter_snapshot.dart';
 import '../../../services/ai_reading/ai_controller.dart';
 import '../../../services/ai_reading/ai_coordinator.dart';
 import '../../../services/ai_reading/ai_models.dart';
 import '../../../services/ai_reading/ai_prompt.dart';
-import '../../../services/ai_reading/ai_protocol.dart';
 import '../../../services/ai_reading/ai_settings.dart';
-import '../../../services/app_style_tokens.dart';
-import '../../../services/chapter_text_formatter.dart';
-import '../../../services/webdav_sync_service.dart';
-import '../../../widgets/settings/settings_widgets.dart';
 import '../../../widgets/wenku/wenku_ui.dart';
+import '../../../widgets/ai_reading/ai_ui.dart';
+import '../../../widgets/home/home_design.dart';
+import 'ai_sandbox_style.dart';
+import 'ai_prompt_editor_page.dart';
+import 'ai_sandbox_json_page.dart';
+import 'ai_sandbox_request_page.dart';
+import 'ai_sandbox_widgets.dart';
+import 'ai_settings_widgets.dart';
 
 class DeveloperToolsPage extends StatefulWidget {
-  const DeveloperToolsPage({super.key});
-
+  const DeveloperToolsPage({super.key, this.coordinator});
+  final AiCoordinator? coordinator;
   @override
   State<DeveloperToolsPage> createState() => _DeveloperToolsPageState();
 }
 
 class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
   static const _bookId = '__developer_ai_sandbox__';
-  final _input = TextEditingController(
-    text:
-        '“wcnm！”他气得拍了一下桌子。\n“我踏马真是服了。”他叹了口气。\n她说：“啊，原来如此。”\n他拿出手机，打开*****给朋友发消息。\n“你这个*****！”他指着背叛自己的朋友骂道。',
-  );
-  final _json = TextEditingController(text: '{"edits":[]}');
-  bool _restore = true;
-  bool _running = false;
-  String? _result;
-  String? _output;
-  List<AiEditSpan> _spans = const [];
-  Completer<void>? _cancel;
   final _settings = AiSettingsStore.instance;
+  final _input = TextEditingController(text: aiSandboxSample);
+  final _json = AiSandboxJsonState();
+  late bool _restore;
+  String? _customBehavior;
+  bool _running = false;
+  Completer<void>? _cancel;
+  AiStreamProgress? _progress;
+  String _stage = '连接中';
+  AiSandboxRequest? _request;
+  AiSandboxResult? _result;
 
-  String get _prompt => aiResolvePrompt(
+  String get _globalBehavior => aiResolvePrompt(
     bookPrompt: null,
     globalPrompt: _settings.global.behaviorPrompt,
-    restoreCensoredWords: _restore,
   ).text;
 
-  String get _protocol =>
-      _settings.provider(_settings.global.providerId)?.outputMode ==
-          AiOutputMode.jsonSchema
-      ? jsonEncode(aiJsonSchemaProjection())
-      : kAiJsonObjectProtocol;
+  @override
+  void initState() {
+    super.initState();
+    _restore = _settings.global.restoreCensoredWords;
+    _input.addListener(_inputChanged);
+  }
 
-  ChapterContent get _content => ChapterContent(
-    blocks: [
-      for (final line in _input.text.split(RegExp(r'\r?\n')))
-        if (line.trim().isNotEmpty) ChapterParagraph(line),
-    ],
-  );
+  void _inputChanged() {
+    if (!_running && mounted) setState(() => _request = null);
+  }
 
-  void _showValidation(AiValidationResult validation, ChapterContent content) {
-    if (validation.valid) {
-      final snapshot = AiChapterSnapshotBuilder.fromContent(content, '');
-      _output = AiApply.apply(
-        snapshot: snapshot,
-        source: content,
-        spans: validation.spans,
-      ).finalText;
-      _spans = validation.spans;
-    } else {
-      _output = null;
-      _spans = const [];
+  AiSandboxRequest _capture() {
+    final snapshot = AiChapterSnapshotBuilder.fromContent(
+      aiSandboxContent(_input.text),
+      '',
+    );
+    final effective = _settings.resolve(_bookId);
+    return AiSandboxRequest(
+      source: snapshot.requestText,
+      behavior: _customBehavior ?? _globalBehavior,
+      behaviorSource: _customBehavior == null ? '全局提示词' : '本次自定义提示词',
+      restore: _restore,
+      settings: effective,
+      provider: _settings.provider(effective.providerId),
+    );
+  }
+
+  Future<void> _editBehavior() async {
+    final global = _globalBehavior;
+    final text = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => AiPromptEditorPage(
+          title: '测试行为提示词',
+          initial: _customBehavior ?? global,
+          actionLabel: '使用',
+          restoreText: global,
+        ),
+      ),
+    );
+    if (!mounted || text == null) return;
+    setState(() {
+      _customBehavior = text == global ? null : text;
+      _request = null;
+    });
+  }
+
+  void _openJson({bool useResponse = false}) {
+    if (useResponse) {
+      _json.original.text = _result!.source;
+      _json.response.text = _result!.raw!;
+      _json.result = null;
+    }
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AiSandboxJsonPage(state: _json, sample: _input.text),
+      ),
+    );
+  }
+
+  bool get _previousResult {
+    final request = _result?.request;
+    if (request == null) return false;
+    try {
+      return !request.hasSameInputs(_capture());
+    } on AiSnapshotException {
+      return true;
     }
   }
 
-  void _validate() {
+  void _viewRequest({AiSandboxRequest? resultRequest}) {
     try {
-      final content = _content;
-      final snapshot = AiChapterSnapshotBuilder.fromContent(content, '');
-      final validation = const AiValidator().validateContent(
-        _json.text,
-        snapshot,
+      final request = resultRequest ?? (_running ? _request! : _capture());
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => AiSandboxRequestPage(request: request),
+        ),
       );
-      setState(() {
-        _showValidation(validation, content);
-        _result = validation.valid
-            ? '离线校验通过 · ${validation.spans.length} 处修改'
-            : '校验失败：${validation.errors.map((e) => e.code).join('、')}';
-      });
-    } catch (_) {
-      setState(() => _result = '无法建立正文快照，请检查输入内容');
+    } on AiSnapshotException catch (error) {
+      aiShowSnack(context, error.message);
     }
+  }
+
+  void _stop() {
+    if (_cancel?.isCompleted == false) _cancel!.complete();
+    if (mounted && _running) setState(() => _stage = '停止中');
   }
 
   Future<void> _run() async {
-    if (_running || !_settings.device.developerMode) return;
+    if (_running) return;
     if (_input.text.trim().isEmpty) {
-      setState(() => _result = '请输入测试正文');
+      aiShowSnack(context, '请输入测试正文');
       return;
     }
-    final content = _content;
-    final prompt = _prompt;
-    final watch = Stopwatch()..start();
+    final AiSandboxRequest request;
+    try {
+      request = _capture();
+    } on AiSnapshotException catch (error) {
+      aiShowSnack(context, error.message);
+      return;
+    }
     final cancel = Completer<void>();
+    final watch = Stopwatch()..start();
     _cancel = cancel;
     setState(() {
       _running = true;
-      _result = '正在请求 AI…';
-      _output = null;
-      _spans = const [];
+      _result = null;
+      _request = request;
+      _progress = null;
+      _stage = '连接中';
     });
     try {
       await AiReadingController.instance.init();
-      if (!mounted || cancel.isCompleted || !_settings.device.developerMode) {
+      if (!mounted || cancel.isCompleted) return;
+      Future<AiTaskResult> attempt({bool confirmed = false}) =>
+          (widget.coordinator ?? AiCoordinator.instance).runFormal(
+            bookId: _bookId,
+            chapterId: 'sample',
+            chapterTitle: '',
+            content: aiSandboxContent(request.source),
+            kind: AiRunKind.trial,
+            behaviorPromptOverride: request.behavior,
+            restoreCensoredWords: request.restore,
+            settingsSnapshot: request.settings,
+            providerSnapshot: request.provider,
+            allowRetries: false,
+            confirmedOverBudget: confirmed,
+            cancelTrigger: cancel.future,
+            onState: (state) {
+              if (mounted &&
+                  !cancel.isCompleted &&
+                  state == AiRunState.validating) {
+                setState(() => _stage = '校验中');
+              }
+            },
+            onProgress: (progress) {
+              if (mounted && !cancel.isCompleted) {
+                setState(() {
+                  _progress = progress;
+                  _stage = progress.contentChars > 0
+                      ? '生成中'
+                      : progress.reasoningChars > 0
+                      ? '思考中'
+                      : '连接中';
+                });
+              }
+            },
+          );
+      var result = await attempt();
+      if (!mounted || cancel.isCompleted) {
+        if (mounted) _setResult(request, result, watch.elapsed, stopped: true);
         return;
       }
-      final result = await AiCoordinator.instance.runFormal(
-        bookId: _bookId,
-        chapterId: 'sample',
-        chapterTitle: '',
-        content: content,
-        kind: AiRunKind.trial,
-        behaviorPromptOverride: prompt,
-        cancelTrigger: cancel.future,
-      );
-      if (!mounted) return;
-      setState(() {
-        final validation = result.validation;
-        if (result.ok && validation != null) {
-          _showValidation(validation, content);
-          _result =
-              '测试完成 · ${watch.elapsedMilliseconds} ms · '
-              '${result.requestCount} 次请求 · ${_spans.length} 处修改';
-        } else {
-          _result = result.needsBudgetConfirmation
-              ? '预算不足：${result.budgetMessage ?? '请前往 AI 设置调整预算'}'
-              : '测试失败：${result.error ?? result.errorCodes.join('、')}';
+      if (result.needsBudgetConfirmation) {
+        watch.stop();
+        final confirmed = await showAiBudgetDialog(
+          context,
+          result.budgetMessage ?? '本次请求将超出预算',
+        );
+        if (!mounted || cancel.isCompleted) return;
+        if (confirmed) {
+          watch
+            ..reset()
+            ..start();
+          result = await attempt(confirmed: true);
         }
-      });
-    } catch (_) {
-      if (mounted) setState(() => _result = '测试请求未完成，请检查 AI 配置、网络和设备存储');
+      }
+      if (mounted) {
+        _setResult(request, result, watch.elapsed, stopped: cancel.isCompleted);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _result = AiSandboxResult(
+            title: cancel.isCompleted ? '测试已停止' : '测试失败',
+            source: request.source,
+            request: request,
+            elapsed: watch.elapsed,
+            message: '测试请求未完成：$error',
+          );
+        });
+      }
     } finally {
       watch.stop();
       if (identical(_cancel, cancel)) _cancel = null;
-      if (mounted) setState(() => _running = false);
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _request = null;
+          _result ??= AiSandboxResult(
+            title: '测试已停止',
+            source: request.source,
+            request: request,
+            elapsed: watch.elapsed,
+            requests: 0,
+          );
+        });
+      }
     }
+  }
+
+  void _setResult(
+    AiSandboxRequest request,
+    AiTaskResult result,
+    Duration elapsed, {
+    required bool stopped,
+  }) {
+    setState(() {
+      _result = AiSandboxResult(
+        title: stopped || result.errorCodes.contains('REQUEST_ABORTED')
+            ? '测试已停止'
+            : result.ok
+            ? '测试完成'
+            : '测试失败',
+        request: request,
+        source: result.snapshot.requestText,
+        raw: result.rawResponse,
+        validation: result.validation,
+        elapsed: elapsed,
+        requests: result.requestCount,
+        usage: result.usage,
+        message: result.ok
+            ? null
+            : [
+                if (result.error != null) result.error!,
+                ...result.errorCodes,
+              ].join(' · '),
+      );
+    });
   }
 
   @override
@@ -155,112 +283,167 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final body = AnimatedBuilder(
+  Widget build(BuildContext context) => PopScope<void>(
+    onPopInvokedWithResult: (didPop, _) {
+      if (didPop) _stop();
+    },
+    child: AnimatedBuilder(
       animation: _settings,
       builder: (context, _) {
-        if (!_settings.device.developerMode) {
-          return const Center(child: Text('请先在 AI 设置 → 高级中开启开发者模式'));
-        }
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text(
-              'AI 样例测试',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const Text(
-              '测试不写入正式章节校对缓存，不修改书架正文。发送测试会上传下面的文本并消耗 API 额度，沿用现有授权与预算限制。',
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _input,
-              enabled: !_running,
-              minLines: 4,
-              maxLines: 10,
-              decoration: const InputDecoration(
-                labelText: '测试正文',
-                border: OutlineInputBorder(),
+        final provider = _running
+            ? _request?.provider
+            : _settings.provider(_settings.global.providerId);
+        final model = _running
+            ? _request?.settings.modelId
+            : _settings.global.modelId;
+        final progress = _progress;
+        return AppFeaturePage(
+          title: 'AI 测试台',
+          code: 'AI / SANDBOX',
+          actions: [
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_horiz),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                visualDensity: VisualDensity.standard,
               ),
-            ),
-            SwitchListTile(
-              title: const Text('本次测试启用去屏蔽词'),
-              subtitle: const Text('不改变阅读器的全局开关，可分别开关测试作对比'),
-              value: _restore,
-              onChanged: _running
-                  ? null
-                  : (value) => setState(() => _restore = value),
-            ),
-            ExpansionTile(
-              title: const Text('实际提示词与输出协议'),
-              children: [
-                SelectableText('$_prompt\n$kAiEditContract\n$_protocol'),
+              tooltip: '更多工具',
+              onSelected: (_) => _openJson(),
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'json', child: Text('JSON 校验')),
               ],
             ),
-            FilledButton(
-              onPressed: _running ? null : _run,
-              child: const Text('发送 AI 测试（消耗额度）'),
-            ),
-            if (_running)
-              TextButton(
-                onPressed: () {
-                  if (_cancel?.isCompleted == false) _cancel!.complete();
-                },
-                child: const Text('取消测试'),
-              ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _json,
-              enabled: !_running,
-              minLines: 2,
-              maxLines: 6,
-              decoration: const InputDecoration(
-                labelText: '粘贴模型 JSON 响应（可离线测试）',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            OutlinedButton(
-              onPressed: _running ? null : _validate,
-              child: const Text('离线校验与替换预览'),
-            ),
-            if (_result != null)
-              SelectableText(_result!, key: const ValueKey('developer-result')),
-            if (_output != null) ...[
-              const SizedBox(height: 12),
-              const Text('修改后预览'),
-              SelectableText(
-                _output!,
-                key: const ValueKey('developer-preview'),
-              ),
-            ],
-            for (final span in _spans)
-              ListTile(
-                title: Text('${span.original} → ${span.replacement}'),
-                subtitle: Text('${span.category} · ${span.reason}'),
-              ),
-            const Divider(height: 32),
-            const Text('WebDAV 诊断（只读）'),
-            ValueListenableBuilder<String>(
-              valueListenable: WebDavSyncService.instance.status,
-              builder: (context, status, _) => SelectableText(status),
-            ),
-            Text(
-              WebDavSyncService.instance.config == null
-                  ? '尚未配置 WebDAV'
-                  : '自动同步：${WebDavSyncService.instance.config!.enabled ? '开启' : '关闭'}\n'
-                        '规则：云端优先；删除已同步记录会上传。此处不执行同步或修改数据。',
-            ),
-            const SizedBox(height: 24),
           ],
+          child: AiSandboxLayout(
+            padding: featurePadding(context),
+            header: AiSandboxProviderSummary(
+              provider: provider?.label ?? '未选择提供商',
+              model: model ?? '未选择模型',
+              onViewRequest: _viewRequest,
+            ),
+            empty: _result == null,
+            input: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AiSandboxField(
+                  label: '测试正文',
+                  controller: _input,
+                  enabled: !_running,
+                  action: TextButton(
+                    onPressed: _running
+                        ? null
+                        : () => setState(() {
+                            _input.text = aiSandboxSample;
+                            _request = null;
+                          }),
+                    child: const Text('填入示例'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: _running ? null : _editBehavior,
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 56),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(color: AiSandboxStyle(context).line),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '行为提示词',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: HomePalette.of(context).ink,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: (constraints.maxWidth - 44) / 2,
+                              ),
+                              child: Text(
+                                _customBehavior == null ? '全局' : '本次自定义',
+                                textAlign: TextAlign.end,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: HomePalette.of(context).muted,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 16,
+                              color: HomePalette.of(context).muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                AiSandboxRestoreOption(
+                  value: _restore,
+                  onChanged: _running
+                      ? null
+                      : (value) => setState(() {
+                          _restore = value;
+                          _request = null;
+                        }),
+                ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final start = FilledButton(
+                      style: AiSandboxStyle(context).runButton,
+                      onPressed: _running ? null : _run,
+                      child: Text(
+                        _running
+                            ? '$_stage${progress == null ? '…' : ' ${progress.exact ? '' : '约 '}${progress.estimatedTokens} tokens'}'
+                            : '开始测试',
+                      ),
+                    );
+                    final stop = OutlinedButton(
+                      style: AiSandboxStyle(context).stopButton,
+                      onPressed: _stop,
+                      child: const Text('停止'),
+                    );
+                    if (_running &&
+                        constraints.maxWidth <
+                            260 *
+                                MediaQuery.textScalerOf(context).scale(14) /
+                                14) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [start, const SizedBox(height: 8), stop],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: start),
+                        if (_running) ...[const SizedBox(width: 12), stop],
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+            result: AiSandboxResultView(
+              result: _result,
+              previous: _previousResult,
+              onViewRequest: () =>
+                  _viewRequest(resultRequest: _result!.request),
+              onValidate: () => _openJson(useResponse: true),
+            ),
+          ),
         );
       },
-    );
-    return AppStyleTokens.of(context).isClassic
-        ? SettingsScaffold(title: '开发者测试台', body: body)
-        : ArchiveFeaturePage(
-            title: '开发者测试台',
-            code: 'DEVELOPER / SANDBOX',
-            child: body,
-          );
-  }
+    ),
+  );
 }
