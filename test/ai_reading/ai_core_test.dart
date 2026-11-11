@@ -403,15 +403,21 @@ void main() {
       outputMode: AiOutputMode.jsonSchema,
     );
     expect(schema, contains('自定义行为提示词'));
-    expect(schema, contains('original 必须与提供的原文完全一致'));
+    // Schema mode keeps the field semantics in the schema description instead
+    // of repeating prose in the system message.
+    expect(schema, isNot(contains(AiEditContract.original)));
+    expect(
+      jsonEncode(aiJsonSchemaProjection()),
+      contains(AiEditContract.original),
+    );
     expect(schema, isNot(contains(kAiJsonObjectProtocol)));
 
     final jsonObject = aiBuildSystemPrompt(
       behaviorPrompt: '自定义行为提示词',
       outputMode: AiOutputMode.jsonObject,
     );
-    expect(jsonObject, contains('original 必须与提供的原文完全一致'));
-    expect(jsonObject, contains(kAiJsonObjectProtocol));
+    expect(jsonObject, contains(AiEditContract.original));
+    expect(jsonObject, contains(kAiJsonObjectProtocol.trim()));
   });
 
   test('DeepSeek keeps low, high and max reasoning levels', () {

@@ -1134,34 +1134,35 @@ ChapterContent 原文、legacyText、缓存和导入文件保持原语义。Read
 
 验证：运行 flutter analyze --no-pub 与 flutter test；重点套件为 text_replacement_*、reader_text_replacement、reader_paragraph_actions、reader_chapter_layout、reader_pagination、reader_illustrations、offline_reader 和 system_tts。Android/Windows 的构建与真机超时终止行为仍须在对应环境验收；Linux 主机单测不代表设备或 AOT 验收完成。
 
-### 开发者测试台
+### AI 测试台
 
-AI 设置 → 高级 → 开发者模式 → 开发者测试台。开关仅保存在本机，默认关闭。
-可输入样例正文，以本次测试开关对比去屏蔽词效果，查看提示词与输出协议，
-通过现有 AI 试验请求流程获取修改建议、替换预览、耗时及错误；测试不会写入
-正式章节校对缓存，但联网请求会消耗额度，仍受正文传输授权和预算限制。
-可取消测试；离开页面也会取消请求。还支持离线粘贴 JSON，校验结构、定位与
-重叠错误，并预览替换结果。WebDAV 区域仅显示状态和同步规则，不显示密码，
-不会触发远程写入。设备实际 AI 服务和 WebDAV 端到端行为需另行验证。
+设置 → 阅读 → AI 阅读优化 → 高级 → AI 测试台。主页面使用全局提供商与模型，
+可输入样例正文、编辑本次行为提示词及切换本次去屏蔽词选项；这些编辑不修改全局设置。
+请求沿用正文上传授权、预算、用量账本与前台服务，显示流式进度、耗时、Token 用量、
+正文预览、修改详情和模型原始响应。测试结果不写入正式章节缓存，不自动重试。
+停止或退出测试台会取消请求，进入提示词编辑、请求预览或 JSON 校验子页时保留测试。
+结果保留所属请求快照，输入或配置变化后标记为上次结果。
 
+「查看请求」展示 System、User 和输出格式。输出协议优先于用户行为提示词，
+用户行为提示词优先于去屏蔽词等可选功能；JSON Schema 字段说明与 JSON 文本协议共用契约。
+「更多工具 → JSON 校验」可离线检查原文与模型响应，或带入已完成请求的原文和响应。
+WebDAV 配置与诊断由数据同步功能负责。
 
 ## Linux / Arch x86_64（实验性运行基础）
 
-首批支持 Linux runner、bundle 内 Rust 核心、阅读/书架及 TXT/EPUB 本地导入。
-短剧、听书播放、系统朗读、媒体键、常亮、亮度/系统栏、备份文件选择等自定义桌面通道尚未实现；调用会明确报告暂不支持。
-本批没有 Arch 打包或 Linux CI，也不提供正式 Release。
+支持 Linux runner、bundle 内 Rust 核心、阅读/书架及 TXT/EPUB 本地导入。
+听书播放由下方第二批媒体基础提供；短剧、系统朗读、媒体键、常亮、亮度/系统栏、备份文件选择等桌面集成尚未实现。
+目前没有 Arch 打包或 Linux CI，也不提供正式 Release。
 
 Arch 构建依赖：Flutter stable（本批验证 3.47.9 / Dart 3.13.7）、Rust stable
 及 x86_64-unknown-linux-gnu target、clang、cmake、ninja、pkgconf、gtk3、libsecret。
 运行需要 GTK3、libsecret、glibc（含 iconv）、xdg-user-dirs 和图形会话，
 以及已启动且已解锁的 Secret Service（如 GNOME Keyring）。不要用 sudo 运行应用。
-本批媒体插件以现有依赖的空实现构建，不需要安装 mpv。
+媒体构建及运行还需要系统 libmpv（Arch 的 mpv 包），详见下方媒体说明。
 
 ```bash
 flutter pub get
 flutter analyze --no-pub
-flutter test
-cargo test --manifest-path rust/Cargo.toml --locked
 flutter build linux --release --no-pub
 ./build/linux/x64/release/bundle/fqapp
 ```
@@ -1206,8 +1207,8 @@ build/validation/windows-media/decoded.mp4 绝对路径，运行
 flutter test --no-pub --concurrency=1 test/desktop_media_playback_test.dart，
 验证实际 libmpv 播放、暂停、seek、倍速、完成及释放。
 
-上游门：flutter analyze --no-pub、flutter test --concurrency=1、
-cargo test --manifest-path rust/Cargo.toml --locked。资源受限机器串行执行，
+上游完整检查使用 CI；本地运行 flutter analyze --no-pub、上述定向媒体检查及
+相关构建，不运行完整 Flutter/Rust 套件。资源受限机器串行执行，
 使用 systemd scope 限制 CPU/内存及 CARGO_BUILD_JOBS=2、
 CMAKE_BUILD_PARALLEL_LEVEL=2。隔离 HOME/keyring，不读取真实账号/媒体缓存。
 

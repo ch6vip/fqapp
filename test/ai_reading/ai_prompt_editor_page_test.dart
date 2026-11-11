@@ -30,6 +30,7 @@ void main() {
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
     expect(find.text('旧内容'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField)).style, isNull);
     await tester.enterText(find.byType(TextField), '新的完整提示词');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();

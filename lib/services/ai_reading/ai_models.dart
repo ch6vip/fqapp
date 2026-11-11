@@ -679,35 +679,27 @@ class AiDeviceSettings {
   const AiDeviceSettings({
     this.cloudConsent = false,
     this.deviceDisabled = false,
-    this.developerMode = false,
   });
 
   final bool cloudConsent;
   final bool deviceDisabled;
-  final bool developerMode;
 
   Map<String, dynamic> toJson() => {
     'cloudConsent': cloudConsent,
     'deviceDisabled': deviceDisabled,
-    'developerMode': developerMode,
   };
 
-  AiDeviceSettings copyWith({
-    bool? cloudConsent,
-    bool? deviceDisabled,
-    bool? developerMode,
-  }) => AiDeviceSettings(
-    cloudConsent: cloudConsent ?? this.cloudConsent,
-    deviceDisabled: deviceDisabled ?? this.deviceDisabled,
-    developerMode: developerMode ?? this.developerMode,
-  );
+  AiDeviceSettings copyWith({bool? cloudConsent, bool? deviceDisabled}) =>
+      AiDeviceSettings(
+        cloudConsent: cloudConsent ?? this.cloudConsent,
+        deviceDisabled: deviceDisabled ?? this.deviceDisabled,
+      );
 
   static AiDeviceSettings fromJson(Object? raw) {
     final map = _mapOrNull(raw);
     return AiDeviceSettings(
       cloudConsent: map?['cloudConsent'] == true,
       deviceDisabled: map?['deviceDisabled'] == true,
-      developerMode: map?['developerMode'] == true,
     );
   }
 }

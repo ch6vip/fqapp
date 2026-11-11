@@ -15,6 +15,7 @@ class AiNetworkException implements Exception {
     this.retryable = false,
     this.retryAfter,
     this.usage,
+    this.rawContent,
   });
 
   final String code;
@@ -23,6 +24,7 @@ class AiNetworkException implements Exception {
   final bool retryable;
   final Duration? retryAfter;
   final AiUsage? usage;
+  final String? rawContent;
 
   @override
   String toString() => message;
@@ -49,6 +51,19 @@ class AiChatCompletionsClient {
     : _client = client ?? http.Client();
 
   final http.Client _client;
+
+  static Map<String, dynamic> responseFormat(AiOutputMode mode) =>
+      switch (mode) {
+        AiOutputMode.jsonObject => {'type': 'json_object'},
+        AiOutputMode.jsonSchema => {
+          'type': 'json_schema',
+          'json_schema': {
+            'name': 'ai_edits_v1',
+            'strict': true,
+            'schema': aiJsonSchemaProjection(),
+          },
+        },
+      };
 
   static Uri endpoint(String baseUrl) {
     var value = baseUrl.trim();
@@ -131,18 +146,7 @@ class AiChatCompletionsClient {
       if (stream) 'stream_options': const {'include_usage': true},
       'temperature': profile.temperature,
       ..._reasoningBody(profile, profile.reasoningEffort),
-      if (jsonResponse)
-        'response_format': switch (outputMode) {
-          AiOutputMode.jsonObject => {'type': 'json_object'},
-          AiOutputMode.jsonSchema => {
-            'type': 'json_schema',
-            'json_schema': {
-              'name': 'ai_edits_v1',
-              'strict': true,
-              'schema': aiJsonSchemaProjection(),
-            },
-          },
-        },
+      if (jsonResponse) 'response_format': responseFormat(outputMode),
     };
     debugPrint(
       redact(
@@ -464,22 +468,28 @@ class AiChatCompletionsClient {
       }
     } on TimeoutException {
       if (!localAbort.isCompleted) localAbort.complete();
-      throw const AiNetworkException(
+      throw AiNetworkException(
         'STREAM_TIMEOUT',
         '输出中断：60 秒没有收到新内容。请求可能已经到达服务商，未自动重发',
         retryable: false,
+        usage: usage,
+        rawContent: content.toString(),
       );
     } on http.RequestAbortedException {
-      throw const AiNetworkException(
+      throw AiNetworkException(
         'REQUEST_ABORTED',
         '请求已停止。请求可能已经到达服务商，未自动重发',
         retryable: false,
+        usage: usage,
+        rawContent: content.toString(),
       );
     } on http.ClientException catch (error) {
       throw AiNetworkException(
         'NETWORK_ERROR',
         redact('网络请求失败：${error.message}'),
         retryable: true,
+        usage: usage,
+        rawContent: content.toString(),
       );
     } on AiNetworkException catch (error) {
       throw AiNetworkException(
@@ -488,13 +498,16 @@ class AiChatCompletionsClient {
         statusCode: error.statusCode,
         retryable: error.retryable,
         retryAfter: error.retryAfter,
-        usage: error.usage,
+        usage: error.usage ?? (usage.hasAnyKnown ? usage : null),
+        rawContent: error.rawContent ?? content.toString(),
       );
     } catch (error) {
       throw AiNetworkException(
         'NETWORK_ERROR',
         redact('网络请求失败：$error'),
         retryable: true,
+        usage: usage,
+        rawContent: content.toString(),
       );
     }
 
@@ -512,6 +525,7 @@ class AiChatCompletionsClient {
         'RESPONSE_EMPTY',
         finishReason == 'length' ? '模型输出被长度限制截断' : '模型返回了空内容',
         usage: usage,
+        rawContent: content.toString(),
       );
     }
     if (finishReason == 'length') {
@@ -519,12 +533,15 @@ class AiChatCompletionsClient {
         'FINISH_REASON_LENGTH',
         '模型输出被长度限制截断',
         usage: usage,
+        rawContent: content.toString(),
       );
     }
     if (finishReason == 'content_filter') {
-      throw const AiNetworkException(
+      throw AiNetworkException(
         'FINISH_REASON_CONTENT_FILTER',
         '模型输出被内容过滤',
+        usage: usage,
+        rawContent: content.toString(),
       );
     }
     return AiProviderResponse(
@@ -568,12 +585,7 @@ class AiChatCompletionsClient {
         apiKey: apiKey,
         model: model,
         messages: [
-          {
-            'role': 'system',
-            'content': outputMode == AiOutputMode.jsonObject
-                ? '只输出 json。$kAiJsonObjectProtocol'
-                : '只输出符合给定 schema 的 JSON。',
-          },
+          {'role': 'system', 'content': aiBuildProbeSystemPrompt(outputMode)},
           {'role': 'user', 'content': '这是连接测试。请返回 {"edits":[]}。'},
         ],
         outputMode: outputMode,
