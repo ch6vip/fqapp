@@ -1,5 +1,6 @@
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    if target_os != "windows" && target_os != "linux" {
         return;
     }
     let sources = [
@@ -13,6 +14,7 @@ fn main() {
     build
         .include("../native/crypto_core")
         .std("c11")
+        .pic(target_os == "linux")
         .flag_if_supported("/experimental:c11atomics")
         .define("CBC", "0")
         .define("CTR", "0")
@@ -22,6 +24,7 @@ fn main() {
         println!("cargo:rerun-if-changed={path}");
         build.file(path);
     }
-    println!("cargo:rerun-if-changed=../native/crypto_core/sp_crypto.h");
+    println!("cargo:rerun-if-changed=../native/crypto_core");
+    println!("cargo:rerun-if-changed=../native/third_party/tiny_aes");
     build.compile("sp_crypto_core");
 }
