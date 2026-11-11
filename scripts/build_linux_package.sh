@@ -74,6 +74,6 @@ notices = [str(p.relative_to(root)) for p in root.rglob('*') if p.is_file() and 
 (out/'license-inventory.txt').write_text('Available notices, not a completed rights audit:\n'+'\n'.join(sorted(notices))+'\n')
 PY
 (cd "$output" && makepkg --nodeps --noconfirm && makepkg --printsrcinfo > .SRCINFO)
-(cd "$output" && makepkg -p source-PKGBUILD --verifysource --nodeps --noconfirm)
+(cd "$output" && makepkg -p source-PKGBUILD --verifysource --nodeps --noconfirm --force)
 (cd "$output" && sha256sum fqapp-source.tar.zst fqapp-bundle.tar.zst *.pkg.tar.zst build-manifest.txt > SHA256SUMS)
 printf 'Experimental package and evidence: %s\n' "$output"

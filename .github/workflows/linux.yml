@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           chown -R builder:builder /home/builder
-          runuser -u builder -- bash -euo pipefail <<'BUILD'
+          runuser -u builder -- nice -n 10 bash -euo pipefail <<'BUILD'
           export PATH="$FLUTTER_ROOT/bin:$PATH"
           mkdir -p build/validation/linux
           flutter --version --machine > build/validation/linux/flutter.json
@@ -79,6 +79,7 @@ jobs:
           BUILD
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
+          include-hidden-files: true
           name: fqapp-arch-x86_64-draft-${{ github.sha }}
           path: |
             /tmp/arch-package/*.pkg.tar.zst

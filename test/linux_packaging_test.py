@@ -23,6 +23,8 @@ class ReleaseInputsTest(unittest.TestCase):
             shutil.copy(source / "packaging/arch" / name,
                         self.root / "packaging/arch" / name)
         (self.root / "assets").mkdir()
+        (self.root / "scripts").mkdir()
+        shutil.copy(source / "scripts/build_linux_package.sh", self.root / "scripts")
         (self.root / ".gitignore").write_text("/build/\n/rust/target/\n*.private\n")
         (self.root / "rust/src").mkdir(parents=True)
         lock = tomllib.loads((source / "rust/Cargo.lock").read_text())
@@ -50,8 +52,8 @@ class ReleaseInputsTest(unittest.TestCase):
         return result
 
     def test_untracked_and_ignored_assets_are_rejected(self):
-        for name in ("untracked.json", "ignored.private"):
-            asset = self.root / "assets" / name
+        for name in ("assets/untracked.json", "assets/ignored.private", "rust/untracked.private"):
+            asset = self.root / name
             asset.write_text("synthetic")
             result = subprocess.run(
                 ["python", "packaging/arch/check_source.py", str(self.root)],
@@ -60,6 +62,20 @@ class ReleaseInputsTest(unittest.TestCase):
             self.assertIn("Untracked build inputs", result.stderr)
             self.assertEqual(asset.read_text(), "synthetic")
             asset.unlink()
+
+    def test_output_and_revision_guards_preserve_existing_files(self):
+        existing = Path(self.temp.name) / "existing output"
+        existing.mkdir()
+        sentinel = existing / "keep"
+        sentinel.write_text("original")
+        for output, revision in [(existing, "HEAD"), (self.root / "build/out", "HEAD"),
+                                 (existing, "not-a-revision")]:
+            result = subprocess.run(["bash", "scripts/build_linux_package.sh",
+                                     str(output), revision], cwd=self.root,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(sentinel.read_text(), "original")
+        self.assertFalse((self.root / "build/out").exists())
 
     def test_spaced_paths_reach_real_compilers_as_single_arguments(self):
         tools = Path(self.temp.name) / "tool bin"
