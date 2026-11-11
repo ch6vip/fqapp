@@ -622,8 +622,10 @@ class _AudioPageState extends State<AudioPage> {
             isMultiTone: tone.isMultiTone,
           ),
     ];
-    if (options.isNotEmpty) return options;
+    // Keep a restored local voice visible even if discovery returns other tones.
+    final hasToneOptions = options.isNotEmpty;
     for (final voice in c._voices) {
+      if (hasToneOptions && voice.id != c._toneId) continue;
       if (!c._selectableTone(voice.id) || !ids.add(voice.id)) continue;
       options.add(VoiceOption(id: voice.id, title: voice.label));
     }
