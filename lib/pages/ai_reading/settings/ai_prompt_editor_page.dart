@@ -97,7 +97,14 @@ class _AiPromptEditorPageState extends State<AiPromptEditorPage> {
       child: Padding(
         padding: widget.restoreText == null
             ? const EdgeInsets.fromLTRB(16, 8, 16, 12)
-            : featurePadding(context).copyWith(left: 16, right: 16),
+            : EdgeInsets.fromLTRB(
+                16,
+                MediaQuery.paddingOf(context).top +
+                    FrostedHeader.toolbarHeight +
+                    16,
+                16,
+                16,
+              ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -136,20 +143,24 @@ class _AiPromptEditorPageState extends State<AiPromptEditorPage> {
               const SizedBox(height: 8),
             ],
             if (sandbox)
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () => _controller.text = widget.restoreText!,
-                    style: sandboxStyle.textButton(),
-                    child: const Text('恢复全局'),
-                  ),
-                  Text(
-                    '${_controller.text.characters.length} 字',
-                    style: TextStyle(fontSize: 12, color: palette.muted),
-                  ),
-                ],
+              ConstrainedBox(
+                key: const ValueKey('sandbox-prompt-toolbar'),
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    TextButton(
+                      onPressed: () => _controller.text = widget.restoreText!,
+                      style: sandboxStyle.textButton(),
+                      child: const Text('恢复全局'),
+                    ),
+                    Text(
+                      '${_controller.text.characters.length} 字',
+                      style: TextStyle(fontSize: 12, color: palette.muted),
+                    ),
+                  ],
+                ),
               )
             else
               Row(

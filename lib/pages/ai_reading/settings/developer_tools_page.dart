@@ -305,6 +305,11 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
           code: 'AI / SANDBOX',
           actions: [
             PopupMenuButton<String>(
+              icon: const Icon(Icons.more_horiz),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                visualDensity: VisualDensity.standard,
+              ),
               tooltip: '更多工具',
               onSelected: (_) => _openJson(),
               itemBuilder: (_) => [
