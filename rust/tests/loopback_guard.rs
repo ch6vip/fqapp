@@ -481,7 +481,8 @@ async fn loopback_mode_refuses_a_lan_ip_host() {
 
 #[tokio::test]
 async fn lan_mode_refuses_a_foreign_origin_but_accepts_a_lan_one() {
-    let (_dir, _server, lb) = lan_loopback("lan-origin").await;
+    let (_dir, upstream, server) = comment_server("lan-origin").await;
+    let lb = start_listener(server, fqapi_core::server::ListenMode::Lan).await;
     let client = reqwest::Client::new();
     let ok_host = format!("192.168.1.23:{}", lb.port);
 
@@ -495,10 +496,20 @@ async fn lan_mode_refuses_a_foreign_origin_but_accepts_a_lan_one() {
         .expect("foreign-origin POST");
     assert_eq!(response.status().as_u16(), 403);
 
-    // A page served from this listener over the LAN is same-origin and passes
-    // the Origin guard - but the route is a device-bound write, so it still
-    // needs the capability. 401 here proves the Origin check was cleared while
-    // the capability gate held, which is the layering this test pins.
+    assert!(upstream.requests().is_empty());
+
+    // A matching LAN origin still needs the per-launch capability.
+    let response = client
+        .post(lb.bare_url(COMMENT_ADD))
+        .header("host", &ok_host)
+        .header("origin", format!("http://{ok_host}"))
+        .send()
+        .await
+        .expect("capability-free LAN POST");
+    assert_eq!(response.status().as_u16(), 401);
+    assert!(upstream.requests().is_empty());
+
+    // With the capability, the request reaches only the local mock upstream.
     let response = client
         .post(format!(
             "http://127.0.0.1:{}{}",
@@ -511,5 +522,7 @@ async fn lan_mode_refuses_a_foreign_origin_but_accepts_a_lan_one() {
         .await
         .expect("lan-origin POST");
     assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(upstream.requests().len(), 1);
     lb.task.abort();
+    upstream.shutdown();
 }
