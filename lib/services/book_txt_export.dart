@@ -82,6 +82,7 @@ class PlatformTxtSink implements TxtSink {
 class BookTxtExportState {
   const BookTxtExportState({
     this.running = false,
+    this.writing = false,
     this.completed = 0,
     this.total = 0,
     this.failed = 0,
@@ -90,6 +91,9 @@ class BookTxtExportState {
   });
 
   final bool running;
+
+  /// The platform write has been submitted and cannot be cancelled.
+  final bool writing;
   final int completed;
   final int total;
 
@@ -105,14 +109,15 @@ class BookTxtExportState {
   final String? message;
 
   double get fraction => total == 0 ? 0 : completed / total;
+  bool get canCancel => running && !writing;
 }
 
 /// Whole-book TXT export: a fresh directory plus every chapter re-fetched from
 /// the network, assembled in the same shape the backend's `/api/download`
 /// serves (`# 标题` line, body, blank line).
 ///
-/// Nothing is written until the last chapter is in hand: a cancelled or failed
-/// export must not leave a half book in Downloads that looks complete.
+/// Nothing is written until the last chapter is in hand. Cancellation is only
+/// available during fetching; once saving begins, the platform result wins.
 ///
 /// Chapter bodies are fetched through [chapterLoader], which production wires to
 /// `ApiClient.contentText` — the single request funnel CRIT-005 requires.
@@ -180,6 +185,7 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
       completed++;
       value = BookTxtExportState(
         running: true,
+        writing: completed == chapters.length,
         completed: completed,
         total: chapters.length,
         failed: failed,
@@ -209,9 +215,10 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
     );
   }
 
-  /// Stops the running export. Nothing was written yet, so nothing is left
-  /// behind in Downloads.
+  /// Stops fetching before any file is written. A submitted platform write
+  /// must finish and report its actual result.
   void cancel() {
+    if (_disposed || !value.canCancel) return;
     ++_job;
     final state = value;
     value = BookTxtExportState(

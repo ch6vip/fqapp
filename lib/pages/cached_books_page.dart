@@ -119,7 +119,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
   void dispose() {
     _store.changes.removeListener(_reload);
     _anchor.dispose();
-    // 离开页面就不该再有后台导出：没有界面报告结果的成功等于骗人。
+    // 取文阶段离开页面会中止导出；写入阶段由 PopScope 留在页面等待结果。
     _export?.removeListener(_onExportChanged);
     _export?.dispose();
     _export = null;
@@ -194,8 +194,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     return [for (final volume in volumes) ...volume];
   }
 
-  /// Starts the whole-book export of one cached book. Only one runs at a time,
-  /// and a second tap on any row cancels it instead of starting a second file.
+  /// Starts one whole-book export at a time. Its row can cancel fetching, but
+  /// must wait for the platform result once saving begins.
   void _startExport(CachedBook book) {
     if (_export != null) return;
     final export = BookTxtExport(
@@ -242,8 +242,8 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
       HomePalette.of(context).eink ? Colors.black : ShelfTokens.deleteRed;
 
   /// Export/delete actions shared by both presentations. Only colours, not
-  /// behaviour, differ: the export button keeps its key and becomes a progress
-  /// cancel affordance while that book's export runs.
+  /// behaviour, differ: the export button keeps its key and shows progress,
+  /// with cancellation available until saving starts.
   Widget _bookActions(
     CachedBookSummary item, {
     required Color muted,
@@ -257,12 +257,14 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
         if (progress != null)
           IconButton(
             key: Key('cached_book_export_$bookId'),
-            tooltip: '取消导出',
-            onPressed: _cancelExport,
+            tooltip: progress.writing ? '正在保存文件' : '取消导出',
+            onPressed: progress.canCancel ? _cancelExport : null,
             icon: SizedBox.square(
               dimension: 20,
               child: CircularProgressIndicator(
-                value: progress.total == 0 ? null : progress.fraction,
+                value: progress.total == 0 || progress.writing
+                    ? null
+                    : progress.fraction,
                 strokeWidth: 2,
               ),
             ),
@@ -292,7 +294,9 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     final progress = _exportBookId == bookId ? _export?.value : null;
     if (progress == null) return null;
     final key = Key('cached_book_export_progress_$bookId');
-    final label = progress.total == 0
+    final label = progress.writing
+        ? '正在保存文件…'
+        : progress.total == 0
         ? '导出中…'
         : '导出 ${progress.completed}/${progress.total} 章';
     if (classic) {
@@ -551,10 +555,12 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
       key: _contentKey,
       child: _body(scheme, classic: classic),
     );
+    final writing = _export?.value.writing == true;
+    final Widget page;
     if (classic) {
       final palette = HomePalette.of(context);
       final disabled = _books.isEmpty;
-      return ClassicFeaturePage(
+      page = ClassicFeaturePage(
         title: '小说离线缓存',
         actions: [
           IconButton(
@@ -570,18 +576,29 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
         ],
         child: body,
       );
+    } else {
+      page = ArchiveFeaturePage(
+        title: '小说离线缓存',
+        code: 'ARCHIVE / LOCAL STORAGE',
+        canPop: !writing,
+        actions: [
+          GlassIconButton(
+            icon: CupertinoIcons.trash,
+            label: '清空全部缓存',
+            onPressed: _books.isEmpty ? null : () => _clear(),
+          ),
+        ],
+        child: body,
+      );
     }
-    return ArchiveFeaturePage(
-      title: '小说离线缓存',
-      code: 'ARCHIVE / LOCAL STORAGE',
-      actions: [
-        GlassIconButton(
-          icon: CupertinoIcons.trash,
-          label: '清空全部缓存',
-          onPressed: _books.isEmpty ? null : () => _clear(),
-        ),
-      ],
-      child: body,
+    return PopScope(
+      canPop: !writing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _export?.value.writing == true) {
+          _snack('正在保存文件，请稍候');
+        }
+      },
+      child: page,
     );
   }
 }

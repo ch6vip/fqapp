@@ -483,6 +483,8 @@ extension _AudioListeningLayout on _AudioPageState {
     for (final tone in [...c._ttsTones, ...c._narratorTones]) {
       if (tone.id == id && tone.title.isNotEmpty) return tone.title;
     }
+    final localVoice = c._restoredLocalVoice;
+    if (localVoice != null && localVoice.id == id) return localVoice.label;
     return '默认音色';
   }
 
