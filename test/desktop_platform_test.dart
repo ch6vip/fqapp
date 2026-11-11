@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/desktop_platform.dart';
+import 'package:fqapp/services/desktop_media.dart';
+import 'package:flutter/foundation.dart';
 import 'package:fqapp/services/platform_channel.dart';
 import 'package:fqapp/services/linux_platform.dart';
 import 'package:fqapp/models/media_item.dart';
@@ -16,8 +18,40 @@ void main() {
     PlatformChannels.events = null;
   });
 
+  test('Linux TTS rejects without forwarding platform channels', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('window_manager'),
+          (_) async => null,
+        );
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('window_manager'),
+            null,
+          ),
+    );
+    await LinuxPlatform.install();
+    for (final channel in ['fqapp/system_tts']) {
+      await expectLater(
+        AppMethodChannel(channel).invokeMethod<void>('create'),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'unsupported_platform',
+          ),
+        ),
+      );
+      expect(
+        await AppEventChannel(channel).receiveBroadcastStream().toList(),
+        isEmpty,
+      );
+    }
+  });
+
   test(
-    'Linux media and TTS reject without forwarding platform channels',
+    'Linux media routes closed players without Android forwarding',
     () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
@@ -32,20 +66,32 @@ void main() {
             ),
       );
       await LinuxPlatform.install();
-      for (final channel in ['fqapp/native_player', 'fqapp/system_tts']) {
-        await expectLater(
-          AppMethodChannel(channel).invokeMethod<void>('create'),
-          throwsA(
-            isA<PlatformException>().having(
-              (e) => e.code,
-              'code',
-              'unsupported_platform',
-            ),
+      await expectLater(
+        const AppMethodChannel(
+          'fqapp/native_player',
+        ).invokeMethod<void>('play', {'id': -1}),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'player_closed',
           ),
-        );
+        ),
+      );
+    },
+  );
+
+  test(
+    'Linux uses the same absolute bundled core and visible inactive state',
+    () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      expect(playbackAppIsActive(AppLifecycleState.inactive), isTrue);
+      expect(playbackAppIsActive(AppLifecycleState.hidden), isFalse);
+      if (Platform.isLinux) {
         expect(
-          await AppEventChannel(channel).receiveBroadcastStream().toList(),
-          isEmpty,
+          desktopCoreLibraryPath(),
+          '${File(Platform.resolvedExecutable).parent.path}/lib/libfqapi_core.so',
         );
       }
     },

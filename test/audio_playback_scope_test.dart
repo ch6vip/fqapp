@@ -24,6 +24,25 @@ void main() {
   });
 
   testWidgets(
+    'Linux unfocused audio stays visible; hidden pauses without background audio',
+    (tester) async {
+      await AudioPreferences.instance.setBackgroundPlayback(false);
+      final app = await _mount(tester, size: const Size(1000, 800));
+      app.open();
+      await _flush(tester);
+      final player = app.players.single;
+      expect(player.isPlaying, isTrue);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await _flush(tester);
+      expect(player.isPlaying, isTrue);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await _flush(tester);
+      expect(player.isPlaying, isFalse);
+    },
+    variant: TargetPlatformVariant({TargetPlatform.linux}),
+  );
+
+  testWidgets(
     'reader capsule controls the retained audio session and yields to menus',
     (tester) async {
       final app = await _mount(tester);
@@ -185,9 +204,9 @@ final String _multiPageChapter = List.generate(
   (i) => '第${i + 1}段，山风从窗边吹进来，把桌上的纸页翻得沙沙作响。',
 ).join('\n');
 
-Future<_Harness> _mount(WidgetTester tester) async {
+Future<_Harness> _mount(WidgetTester tester, {Size size = const Size(430, 932)}) async {
   final app = _Harness();
-  await tester.binding.setSurfaceSize(const Size(430, 932));
+  await tester.binding.setSurfaceSize(size);
   tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox.shrink());
@@ -228,10 +247,7 @@ class _Harness {
 
   /// 打开同一本书的阅读页：迷你栏留在原地，阅读页在 initState 里注册
   /// 「跳到播放位置」。
-  void openReader({
-    String bookId = 'book',
-    String text = '第一段。\n第二段。',
-  }) {
+  void openReader({String bookId = 'book', String text = '第一段。\n第二段。'}) {
     unawaited(
       navigator.currentState!.push<void>(
         MaterialPageRoute(

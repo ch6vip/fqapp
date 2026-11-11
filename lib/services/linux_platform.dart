@@ -8,7 +8,7 @@ import 'platform_channel.dart';
 bool get isLinuxDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
 
-/// First-batch adapters only. Never forward unsupported calls to Android.
+/// Linux media uses the shared desktop player; other channels remain explicit.
 class LinuxPlatform with WindowListener {
   static final _instance = LinuxPlatform();
   static Future<void> Function()? beforeClose;
@@ -19,14 +19,19 @@ class LinuxPlatform with WindowListener {
     await windowManager.ensureInitialized();
     windowManager.addListener(_instance);
     await windowManager.setPreventClose(true);
-    PlatformChannels.events = (_) => const Stream.empty();
+    PlatformChannels.events = (name) => name == 'fqapp/native_player/events'
+        ? DesktopPlatform.instance.events(name)
+        : const Stream.empty();
     PlatformChannels.invoke = (channel, method, arguments) async {
+      if (channel == 'fqapp/native_player') {
+        return DesktopPlatform.instance.invoke(channel, method, arguments);
+      }
       if (channel == 'fqapp/local_books' && method == 'pickBookFile') {
         return DesktopPlatform.instance.pickBook();
       }
       throw PlatformException(
         code: 'unsupported_platform',
-        message: 'Linux 实验版暂不支持此功能（媒体、系统朗读及桌面集成将在后续提供）',
+        message: 'Linux 实验版暂不支持此功能（系统朗读及桌面集成将在后续提供）',
       );
     };
   }
@@ -42,6 +47,7 @@ class LinuxPlatform with WindowListener {
         // A failed bootstrap still permits closing the error screen.
       }
       await beforeClose?.call();
+      await DesktopPlatform.instance.disposeMedia();
       await windowManager.destroy();
     } catch (_) {
       _closing = false;
