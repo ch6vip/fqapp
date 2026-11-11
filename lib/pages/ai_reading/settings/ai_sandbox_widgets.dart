@@ -7,6 +7,7 @@ import '../../../services/chapter_text_formatter.dart';
 import '../../../widgets/home/home_design.dart';
 import '../../../widgets/settings/settings_widgets.dart';
 import '../../../widgets/wenku/wenku_ui.dart';
+import 'ai_sandbox_request_page.dart';
 
 const aiSandboxSample = '他以经在门口等了半个小时。\n“我踏马真是服了。”他叹了口气。\n他拿出手机，打开*****给朋友发消息。';
 const aiSandboxExampleResponse =
@@ -30,6 +31,7 @@ class AiSandboxResult {
     this.elapsed,
     this.requests,
     this.usage,
+    this.request,
   });
   final String title;
   final String source;
@@ -39,6 +41,7 @@ class AiSandboxResult {
   final Duration? elapsed;
   final int? requests;
   final AiUsage? usage;
+  final AiSandboxRequest? request;
 }
 
 class AiSandboxLayout extends StatelessWidget {
@@ -117,9 +120,17 @@ class AiSandboxField extends StatelessWidget {
 }
 
 class AiSandboxResultView extends StatefulWidget {
-  const AiSandboxResultView({super.key, this.result, this.onValidate});
+  const AiSandboxResultView({
+    super.key,
+    this.result,
+    this.onValidate,
+    this.onViewRequest,
+    this.previous = false,
+  });
   final AiSandboxResult? result;
   final VoidCallback? onValidate;
+  final VoidCallback? onViewRequest;
+  final bool previous;
   @override
   State<AiSandboxResultView> createState() => _AiSandboxResultViewState();
 }
@@ -188,6 +199,7 @@ class _AiSandboxResultViewState extends State<AiSandboxResultView> {
           alignment: WrapAlignment.spaceBetween,
           spacing: 12,
           children: [
+            if (widget.previous) const Text('上次结果'),
             Text(
               result.title,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
@@ -198,6 +210,26 @@ class _AiSandboxResultViewState extends State<AiSandboxResultView> {
               ),
           ],
         ),
+        if (result.request case final request?)
+          Wrap(
+            spacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '${request.settings.modelId ?? '未选择模型'} · ${request.behaviorSource} · 去屏蔽词${request.restore ? '开启' : '关闭'}',
+                key: const ValueKey('sandbox-result-config'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: HomePalette.of(context).muted,
+                ),
+              ),
+              if (widget.onViewRequest != null && (result.requests ?? 0) > 0)
+                TextButton(
+                  onPressed: widget.onViewRequest,
+                  child: const Text('查看本次请求'),
+                ),
+            ],
+          ),
         const SizedBox(height: 8),
         Wrap(
           spacing: 16,
