@@ -6,9 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        报告前请先确认：已更新到[最新版本](https://github.com/ch6vip/fqapp/releases/latest)，并在已有 issue 里搜过同样的问题。
+        报告前请先确认：已更新到[最新版本](https://github.com/ch6vip/novel-sound/releases/latest)，并在已有 issue 里搜过同样的问题。
 
-        产品边界与不做的功能见 [CONTRIBUTING.md](https://github.com/ch6vip/fqapp/blob/master/CONTRIBUTING.md)。
+        产品边界与不做的功能见 [CONTRIBUTING.md](https://github.com/ch6vip/novel-sound/blob/master/CONTRIBUTING.md)。
 
   - type: input
     id: version

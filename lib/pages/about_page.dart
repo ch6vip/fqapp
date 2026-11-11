@@ -225,7 +225,7 @@ class _AboutInfoCard extends StatelessWidget {
             subtitle: '前往 GitHub 发布页查看新版本',
             onTap: () => _launchExternalUrl(
               context,
-              'https://github.com/ch6vip/fqapp/releases',
+              'https://github.com/ch6vip/novel-sound/releases',
             ),
           ),
           _InfoRow(
@@ -244,9 +244,11 @@ class _AboutInfoCard extends StatelessWidget {
           _InfoRow(
             icon: LucideIcons.code_xml,
             title: '源代码',
-            subtitle: 'github.com/ch6vip/fqapp',
-            onTap: () =>
-                _launchExternalUrl(context, 'https://github.com/ch6vip/fqapp'),
+            subtitle: 'github.com/ch6vip/novel-sound',
+            onTap: () => _launchExternalUrl(
+              context,
+              'https://github.com/ch6vip/novel-sound',
+            ),
           ),
           _InfoRow(
             icon: LucideIcons.message_square,
@@ -254,7 +256,7 @@ class _AboutInfoCard extends StatelessWidget {
             subtitle: '前往 GitHub Issues 提交',
             onTap: () => _launchExternalUrl(
               context,
-              'https://github.com/ch6vip/fqapp/issues',
+              'https://github.com/ch6vip/novel-sound/issues',
             ),
           ),
         ];

@@ -1,6 +1,6 @@
-# fqapp 电脑版
+# novel-sound 电脑版
 
-基于 ch6vip/fqapp 的 `762f0b2`，保留 GPL-3.0 许可证和原作者署名。
+基于 ch6vip/novel-sound 的 `762f0b2`，保留 GPL-3.0 许可证和原作者署名。
 
 ## 使用
 
