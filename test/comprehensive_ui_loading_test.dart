@@ -20,7 +20,7 @@ void main() {
       (chapters: 3, resume: 2),
     ]) {
       testWidgets('${scenario.chapters} chapters, resume ${scenario.resume}: '
-          '整本下载 caches the rest of the catalogue', (tester) async {
+          '整本下载 caches the entire catalogue', (tester) async {
         addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
         final chapters = <Chapter>[
           for (var index = 0; index < scenario.chapters; index++)
@@ -71,9 +71,8 @@ void main() {
         expect(find.byType(ChapterCacheSheet), findsNothing);
         await tester.tap(find.byKey(const Key('detail_download_all')));
         await tester.pumpAndSettle();
-        final start = scenario.resume ?? 0;
         expect(await cache.cachedChapterIds('book'), {
-          for (var index = start; index < scenario.chapters; index++)
+          for (var index = 0; index < scenario.chapters; index++)
             'chapter-$index',
         });
         expect(find.textContaining('缓存完成'), findsOneWidget);
