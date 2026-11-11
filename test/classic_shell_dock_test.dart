@@ -2,6 +2,8 @@
 // backdrop), full icon+label coverage, and the draggable highlight that
 // follows the finger and switches pages on release.
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart'
+    show SemanticsAction, SemanticsActionEvent;
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -548,5 +550,57 @@ void main() {
       tester.widget<Text>(find.text('短剧')).style!.color,
       HomePalette.accent,
     );
+  });
+
+  testWidgets('入口 Semantics 注册 tap 激活动作，屏幕阅读器双击可切换', (
+    tester,
+  ) async {
+    // PR #320 审查遗留：手势在子级 GestureDetector 上，外层 Semantics 只标
+    // button/selected 时 TalkBack 能读出但双击无法激活，须显式补 onTap。
+    final handle = tester.ensureSemantics();
+    try {
+      var selected = -1;
+      await pumpInteractiveDock(
+        tester,
+        initial: 0,
+        onSelected: (index) => selected = index,
+      );
+
+      const labels = ['首页', '短剧', '书架', '我的'];
+      for (final label in labels) {
+        // widget 级：入口的 Semantics 必须显式持有 onTap。
+        final semantics = tester.widget<Semantics>(
+          find
+              .ancestor(of: find.text(label), matching: find.byType(Semantics))
+              .first,
+        );
+        expect(
+          semantics.properties.onTap,
+          isNotNull,
+          reason: '$label 缺少语义激活动作',
+        );
+        // 节点级：合并后的语义节点带 tap 动作。
+        final node = tester.getSemantics(find.bySemanticsLabel(label));
+        expect(
+          node.getSemanticsData().hasAction(SemanticsAction.tap),
+          isTrue,
+          reason: label,
+        );
+      }
+
+      // 模拟屏幕阅读器双击：执行语义 tap 动作应真的切换选中项。
+      final shelfNode = tester.getSemantics(find.bySemanticsLabel('书架'));
+      tester.binding.performSemanticsAction(
+        SemanticsActionEvent(
+          type: SemanticsAction.tap,
+          viewId: tester.view.viewId,
+          nodeId: shelfNode.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(selected, 2);
+    } finally {
+      handle.dispose();
+    }
   });
 }

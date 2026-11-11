@@ -496,6 +496,9 @@ class _ClassicDockDestination extends StatelessWidget {
       container: true,
       button: true,
       selected: selected,
+      // 无障碍激活动作：手势在子级 GestureDetector 上，不注册语义动作时
+      // TalkBack 能读出「按钮/已选择」但双击无法激活，须显式补 onTap。
+      onTap: onTap,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         // down：位移从按下点起算，背景跟手不丢 slop 内的起始位移。
