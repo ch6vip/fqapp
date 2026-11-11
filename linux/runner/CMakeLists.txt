@@ -24,3 +24,6 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+
+add_subdirectory("${CMAKE_SOURCE_DIR}/../native/linux" "${CMAKE_BINARY_DIR}/native_bridge")
+target_link_libraries(${BINARY_NAME} PRIVATE fqapp_linux_bridge)
