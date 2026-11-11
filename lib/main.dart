@@ -292,9 +292,24 @@ class _FqAppState extends State<FqApp> {
   final _navigatorKey = isWindowsDesktop
       ? DesktopPlatform.navigatorKey
       : GlobalKey<NavigatorState>();
+  final _localDataReady = Completer<void>();
+
+  Future<void> _initializeData() async {
+    await (widget.initializer ?? _initializeLocalData)();
+    if (!_localDataReady.isCompleted) _localDataReady.complete();
+  }
+
+  Future<RecentListen?> _loadRecentListenWhenReady() async {
+    // Keep the Navigator and playback owner mounted during startup/retries,
+    // but read history only after the local stores have opened successfully.
+    await _localDataReady.future;
+    if (!mounted) return null;
+    return loadRecentListen();
+  }
 
   @override
   void dispose() {
+    if (!_localDataReady.isCompleted) _localDataReady.complete();
     BackendService.instance.cancelStartupTimeout();
     _audioRoutes.dispose();
     super.dispose();
@@ -323,7 +338,7 @@ class _FqAppState extends State<FqApp> {
                       final playback = AudioPlaybackScope(
                         key: _audioScopeKey,
                         navigatorKey: _navigatorKey,
-                        recentListen: loadRecentListen,
+                        recentListen: _loadRecentListenWhenReady,
                         child: child ?? const SizedBox.shrink(),
                       );
                       // One live presentation scope above the root Navigator,
@@ -387,7 +402,7 @@ class _FqAppState extends State<FqApp> {
                       backendStarter:
                           widget.backendStarter ??
                           BackendService.instance.start,
-                      initializer: widget.initializer,
+                      initializer: _initializeData,
                       child: RootShell(backendStarter: widget.backendStarter),
                     ),
                   ),

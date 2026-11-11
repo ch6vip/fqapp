@@ -42,7 +42,11 @@ extension _HistoryTrim on LibraryStore {
     if (_localHistoryCountNow() > 100) {
       // Legacy backups must not make fifty books look like a hundred books.
       final retained =
-          historySnapshot().take(50).map(LibraryStore._historyIdentity).toSet()
+          historySnapshot()
+              .where((record) => record['fanqieImported'] != true)
+              .take(50)
+              .map(LibraryStore._historyIdentity)
+              .toSet()
             // Never trim the record this write just inserted, even without a time.
             ..add(LibraryStore._historyIdentity(inserted));
       final oldestKeys = <dynamic>[];
