@@ -3,8 +3,11 @@
 set -euo pipefail
 root=$(pwd -P)
 revision=${FQAPP_SOURCE_REVISION:-}
-if [[ $(git rev-parse --show-toplevel 2>/dev/null || true) == "$root" ]]; then revision=$(git rev-parse HEAD); fi
-if [[ -n $revision ]]; then python packaging/arch/check_source.py "$root"; fi
+if [[ $(git rev-parse --show-toplevel 2>/dev/null || true) == "$root" ]]; then
+  revision=$(git rev-parse HEAD)
+  python packaging/arch/check_source.py "$root"
+fi
+[[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo "Missing source revision" >&2; exit 2; }
 : "${FLUTTER_ROOT:?Set FLUTTER_ROOT}"
 : "${PUB_CACHE:?Set an isolated PUB_CACHE}"
 export CARGO_ENCODED_RUSTFLAGS="$(python - "$root" "$HOME" <<'PY'

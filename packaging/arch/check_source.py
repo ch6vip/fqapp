@@ -7,7 +7,7 @@ root = sys.argv[1]
 subprocess.run(["git", "-C", root, "diff", "--quiet", "HEAD", "--"], check=True)
 inputs = [
     "assets", "lib", "native", "third_party", "linux", "packaging", "scripts",
-    "rust/src", "rust/tests", "rust/testdata", "rust/.cargo", ".cargo",
+    "rust", ".cargo", ":(exclude)rust/target",
     "rust/build.rs", "rust/Cargo.toml", "rust/Cargo.lock",
     ":(top,glob)*.yaml", ":(top,glob)*.lock", ":(top,glob)*.cmake", "CMakeLists.txt",
     ":(exclude)linux/flutter/ephemeral",
