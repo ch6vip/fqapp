@@ -9,9 +9,9 @@ import 'home_design.dart';
 /// 与 [HomeFeedEmpty] / [HomeFeedError] 的整页大态区分：这个版本放在列表
 /// 末尾、卡片内或弹层里都合适，自身不撑满高度。
 ///
-/// [scrollable] 为 true 时整体居中并可垂直滚动，用于替页面承担滚动：
-/// 内容区夹在 tab / chip 下面、高度有限时，窄屏大字号下的动作按钮仍可达。
-/// 之前榜单、缓存、日志、漫画和书评弹层各包了一层
+/// [scrollable] 为 true 时按 [alignment] 定位（默认居中）并可垂直滚动，
+/// 用于替页面承担滚动：内容区夹在 tab / chip 下面、高度有限时，窄屏大字号
+/// 下的动作按钮仍可达。之前榜单、缓存、日志、漫画和书评弹层各包了一层
 /// `Center(SingleChildScrollView(...))`，统一收敛到这里。
 class HomeStateView extends StatelessWidget {
   const HomeStateView({
@@ -24,6 +24,9 @@ class HomeStateView extends StatelessWidget {
     this.actionIcon,
     this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
     this.scrollable = false,
+    // Full-page notices can lift their block above the geometric center; the
+    // page header already occupies the top, so a plain center reads low.
+    this.alignment = Alignment.center,
   });
 
   final IconData icon;
@@ -34,6 +37,7 @@ class HomeStateView extends StatelessWidget {
   final IconData? actionIcon;
   final EdgeInsetsGeometry padding;
   final bool scrollable;
+  final AlignmentGeometry alignment;
 
   @override
   Widget build(BuildContext context) {
@@ -82,7 +86,10 @@ class HomeStateView extends StatelessWidget {
       ),
     );
     if (!scrollable) return content;
-    return Center(child: SingleChildScrollView(child: content));
+    return Align(
+      alignment: alignment,
+      child: SingleChildScrollView(child: content),
+    );
   }
 
   Widget _action(HomePalette palette, String label, IconData? icon) {

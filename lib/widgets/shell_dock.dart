@@ -16,6 +16,7 @@ class ShellDock extends StatelessWidget {
     required this.onSelected,
     required this.overVideo,
     required this.staticMaterial,
+    this.animating = false,
   });
 
   final int selectedIndex;
@@ -27,6 +28,10 @@ class ShellDock extends StatelessWidget {
   /// 背后每帧都在变（视频流）或是 OLED 纯黑画布时，不跑实时折射/模糊，
   /// 改用上游轻量模式的同色底板。
   final bool staticMaterial;
+
+  /// 页面切换动画进行中：经典 dock 跳过 BackdropFilter 实时模糊；档案
+  /// GlassDock 同样改用轻量预设，不做实时折射与边缘模糊。
+  final bool animating;
 
   static const _items = [
     GlassDockItem(CupertinoIcons.house, '首页'),
@@ -51,11 +56,15 @@ class ShellDock extends StatelessWidget {
         selectedIndex: selectedIndex,
         onSelected: onSelected,
         overVideo: overVideo,
+        animating: animating,
       );
     }
+    // 页面切换动画期间与静态底板同待遇：轻量预设关掉 glass/blur/edgeBlur，
+    // 胶囊折射与 underlay 边缘模糊一并跳过，不对滑动中的页面每帧做全屏
+    // 高斯模糊（动画结束自动恢复），与经典 dock 的 animating 行为对齐。
     Widget dock = WenkuScope(
       entrance: false,
-      performance: staticMaterial
+      performance: staticMaterial || animating
           ? _lightweight
           : const PerformancePreferences(),
       child: Builder(builder: _buildDock),
