@@ -82,7 +82,7 @@ abstract final class AiEditContract {
       '必须与输入正文逐字符完全一致（含标点和全半角），并且在完整输入正文中恰好出现一次；'
       '尽量选取能够唯一定位该处的最短连续片段，且片段必须完整落在同一段落内、不含换行。';
   static const replacement =
-      'original 片段的局部替换文本，可为空字符串表示删除；只替换 original 覆盖的字符，不重写整句、不增删剧情信息。';
+      'original 片段的局部替换文本，可为空字符串表示删除；只替换 original 覆盖的字符。';
   static const category = '用很短的简体中文概括修改类别，由你根据上下文判断，不要求固定词表，应用会原样展示。';
   static const reason = '用一句简体中文说明为什么这里需要改；只写最终理由，不写推理过程。';
 }
