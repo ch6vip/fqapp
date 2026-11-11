@@ -8,6 +8,12 @@ class CommentImages extends StatelessWidget {
 
   final List<String> imageUrls;
 
+  /// 评论配图在列表里最大只有 144×180 逻辑像素；按 3× 屏算 432×540 就够。
+  /// 之前和章节插图共用 2048×4096 的解码上限，单张位图最多约 33 MiB，
+  /// 九宫格配图在 8 GiB 机型上会明显放大内存压力（#266）。
+  static const maxDecodeWidth = 480;
+  static const maxDecodeHeight = 600;
+
   @override
   Widget build(BuildContext context) => Wrap(
     spacing: 8,
@@ -21,6 +27,8 @@ class CommentImages extends StatelessWidget {
             height: imageUrls.length == 1 ? 180 : 96,
             child: ReaderIllustration(
               image: ChapterImage(url: url, alt: '评论配图'),
+              maxDecodeWidth: maxDecodeWidth,
+              maxDecodeHeight: maxDecodeHeight,
             ),
           ),
         ),

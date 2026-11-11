@@ -16,11 +16,22 @@ class ReaderIllustration extends StatefulWidget {
   final ReaderImageProviderFactory? providerFactory;
   final bool allowFullscreen;
 
+  /// Decode cap for the inline view. Defaults leave chapter illustrations at
+  /// their native size; thumbnail callers (comment attachments) pass their
+  /// box size so a 96dp image never decodes as a 2048×4096 bitmap.
+  ///
+  /// The fullscreen viewer builds a new instance without these caps, so
+  /// tapping a thumbnail still opens the full-resolution image.
+  final int? maxDecodeWidth;
+  final int? maxDecodeHeight;
+
   const ReaderIllustration({
     super.key,
     required this.image,
     this.providerFactory,
     this.allowFullscreen = true,
+    this.maxDecodeWidth,
+    this.maxDecodeHeight,
   });
 
   @override
@@ -65,8 +76,8 @@ class _ReaderIllustrationState extends State<ReaderIllustration> {
         widget.providerFactory?.call(widget.image) ??
         CachedNetworkImageProvider(
           widget.image.url,
-          maxWidth: 2048,
-          maxHeight: 4096,
+          maxWidth: widget.maxDecodeWidth ?? 2048,
+          maxHeight: widget.maxDecodeHeight ?? 4096,
           // 与海报共用 PosterCache（2000 对象 / 256MiB）：默认的
           // DefaultCacheManager 只有 200 对象上限，插图更容易被挤出重下。
           cacheManager: PosterCache.instance,
