@@ -90,6 +90,19 @@ class AiCoordinator {
       chapterTitle,
     );
     final effective = _settings.resolve(bookId);
+    // Capture prompt and optional features before any I/O. The request and its
+    // metadata must describe the same configuration even if settings change.
+    final restore =
+        restoreCensoredWords ?? effective.global.restoreCensoredWords;
+    final prompt = behaviorPromptOverride == null
+        ? _settings.resolvedPrompt(bookId)
+        : AiResolvedPrompt(
+            text: behaviorPromptOverride,
+            hash: _sha(behaviorPromptOverride),
+            source: 'trial',
+            promptId: 'trial_${_sha(behaviorPromptOverride)}',
+            restoreCensoredWords: restore,
+          );
     final key = _generationKey(bookId, snapshot.canonicalHash);
     // Capture the fence at request start, not after the model returns. A clear
     // that happens while this request is in flight must still reject its write.
@@ -166,7 +179,7 @@ class AiCoordinator {
     final generation = forceRefresh ? previous + 1 : previous;
     if (forceRefresh) _generations[key] = generation;
     final runId = _newId('run');
-    final configHash = _configHash(effective, provider, model);
+    final configHash = _configHash(prompt, provider, model, restore);
     final run = AiRunRecord(
       runId: runId,
       kind: kind,
@@ -183,19 +196,10 @@ class AiCoordinator {
     await _store.putRun(run);
     onState?.call(AiRunState.running);
 
-    final prompt = behaviorPromptOverride == null
-        ? _settings.resolvedPrompt(bookId)
-        : AiResolvedPrompt(
-            text: behaviorPromptOverride,
-            hash: _sha(behaviorPromptOverride),
-            source: 'trial',
-            promptId: 'trial_${_sha(behaviorPromptOverride)}',
-            restoreCensoredWords: _settings.global.restoreCensoredWords,
-          );
     final messages = aiBuildChatMessages(
       behaviorPrompt: prompt.text,
       outputMode: outputMode,
-      restoreCensoredWords: restoreCensoredWords ?? prompt.restoreCensoredWords,
+      restoreCensoredWords: restore,
       userContent: snapshot.requestText,
     );
     final timeout = Duration(seconds: effective.requestTimeoutSeconds);
@@ -797,9 +801,10 @@ class AiCoordinator {
   }
 
   String _configHash(
-    AiEffectiveSettings effective,
+    AiResolvedPrompt prompt,
     AiProviderProfile provider,
     String model,
+    bool restoreCensoredWords,
   ) => _sha(
     jsonEncode({
       'provider': provider.id,
@@ -808,7 +813,8 @@ class AiCoordinator {
       'mode': provider.outputMode.wire,
       'temperature': provider.temperature,
       'reasoningEffort': provider.reasoningEffort.name,
-      'prompt': effective.behaviorPrompt,
+      'prompt': prompt.text,
+      'restoreCensoredWords': restoreCensoredWords,
     }),
   );
 

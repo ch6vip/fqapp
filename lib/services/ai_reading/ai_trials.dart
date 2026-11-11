@@ -47,6 +47,8 @@ class AiTrialService {
     required List<AiFeedbackCase> feedbackCases,
     bool confirmedOverBudget = false,
   }) async {
+    final effective = _settings.resolve(bookId);
+    final restoreCensoredWords = effective.global.restoreCensoredWords;
     final now = DateTime.now();
     final trialId = 'trial_${now.microsecondsSinceEpoch.toRadixString(36)}';
     final feedbackRevisions = {
@@ -67,7 +69,12 @@ class AiTrialService {
       bookId: bookId,
       candidateHash: _hash(candidatePrompt),
       configSnapshotHash: _hash(
-        '$candidatePrompt|${_settings.resolve(bookId).providerId}|${_settings.resolve(bookId).modelId}',
+        jsonEncode({
+          'prompt': candidatePrompt,
+          'provider': effective.providerId,
+          'model': effective.modelId,
+          'restoreCensoredWords': restoreCensoredWords,
+        }),
       ),
       feedbackSnapshotHash: _hash(jsonEncode(feedbackRevisions)),
       feedbackCaseRevisions: feedbackRevisions,
@@ -98,6 +105,7 @@ class AiTrialService {
             automatic: false,
             confirmedOverBudget: confirmedOverBudget,
             behaviorPromptOverride: candidatePrompt,
+            restoreCensoredWords: restoreCensoredWords,
           );
           if (result.needsBudgetConfirmation) {
             throw AiTrialNeedsBudget(result.budgetMessage ?? '本次试验将超出预算');

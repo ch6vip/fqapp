@@ -177,6 +177,17 @@ void main() {
   });
 
   group('schema semantics', () {
+    test('custom rewriting is not prohibited by the output protocol', () {
+      for (final mode in AiOutputMode.values) {
+        final system = aiBuildSystemPrompt(
+          behaviorPrompt: '请按我的要求润色并重写整句。',
+          outputMode: mode,
+        );
+        final instructions = '$system\n${jsonEncode(aiJsonSchemaProjection())}';
+        expect(instructions, isNot(matches(RegExp('不重写整句|不增删剧情信息'))));
+      }
+    });
+
     test('descriptions carry the same rules as the json_object protocol', () {
       final schema = aiJsonSchemaProjection();
       final edits = (schema['properties'] as Map)['edits'] as Map;
