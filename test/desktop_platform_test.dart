@@ -1,8 +1,11 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/services/platform_channel.dart';
+import 'package:fqapp/services/linux_platform.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/widgets/desktop_chapter_sidebar.dart';
 
@@ -12,6 +15,90 @@ void main() {
     PlatformChannels.invoke = null;
     PlatformChannels.events = null;
   });
+
+  test(
+    'Linux media and TTS reject without forwarding platform channels',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('window_manager'),
+            (_) async => null,
+          );
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('window_manager'),
+              null,
+            ),
+      );
+      await LinuxPlatform.install();
+      for (final channel in ['fqapp/native_player', 'fqapp/system_tts']) {
+        await expectLater(
+          AppMethodChannel(channel).invokeMethod<void>('create'),
+          throwsA(
+            isA<PlatformException>().having(
+              (e) => e.code,
+              'code',
+              'unsupported_platform',
+            ),
+          ),
+        );
+        expect(
+          await AppEventChannel(channel).receiveBroadcastStream().toList(),
+          isEmpty,
+        );
+      }
+    },
+  );
+
+  test('Linux local text supports UTF-8 and UTF-16', () async {
+    expect(await decodeLinuxText(Uint8List.fromList([0xe4, 0xb8, 0xad])), '中');
+    expect(
+      await decodeLinuxText(Uint8List.fromList([0xff, 0xfe, 0x2d, 0x4e])),
+      '中',
+    );
+  });
+
+  test('Linux local text supports GB18030 through system iconv', () async {
+    expect(await decodeLinuxText(Uint8List.fromList([0xd6, 0xd0])), '中');
+  }, skip: !Platform.isLinux);
+
+  test(
+    'Linux close waits for local initialization before flush and destroy',
+    () async {
+      final startup = Completer<void>();
+      final destroyed = Completer<void>();
+      var flushed = false;
+      LinuxPlatform.localDataInitialization = startup.future;
+      LinuxPlatform.beforeClose = () async {
+        flushed = true;
+      };
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(const MethodChannel('window_manager'), (
+            call,
+          ) async {
+            if (call.method == 'destroy') {
+              expect(flushed, isTrue);
+              destroyed.complete();
+            }
+            return null;
+          });
+      addTearDown(() {
+        LinuxPlatform.beforeClose = null;
+        LinuxPlatform.localDataInitialization = null;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('window_manager'),
+              null,
+            );
+      });
+      LinuxPlatform().onWindowClose();
+      await Future<void>.delayed(Duration.zero);
+      expect(flushed, isFalse);
+      startup.complete();
+      await destroyed.future;
+    },
+  );
 
   test('platform adapters preserve typed bytes and errors', () async {
     final bytes = Uint8List.fromList([1, 2, 3]);

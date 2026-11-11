@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 import 'package:hive_ce/hive.dart';
 
@@ -111,7 +112,7 @@ class EncryptedHive {
 
     final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
     if (key == null) {
-      if (requireEncryption) {
+      if (requireEncryption || defaultTargetPlatform == TargetPlatform.linux) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
       }
       // An encrypted box already on disk means an earlier session did have a
@@ -140,7 +141,10 @@ class EncryptedHive {
         await _reconcileLegacy(hive, name, box);
         return box;
       } on HiveError catch (e) {
-        if (!_looksLikeDecryptionFailure(e)) rethrow;
+        if (defaultTargetPlatform == TargetPlatform.linux ||
+            !_looksLikeDecryptionFailure(e)) {
+          rethrow;
+        }
         // Key lost or encrypted file corrupt. Secure storage can transiently
         // answer with a key that no longer matches (entry wiped or replaced);
         // deleting the box would turn that hiccup into permanent data loss.
@@ -203,7 +207,7 @@ class EncryptedHive {
 
     final key = await (keys ?? SecureKeyProvider.instance).getOrCreateKey();
     if (key == null) {
-      if (requireEncryption) {
+      if (requireEncryption || defaultTargetPlatform == TargetPlatform.linux) {
         throw StateError('加密密钥不可用，拒绝以明文打开 $name');
       }
       if (_encryptedBoxOnDisk(encName)) {
@@ -222,7 +226,10 @@ class EncryptedHive {
           compactionStrategy: strategy,
         );
       } on HiveError catch (e) {
-        if (!_looksLikeDecryptionFailure(e)) rethrow;
+        if (defaultTargetPlatform == TargetPlatform.linux ||
+            !_looksLikeDecryptionFailure(e)) {
+          rethrow;
+        }
         final preserved = _quarantineUnreadableBox(encName);
         if (preserved.isEmpty) {
           AppLog.w('hive', '加密箱 $encName 无法解密，且未找到可保留的箱文件');

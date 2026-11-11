@@ -132,10 +132,17 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Encrypts pool JSON with the provisioned key.
 pub fn encrypt_pool_file(plaintext: &[u8]) -> Result<Vec<u8>, String> {
-    let mut key = pool_key().ok_or_else(|| "no device pool key provisioned".to_string())?;
-    let enc_key = derive_key("fqapp-pool-enc", &key);
-    let mac_key = derive_key("fqapp-pool-mac", &key);
-    crate::crypto::wipe(&mut key);
+    let key =
+        Zeroizing::new(pool_key().ok_or_else(|| "no device pool key provisioned".to_string())?);
+    encrypt_pool_file_with_key(plaintext, &key)
+}
+
+pub(crate) fn encrypt_pool_file_with_key(
+    plaintext: &[u8],
+    key: &[u8; 32],
+) -> Result<Vec<u8>, String> {
+    let enc_key = derive_key("fqapp-pool-enc", key);
+    let mac_key = derive_key("fqapp-pool-mac", key);
     let iv: [u8; IV_LEN] = rand::thread_rng().gen();
     let padded = crate::crypto::pkcs7_pad(plaintext, crate::crypto::BLOCK);
     let ct = crate::crypto::aes_cbc_encrypt(&padded, &enc_key, &iv);
@@ -156,7 +163,12 @@ pub fn encrypt_pool_file(plaintext: &[u8]) -> Result<Vec<u8>, String> {
 /// Decrypts an encrypted pool file. Any tampering, truncation, wrong key,
 /// or non-encrypted input is an error.
 pub fn decrypt_pool_file(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut key = pool_key().ok_or_else(|| "no device pool key provisioned".to_string())?;
+    let key =
+        Zeroizing::new(pool_key().ok_or_else(|| "no device pool key provisioned".to_string())?);
+    decrypt_pool_file_with_key(data, &key)
+}
+
+pub(crate) fn decrypt_pool_file_with_key(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     if !pool_file_is_encrypted(data) {
         return Err("not an encrypted pool file".to_string());
     }
@@ -167,9 +179,8 @@ pub fn decrypt_pool_file(data: &[u8]) -> Result<Vec<u8>, String> {
             data.len()
         ));
     }
-    let enc_key = derive_key("fqapp-pool-enc", &key);
-    let mac_key = derive_key("fqapp-pool-mac", &key);
-    crate::crypto::wipe(&mut key);
+    let enc_key = derive_key("fqapp-pool-enc", key);
+    let mac_key = derive_key("fqapp-pool-mac", key);
     let iv = &data[POOL_MAGIC.len()..POOL_MAGIC.len() + IV_LEN];
     let tag = &data[POOL_MAGIC.len() + IV_LEN..POOL_MAGIC.len() + IV_LEN + HMAC_LEN];
     let ct = &data[POOL_MAGIC.len() + IV_LEN + HMAC_LEN..];
