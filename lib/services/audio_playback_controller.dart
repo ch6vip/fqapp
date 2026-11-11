@@ -277,6 +277,9 @@ class _AudioPlaybackController extends ChangeNotifier
         savedToneDownloaded =
             await _localSource(_chapters[_index].itemId, savedTone) != null;
         if (_closed || generation != _settingsGeneration) return;
+        if (savedToneDownloaded) {
+          byId[savedTone] = AudioVoice(id: savedTone, label: '已保存音色');
+        }
       }
       if (!savedToneDownloaded) {
         try {
@@ -292,8 +295,7 @@ class _AudioPlaybackController extends ChangeNotifier
       if (resolved != null) _extras = resolved;
       _voices = List.unmodifiable(byId.values);
       if (generation == 1) {
-        if (savedTone is String &&
-            (byId.containsKey(savedTone) || savedToneDownloaded)) {
+        if (savedTone is String && byId.containsKey(savedTone)) {
           _toneId = savedTone;
         }
         if (initialTone != null && initialTone.isNotEmpty) {
