@@ -183,7 +183,7 @@ pub(crate) async fn init_core(
 
     let pool = match mock_origin.as_ref() {
         Some(origin) => DevicePool::with_mock_origin(&pool_path, origin.clone()).await?,
-        None => DevicePool::new(&pool_path).await?,
+        None => DevicePool::for_runtime(&pool_path).await?,
     };
     let signer = Manager::new();
     let up = Arc::new(match mock_origin {
@@ -806,7 +806,8 @@ mod tests {
                 .into_owned(),
             String::new(),
             0,
-            None,
+            // Lifecycle tests have no platform key store or upstream traffic.
+            Some("http://127.0.0.1:9".to_string()),
         )
     }
 

@@ -1143,3 +1143,43 @@ AI 设置 → 高级 → 开发者模式 → 开发者测试台。开关仅保�
 可取消测试；离开页面也会取消请求。还支持离线粘贴 JSON，校验结构、定位与
 重叠错误，并预览替换结果。WebDAV 区域仅显示状态和同步规则，不显示密码，
 不会触发远程写入。设备实际 AI 服务和 WebDAV 端到端行为需另行验证。
+
+
+## Linux / Arch x86_64（实验性运行基础）
+
+首批支持 Linux runner、bundle 内 Rust 核心、阅读/书架及 TXT/EPUB 本地导入。
+短剧、听书播放、系统朗读、媒体键、常亮、亮度/系统栏、备份文件选择等自定义桌面通道尚未实现；调用会明确报告暂不支持。
+本批没有 Arch 打包或 Linux CI，也不提供正式 Release。
+
+Arch 构建依赖：Flutter stable（本批验证 3.47.9 / Dart 3.13.7）、Rust stable
+及 x86_64-unknown-linux-gnu target、clang、cmake、ninja、pkgconf、gtk3、libsecret。
+运行需要 GTK3、libsecret、glibc（含 iconv）、xdg-user-dirs 和图形会话，
+以及已启动且已解锁的 Secret Service（如 GNOME Keyring）。不要用 sudo 运行应用。
+本批媒体插件以现有依赖的空实现构建，不需要安装 mpv。
+
+```bash
+flutter pub get
+flutter analyze --no-pub
+flutter test
+cargo test --manifest-path rust/Cargo.toml --locked
+flutter build linux --release --no-pub
+./build/linux/x64/release/bundle/fqapp
+```
+
+请运行完整 bundle，保留同目录的 data/、lib/；Rust 只从可执行文件旁的
+lib/libfqapi_core.so 加载，不依赖启动时的工作目录。不需要手改 FRB 生成文件。
+CMake 调用 Cargo --locked 构建 release 核心，首次构建需可用的 pub/Cargo 缓存或网络。
+
+本地资料沿用 path_provider/Hive 的上游目录：Hive 在用户 Documents，
+导入书籍和后端在 application support 目录。不要将日常资料目录指向测试目录。
+Linux 每个 HOME 只允许一个写者（锁位于 ~/.local/share/fqapp/.writer.lock），
+第二个进程返回 23；锁随进程退出释放，不要删除正在使用的锁文件。
+密钥服务失败不回落为明文；密钥损坏或现有加密资料无法解密时拒绝替换资料。
+请恢复原 keyring 后重试，勿通过删除密钥或资料来解决启动错误。
+Linux 密钥操作等待真实完成，避免超时后迟到写与重试产生两个不同密钥；
+若 Secret Service 卡住，需要先修复服务，再关闭并重新启动应用。
+
+隔离启动检查应同时设置新的 HOME、XDG_CONFIG_HOME、XDG_DATA_HOME、
+XDG_CACHE_HOME、XDG_RUNTIME_DIR，并使用私有 D-Bus 与临时 keyring；仅改 HOME
+仍可能连接日常会话的密钥服务。虚拟显示器的启动结果不能替代实际 GPU、
+Wayland/X11 桌面、媒体或音频验收。

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/secure_key_provider.dart';
@@ -8,6 +9,15 @@ import 'package:fqapp/services/secure_key_provider.dart';
 /// forever — a wedged Keystore, or an unmocked platform channel in widget
 /// tests, both present as a Future that never completes.
 void main() {
+  test('Linux never replaces a malformed persisted key', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final storage = InMemorySecureKeyStorage();
+    await storage.write(SecureKeyProvider.hiveBoxKeyName, 'malformed');
+    expect(await SecureKeyProvider(storage: storage).getOrCreateKey(), isNull);
+    expect(await storage.read(SecureKeyProvider.hiveBoxKeyName), 'malformed');
+  });
+
   test('a never-resolving read degrades to null after the timeout', () async {
     final provider = SecureKeyProvider(
       storage: _HangingStorage(),
