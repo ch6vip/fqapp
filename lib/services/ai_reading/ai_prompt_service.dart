@@ -35,9 +35,11 @@ class AiPromptService {
   Future<String> previewSystemPrompt(String bookId) async {
     final effective = _settings.resolve(bookId);
     final provider = _settings.provider(effective.providerId);
+    final resolved = _settings.resolvedPrompt(bookId);
     return aiBuildSystemPrompt(
-      behaviorPrompt: _settings.resolvedPrompt(bookId).text,
+      behaviorPrompt: resolved.text,
       outputMode: provider?.outputMode ?? AiOutputMode.jsonObject,
+      restoreCensoredWords: resolved.restoreCensoredWords,
     );
   }
 
@@ -207,6 +209,9 @@ class AiPromptService {
           ],
           outputMode: AiOutputMode.jsonObject,
           timeout: Duration(seconds: effective.requestTimeoutSeconds),
+          // Prompt optimisation is not a proofreading request: it keeps its own
+          // instruction message above and suppresses response_format, so the
+          // proofreading output-protocol segment must never be injected here.
           jsonResponse: false,
           abortTrigger: foreground.abortTrigger,
         );

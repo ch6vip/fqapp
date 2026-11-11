@@ -24,10 +24,14 @@ class AiValidator {
     }
     dynamic raw;
     try {
-      raw = jsonDecode(content.trim());
-    } on FormatException {
-      return AiValidationResult.failure(const [
-        AiValidationIssue(code: 'JSON_PARSE_FAILED'),
+      raw = jsonDecode(content);
+    } on FormatException catch (error) {
+      return AiValidationResult.failure([
+        AiValidationIssue(
+          code: 'JSON_PARSE_FAILED',
+          path: r'$',
+          start: error.offset,
+        ),
       ]);
     }
     final map = _asMap(raw);
