@@ -1,0 +1,164 @@
+name: Release
+
+# Tag-driven automatic release, modelled on yetone/magpie's release.yml:
+# pushing a v* tag is the only human step after the version bump — the two
+# build workflows already run on tags, and when BOTH have succeeded for the
+# tag's commit this workflow collects their artifacts, re-checks the version
+# and signing identity, and publishes the GitHub Release with checksums and
+# a validation report. It fires once per build completion; the run that
+# arrives first finds the other build missing and exits, the second one
+# does the publish. Re-running is safe: an existing release is left alone.
+
+on:
+  workflow_run:
+    workflows: ['Android APK', 'Windows build and regression']
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.workflow_run.head_branch }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      # Formal signing certificate (SHA-256) every release APK must carry.
+      EXPECTED_CERT: e8471cd8a935fd71fd8197355b5558d245449d5bc8294f60f88616f60451c550
+    steps:
+      - name: Resolve both build runs for this tag
+        id: runs
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          runs=$(gh run list --commit "$SHA" --limit 30 \
+            --json databaseId,name,conclusion,status)
+          android_id=$(echo "$runs" | jq -r '[.[] | select(.name=="Android APK" and .conclusion=="success")][0].databaseId // empty')
+          windows_id=$(echo "$runs" | jq -r '[.[] | select(.name=="Windows build and regression" and .conclusion=="success")][0].databaseId // empty')
+          if [ -z "$android_id" ] || [ -z "$windows_id" ]; then
+            echo "Both builds not finished yet (android=$android_id windows=$windows_id); the other completion will retrigger this workflow."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "ready=true"
+            echo "android_id=$android_id"
+            echo "windows_id=$windows_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the tag
+        if: steps.runs.outputs.ready == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Download build artifacts
+        if: steps.runs.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "${{ steps.runs.outputs.android_id }}" --dir artifacts
+          gh run download "${{ steps.runs.outputs.windows_id }}" --dir artifacts
+
+      - name: Assemble and verify release assets
+        if: steps.runs.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base_version="${version%%-*}"
+
+          # 1) The tag must match the version baked into the source,
+          #    so a forgotten bump can never ship under a new tag.
+          pubspec_version=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
+          case "$pubspec_version" in
+            "$base_version"+*) ;;
+            *) echo "::error::tag $TAG does not match pubspec version $pubspec_version"; exit 1 ;;
+          esac
+
+          mkdir -p out
+          arm64_apk=$(find artifacts -name 'app-arm64-v8a-release.apk' | head -1)
+          armv7_apk=$(find artifacts -name 'app-armeabi-v7a-release.apk' | head -1)
+          windows_zip=$(find artifacts -name 'fqapp-windows-x64-preview.zip' | head -1)
+          [ -n "$arm64_apk" ] && [ -n "$armv7_apk" ] && [ -n "$windows_zip" ] \
+            || { echo "::error::missing build artifacts"; find artifacts -type f | head -30; exit 1; }
+          cp "$arm64_apk" out/app-arm64-v8a-release.apk
+          cp "$armv7_apk" out/app-armeabi-v7a-release.apk
+          cp "$windows_zip" "out/fqapp-windows-v$base_version.zip"
+
+          # 2) Both APKs must be signed with the formal certificate and
+          #    carry the tag's versionName (from CI's own verification logs).
+          for abi in arm64-v8a armeabi-v7a; do
+            signer_log=$(find artifacts -path "*$abi/apksigner.log" | head -1)
+            badging_log=$(find artifacts -path "*$abi/aapt-badging.log" | head -1)
+            [ -n "$signer_log" ] && [ -n "$badging_log" ] \
+              || { echo "::error::verification logs missing for $abi"; exit 1; }
+            grep -q "Signer #1 certificate SHA-256 digest: $EXPECTED_CERT" "$signer_log" \
+              || { echo "::error::$abi APK is not signed with the formal certificate"; exit 1; }
+            grep -q "versionName='$base_version'" "$badging_log" \
+              || { echo "::error::$abi APK versionName does not match tag $TAG"; exit 1; }
+          done
+
+          # 3) Checksums + validation report, same shape as the manual releases.
+          (cd out && sha256sum * > SHA256SUMS)
+          {
+            echo "# $TAG 发布核验（自动生成）"
+            echo
+            echo "- 版本：$pubspec_version，提交：$SHA，tag：$TAG"
+            echo "- CI：Android APK run ${{ steps.runs.outputs.android_id }}；Windows run ${{ steps.runs.outputs.windows_id }}（均为 tag 触发且成功）"
+            echo "- 签名证书 SHA-256：$EXPECTED_CERT（两 ABI 的 CI apksigner 日志已核对一致）"
+            echo "- versionName：$base_version（两 ABI 的 CI aapt badging 日志已核对一致）"
+            echo
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } > out/VALIDATION.md
+          ls -la out
+
+      - name: Create the release
+        if: steps.runs.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base_version="${version%%-*}"
+          {
+            echo "## fqapp $base_version"
+            echo
+            echo "### 下载"
+            echo
+            echo "- Android：\`app-arm64-v8a-release.apk\`（主流机型）、\`app-armeabi-v7a-release.apk\`（老设备/墨水屏）"
+            echo "- Windows：\`fqapp-windows-v$base_version.zip\`（便携版，解压即用）"
+            echo
+            echo "校验值见 \`SHA256SUMS\`，签名与版本核验见 \`VALIDATION.md\`。"
+            echo
+            echo "---"
+            echo
+          } > notes.md
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -f target_commitish="$SHA" \
+            --jq '.body' >> notes.md 2>/dev/null \
+            || echo "（本版变更列表见仓库提交记录。）" >> notes.md
+
+          latest_flag="--latest"
+          case "$version" in
+            *-*) latest_flag="--prerelease" ;;
+          esac
+          gh release create "$TAG" out/* \
+            --title "fqapp $base_version" \
+            --notes-file notes.md \
+            $latest_flag
+          echo "Published $TAG."
