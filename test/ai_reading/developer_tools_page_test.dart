@@ -214,7 +214,9 @@ void main() {
       double gap(Finder content) =>
           tester.getTopLeft(content).dy -
           tester.getBottomLeft(find.byType(AppBar)).dy;
-      gaps['console'] = gap(find.text('Fixture\nfixture-model'));
+      gaps['console'] = gap(
+        find.byKey(const ValueKey('sandbox-provider-summary')),
+      );
       await jsonPage(tester);
       gaps['json'] = gap(find.byType(AiSandboxField).first);
       await tester.tap(find.byTooltip('返回'));
@@ -241,17 +243,80 @@ void main() {
       await tester.pumpWidget(app());
       await settle(tester);
       expect(
-        tester.getTopLeft(find.text('Fixture\nfixture-model')).dy,
+        tester
+            .getTopLeft(find.byKey(const ValueKey('sandbox-provider-summary')))
+            .dy,
         inInclusiveRange(100, 108),
       );
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       addTearDown(tester.view.resetViewInsets);
       await settle(tester);
       expect(
-        tester.getTopLeft(find.text('Fixture\nfixture-model')).dy,
+        tester
+            .getTopLeft(find.byKey(const ValueKey('sandbox-provider-summary')))
+            .dy,
         inInclusiveRange(100, 108),
       );
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settle(tester);
+    },
+  );
+
+  testWidgets(
+    'provider summary keeps the prototype hierarchy at narrow widths',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final classic in [true, false]) {
+        for (final dark in [false, true]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: ThemeData(
+                brightness: dark ? Brightness.dark : Brightness.light,
+                extensions: [
+                  classic
+                      ? const AppStyleTokens.classic()
+                      : const AppStyleTokens.archive(),
+                ],
+              ),
+              home: Scaffold(
+                body: MediaQuery(
+                  data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: AiSandboxProviderSummary(
+                      provider: 'DeepSeek compatible custom provider',
+                      model: 'deepseek-flash-long-model-name',
+                      onViewRequest: () {},
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await settle(tester);
+          final provider = tester.widget<Text>(
+            find.text('DeepSeek compatible custom provider'),
+          );
+          final model = tester.widget<Text>(
+            find.text('deepseek-flash-long-model-name'),
+          );
+          expect(provider.style!.fontSize, 13);
+          expect(provider.style!.fontWeight, FontWeight.w500);
+          expect(model.style!.fontSize, 12);
+          expect(model.style!.color, isNot(provider.style!.color));
+          expect(find.byType(Icon), findsOneWidget);
+          expect(
+            tester.getRect(find.byType(Icon)).right,
+            lessThan(tester.getRect(find.text(provider.data!)).left),
+          );
+          expect(find.text('查看请求').hitTestable(), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        }
+      }
       await tester.pumpWidget(const SizedBox.shrink());
       await settle(tester);
     },
