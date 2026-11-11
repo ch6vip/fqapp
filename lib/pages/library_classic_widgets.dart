@@ -211,6 +211,7 @@ class _ClassicEmptyNotice extends StatelessWidget {
     this.actionKey,
     this.onAction,
     this.onCachedBooks,
+    this.headerHeight = 0,
   });
 
   final IconData icon;
@@ -221,12 +222,36 @@ class _ClassicEmptyNotice extends StatelessWidget {
   final VoidCallback? onAction;
   final VoidCallback? onCachedBooks;
 
+  /// 列表上方的动态头部高度（筛选状态栏 / 缓存扫描行）。空态锚点以固定
+  /// 头部（tab + toolbar）为基准：动态头部把内容区下推 X、高度压缩 X，
+  /// Align(−0.2) 锚点随之多沉 0.6X，比无动态头部的界面低 0.6 ×
+  /// headerHeight。补偿用底部垫空隙实现（见 build 注释），与屏高无关，
+  /// 且不能用 LayoutBuilder 换算 —— SliverFillRemaining 会查询
+  /// intrinsic dimensions，LayoutBuilder 不支持。
+  final double headerHeight;
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return Center(
+    // Slightly above the geometric center: the header (tabs + toolbar) already
+    // occupies ~110dp, so a plain Center would sink the notice below the
+    // screen's visual center.
+    //
+    // Compensation geometry: the dynamic rows push the -0.2 anchor down by
+    // 0.6 × headerHeight. Padding the block by P at the bottom lifts the
+    // notice's own center by P/2 − 0.1P = 0.4P (the 0.1 factor comes from
+    // the -0.2 alignment scaling with block height), so 0.4P = 0.6 ×
+    // headerHeight → P = 1.5 × headerHeight restores the exact same
+    // on-screen center as the views without dynamic rows.
+    return Align(
+      alignment: const Alignment(0, -0.2),
       child: Padding(
-        padding: const EdgeInsets.all(ShelfTokens.screenPadding),
+        padding: EdgeInsets.fromLTRB(
+          ShelfTokens.screenPadding,
+          ShelfTokens.screenPadding,
+          ShelfTokens.screenPadding,
+          ShelfTokens.screenPadding + 1.5 * headerHeight,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

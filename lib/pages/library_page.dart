@@ -443,7 +443,8 @@ class _LibraryPageState extends State<LibraryPage>
     final topInset = featurePadding(context).top;
     return PopScope<Object?>(
       // 编辑态拦下系统返回 / 侧滑：先退出编辑态，而不是把整页 pop 掉。
-      // 书架页是 RootShell 里 LazyIndexedStack 的一个 child、不是独立路由，
+      // 书架页是 RootShell 保活容器（移动端 Stack+Offstage / 桌面
+      // LazyIndexedStack）的一个 child、不是独立路由，
       // 不拦的话返回事件会一路冒泡到根路由 —— 表现就是「侧滑直接退出应用」。
       canPop: !_editing,
       onPopInvokedWithResult: (didPop, _) {

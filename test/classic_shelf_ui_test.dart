@@ -204,11 +204,14 @@ void main() {
         expect(find.text('收藏'), findsOneWidget);
         expect(find.byKey(const Key('library-search-button')), findsOneWidget);
         expect(find.byKey(const Key('library-more-button')), findsOneWidget);
+        // The header row is end-aligned; both glyph centers must sit on the
+        // same baseline (the more button uses the same 48px box as the M3
+        // IconButton the search button renders as).
         expect(
           (tester.getCenter(find.byIcon(LucideIcons.search)).dy -
                   tester.getCenter(find.byIcon(LucideIcons.ellipsis)).dy)
               .abs(),
-          lessThan(3),
+          lessThan(1),
         );
         expect(find.text('今日已读0分钟'), findsOneWidget);
         for (final name in ['grid', 'double', 'list']) {
@@ -240,6 +243,73 @@ void main() {
         expect(find.byType(ShelfToolbar), findsNothing);
         expect(find.byType(ShelfCollectionView), findsNothing);
         expect(ShelfViewStore.instance.mode, BookCollectionMode.shelfGrid);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets(
+      'collection empty: manju filter flips the action copy and the notice sits above the screen center',
+      (tester) async {
+        await _size(tester);
+        final style = _style();
+        await tester.pumpWidget(_app(style));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('收藏'));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const Key('library-collection-filter-manju')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('暂无漫剧'), findsOneWidget);
+        expect(find.text('找漫剧'), findsOneWidget);
+        expect(find.text('找短剧'), findsNothing);
+        // The header (tabs + toolbar) already takes ~110dp, so the notice
+        // block must not sink below the screen's visual center (450 at this
+        // surface size).
+        final block = tester.getRect(
+          find
+              .ancestor(
+                of: find.byKey(const Key('collection-find-drama-button')),
+                matching: find.byType(Column),
+              )
+              .first,
+        );
+        expect(block.center.dy, lessThan(490));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets(
+      'collection empty notice keeps one anchor with and without the filter row',
+      (tester) async {
+        await _size(tester);
+        final style = _style();
+        await tester.pumpWidget(_app(style));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('收藏'));
+        await tester.pumpAndSettle();
+        Rect block() => tester.getRect(
+          find
+              .ancestor(
+                of: find.byKey(const Key('collection-find-drama-button')),
+                matching: find.byType(Column),
+              )
+              .first,
+        );
+        final plainCenter = block().center.dy;
+
+        // The “已筛选 · 清除筛选” row pushes the remaining area down by
+        // 40dp; the compensated anchor must keep the notice on the same
+        // on-screen center as the header-free view.
+        await tester.tap(
+          find.byKey(const Key('library-collection-filter-manju')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('暂无漫剧'), findsOneWidget);
+        final filteredCenter = block().center.dy;
+        expect((filteredCenter - plainCenter).abs(), lessThan(2));
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },
@@ -702,6 +772,39 @@ void main() {
       for (final name in ['grid', 'double', 'list']) {
         expect(find.byKey(Key('shelf-layout-$name')), findsOneWidget);
       }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('3x 辅助功能字号下筛选行钳制字号，定高契约不溢出', (tester) async {
+      await _size(tester);
+      late String group;
+      await tester.runAsync(() async {
+        await ShelfStore.instance.add(_item());
+        group = await ShelfGroupStore.instance.addGroup('测试分组');
+        await ShelfGroupStore.instance.assignKeys(['book:123'], group);
+      });
+      setSingleChapterPrefs({
+        'shelfLayout': 'shelfGrid',
+        'shelfCategory': group,
+      });
+      await ShelfViewStore.instance.load();
+      await tester.pumpWidget(
+        _app(_style(), textScaler: const TextScaler.linear(3)),
+      );
+      await tester.pumpAndSettle();
+
+      final row = find.byKey(const Key('classic-shelf-active-filters'));
+      expect(row, findsOneWidget);
+      expect(tester.getSize(row).height, ShelfTokens.filterStatusHeight);
+      // 行内文字（含 TextButton 标签）必须被钳制在 1.3 倍内：3x 下
+      // 标签固有高度 ≈60px 会溢出 40 定高向行外绘制（纯视觉、无异常），
+      // 钳制后 ≈26px 定高仍成立。
+      final label = tester.element(find.text('清除筛选'));
+      expect(
+        MediaQuery.textScalerOf(label).scale(14),
+        lessThanOrEqualTo(14 * 1.3 + 0.01),
+      );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     });
