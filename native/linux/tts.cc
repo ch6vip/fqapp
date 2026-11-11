@@ -169,6 +169,7 @@ public:
           close();
         }) {}
   ~Speech() override {
+    // The bridge's unique_ptr destroys Speech on the GTK main thread.
     {
       // Fence pointer acquisition and enqueue before draining the worker.
       std::lock_guard<std::mutex> guard(active_mutex);
