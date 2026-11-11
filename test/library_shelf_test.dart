@@ -667,7 +667,8 @@ void main() {
         await ShelfStore.instance.add(_item('gone', title: '被移出的'));
       });
 
-      // RootShell 用 LazyIndexedStack 保活书架页：切到别的 tab 只是把页面藏起来
+      // RootShell 保活书架页（移动端 Stack+Offstage / 桌面 LazyIndexedStack）：
+      // 切到别的 tab 只是把页面藏起来
       // （TickerMode 关掉 → 页面的 _visible 变 false），编辑态留在 State 里。
       final index = ValueNotifier<int>(0);
       addTearDown(index.dispose);
