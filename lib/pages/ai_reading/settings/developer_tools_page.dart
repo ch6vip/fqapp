@@ -10,6 +10,8 @@ import '../../../services/ai_reading/ai_prompt.dart';
 import '../../../services/ai_reading/ai_settings.dart';
 import '../../../widgets/wenku/wenku_ui.dart';
 import '../../../widgets/ai_reading/ai_ui.dart';
+import '../../../widgets/home/home_design.dart';
+import 'ai_sandbox_style.dart';
 import 'ai_prompt_editor_page.dart';
 import 'ai_sandbox_json_page.dart';
 import 'ai_sandbox_request_page.dart';
@@ -312,15 +314,15 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
           ],
           child: AiSandboxLayout(
             padding: featurePadding(context),
+            header: AiSandboxProviderSummary(
+              provider: provider?.label ?? '未选择提供商',
+              model: model ?? '未选择模型',
+              onViewRequest: _viewRequest,
+            ),
+            empty: _result == null,
             input: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AiSandboxProviderSummary(
-                  provider: provider?.label ?? '未选择提供商',
-                  model: model ?? '未选择模型',
-                  onViewRequest: _viewRequest,
-                ),
-                const SizedBox(height: 12),
                 AiSandboxField(
                   label: '测试正文',
                   controller: _input,
@@ -338,33 +340,54 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
                 const SizedBox(height: 8),
                 InkWell(
                   onTap: _running ? null : _editBehavior,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => Row(
-                        children: [
-                          const Expanded(child: Text('行为提示词')),
-                          const SizedBox(width: 12),
-                          ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: (constraints.maxWidth - 44) / 2,
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 56),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(color: AiSandboxStyle(context).line),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '行为提示词',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: HomePalette.of(context).ink,
+                                ),
+                              ),
                             ),
-                            child: Text(
-                              _customBehavior == null ? '全局' : '本次自定义',
-                              textAlign: TextAlign.end,
+                            const SizedBox(width: 12),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: (constraints.maxWidth - 44) / 2,
+                              ),
+                              child: Text(
+                                _customBehavior == null ? '全局' : '本次自定义',
+                                textAlign: TextAlign.end,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: HomePalette.of(context).muted,
+                                ),
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.chevron_right),
-                        ],
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 16,
+                              color: HomePalette.of(context).muted,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-                const Divider(height: 1),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('去屏蔽词'),
+                AiSandboxRestoreOption(
                   value: _restore,
                   onChanged: _running
                       ? null
@@ -373,10 +396,10 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
                           _request = null;
                         }),
                 ),
-                const SizedBox(height: 12),
                 LayoutBuilder(
                   builder: (context, constraints) {
                     final start = FilledButton(
+                      style: AiSandboxStyle(context).runButton,
                       onPressed: _running ? null : _run,
                       child: Text(
                         _running
@@ -385,6 +408,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
                       ),
                     );
                     final stop = OutlinedButton(
+                      style: AiSandboxStyle(context).stopButton,
                       onPressed: _stop,
                       child: const Text('停止'),
                     );

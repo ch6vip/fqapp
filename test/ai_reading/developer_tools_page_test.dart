@@ -21,7 +21,7 @@ import 'package:fqapp/services/ai_reading/ai_models.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
 import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
-import 'package:fqapp/widgets/settings/settings_widgets.dart';
+import 'package:fqapp/pages/ai_reading/settings/ai_sandbox_style.dart';
 
 /// Controllable HTTP/SSE transport. Cancellation is delivered through the same
 /// AbortableRequest used in production, without a network or paid credential.
@@ -228,7 +228,7 @@ void main() {
       await settle(tester);
       await tester.tap(find.text('行为提示词'));
       await settle(tester);
-      gaps['editor'] = gap(find.byType(SurfacePanel));
+      gaps['editor'] = gap(find.byKey(const ValueKey('sandbox-prompt-panel')));
       // Record all three first, so a failure identifies each page's real inset.
       debugPrint(jsonEncode(gaps));
       for (final entry in gaps.entries) {
@@ -322,6 +322,60 @@ void main() {
     },
   );
 
+  testWidgets('prototype field geometry and responsive columns stay aligned', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await open(tester);
+    final summary = tester.getRect(find.byType(AiSandboxProviderSummary));
+    final field = tester.getRect(find.byType(AiSandboxField));
+    final panel = tester.getRect(find.byType(AiSandboxPanel));
+    expect(field.top - summary.bottom, 6);
+    expect(panel.top - field.top, 42);
+    expect(panel.height, inInclusiveRange(210, 216));
+    expect(panel.left, 16);
+    expect(tester.getSize(find.byType(AiSandboxRestoreOption)).height, 64);
+    final decoration =
+        tester
+                .widget<Container>(
+                  find
+                      .descendant(
+                        of: find.byType(AiSandboxPanel),
+                        matching: find.byType(Container),
+                      )
+                      .first,
+                )
+                .decoration!
+            as BoxDecoration;
+    expect(decoration.borderRadius, BorderRadius.circular(12));
+    expect((decoration.border! as Border).top.width, 1);
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 7);
+    await jsonPage(tester);
+    expect(tester.widget<TextField>(find.byType(TextField).first).minLines, 4);
+    final response = tester.widget<TextField>(find.byType(TextField).last);
+    expect(response.minLines, 8);
+    expect(response.style!.fontFamily, 'monospace');
+    expect(response.style!.fontSize, 13);
+    await tester.tap(find.byTooltip('返回'));
+    await settle(tester);
+    tester.view.physicalSize = const Size(1024, 768);
+    await settle(tester);
+    expect(tester.getRect(find.byType(AiSandboxField)).left, 28);
+    expect(
+      tester.getRect(find.byType(AiSandboxPanel)).height,
+      greaterThanOrEqualTo(240),
+    );
+    final input = tester.getRect(find.byType(AiSandboxField));
+    final empty = tester.getRect(find.text('测试结果将在这里显示'));
+    expect(empty.left, greaterThanOrEqualTo(input.right + 40));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await settle(tester);
+  });
+
   testWidgets('prompt source is inline and primary action fills input column', (
     tester,
   ) async {
@@ -343,6 +397,10 @@ void main() {
     );
     await tester.tap(find.text('行为提示词'));
     await settle(tester);
+    final editor = tester.widget<TextField>(find.byType(TextField));
+    expect(editor.style!.fontSize, 15);
+    expect(editor.style!.height, 1.8);
+    expect(editor.expands, isTrue);
     await tester.enterText(find.byType(TextField), '本次校对规则');
     await tester.tap(find.text('使用'));
     await settle(tester);
@@ -375,7 +433,9 @@ void main() {
     expect(find.text('AI 测试台'), findsOneWidget);
     expect(find.textContaining('WebDAV'), findsNothing);
     expect(
-      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      tester
+          .widget<AiSandboxRestoreOption>(find.byType(AiSandboxRestoreOption))
+          .value,
       isTrue,
     );
     await visible(tester, find.text('行为提示词'));
@@ -407,12 +467,117 @@ void main() {
     await tester.tap(find.text('使用'));
     await settle(tester);
     expect(find.text('全局'), findsOneWidget);
-    await tester.tap(find.byType(SwitchListTile));
+    await tester.tap(find.byType(AiSandboxRestoreOption));
     await settle(tester);
     expect(settings.global.restoreCensoredWords, isTrue);
     await tester.pumpWidget(const SizedBox.shrink());
     await settle(tester);
   });
+
+  testWidgets(
+    'result tabs, highlights and failure raw output work in each appearance',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final result = aiSandboxValidate(
+        aiSandboxSample,
+        aiSandboxExampleResponse,
+      );
+      for (final classic in [true, false]) {
+        for (final dark in [false, true]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: ThemeData(
+                brightness: dark ? Brightness.dark : Brightness.light,
+                extensions: [
+                  classic
+                      ? const AppStyleTokens.classic()
+                      : const AppStyleTokens.archive(),
+                ],
+              ),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(2)),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: AiSandboxResultView(
+                    key: ValueKey('$classic-$dark'),
+                    result: result,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await settle(tester);
+          expect(find.byType(Tab), findsNWidgets(2));
+          expect(find.text('原始 JSON'), findsNothing);
+          final preview = tester.widget<SelectableText>(
+            find.byKey(const ValueKey('sandbox-preview')),
+          );
+          final highlight = preview.textSpan!.children!
+              .whereType<TextSpan>()
+              .firstWhere((span) => span.text == '已经');
+          expect(
+            highlight.style!.backgroundColor,
+            dark ? const Color(0xFF52332D) : const Color(0xFFFFEBE4),
+          );
+          final tabs = tester.widget<TabBar>(find.byType(TabBar));
+          expect(tabs.indicatorWeight, 2);
+          expect(tabs.labelColor, isNot(tabs.unselectedLabelColor));
+          await tester.tap(find.text('修改详情'));
+          await settle(tester);
+          expect(find.byKey(const ValueKey('sandbox-preview')), findsNothing);
+          final original = tester.widget<SelectableText>(
+            find.byWidgetPredicate(
+              (widget) => widget is SelectableText && widget.data == '以经',
+            ),
+          );
+          expect(original.style!.decoration, TextDecoration.lineThrough);
+          expect(
+            tester
+                .widget<SelectableText>(
+                  find.byWidgetPredicate(
+                    (widget) => widget is SelectableText && widget.data == '已经',
+                  ),
+                )
+                .style!
+                .fontWeight,
+            FontWeight.w500,
+          );
+          expect(tester.takeException(), isNull);
+        }
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: AiSandboxResultView(
+                result: aiSandboxValidate(aiSandboxSample, '{broken'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await settle(tester);
+      expect(find.text('校验未通过'), findsOneWidget);
+      expect(find.byType(Tab), findsNothing);
+      final raw = tester.widget<SelectableText>(
+        find.byKey(const ValueKey('sandbox-raw')),
+      );
+      expect(raw.data, '{broken');
+      expect(raw.style!.fontFamily, 'monospace');
+      expect(raw.style!.fontSize, 12);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settle(tester);
+    },
+  );
 
   testWidgets(
     'JSON route retains independent drafts, validation and deletion marker',
@@ -577,7 +742,7 @@ void main() {
       await tester.enterText(find.byType(TextField), '下一次自定义规则');
       await tester.tap(find.text('使用'));
       await settle(tester);
-      await tester.tap(find.byType(SwitchListTile));
+      await tester.tap(find.byType(AiSandboxRestoreOption));
       await settle(tester);
       expect(
         tester
