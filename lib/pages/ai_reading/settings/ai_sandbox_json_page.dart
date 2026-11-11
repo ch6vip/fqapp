@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../widgets/wenku/wenku_ui.dart';
 import 'ai_sandbox_widgets.dart';
+import 'ai_sandbox_style.dart';
 
 /// Owned by the test console so popping this route keeps both drafts and result.
 class AiSandboxJsonState {
@@ -45,10 +46,12 @@ class _AiSandboxJsonPageState extends State<AiSandboxJsonPage> {
               child: const Text('使用测试正文'),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           AiSandboxField(
             label: '模型响应',
             controller: widget.state.response,
+            minLines: 8,
+            monospace: true,
             action: TextButton(
               onPressed: () {
                 widget.state.original.text = aiSandboxSample;
@@ -57,8 +60,9 @@ class _AiSandboxJsonPageState extends State<AiSandboxJsonPage> {
               child: const Text('填入示例'),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           FilledButton(
+            style: AiSandboxStyle(context).runButton,
             onPressed: () => setState(() {
               widget.state.result = aiSandboxValidate(
                 widget.state.original.text,
