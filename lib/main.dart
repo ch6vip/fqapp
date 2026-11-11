@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
+import 'services/linux_platform.dart';
 
 import 'pages/home_page.dart';
 import 'pages/audio_page.dart';
@@ -85,6 +86,7 @@ Future<void> main() async {
 /// 这些都不决定界面能不能起来，所以失败只记日志（见 [main]）。
 Future<void> _prepareRuntime() async {
   registerPortedUiLicenses();
+  if (isLinuxDesktop) await LinuxPlatform.install();
   if (isWindowsDesktop) await DesktopPlatform.instance.initialize();
   // 应用内日志：接管 debugPrint 与 FlutterError.onError，未处理异步异常由
   // [main] 的 runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
@@ -104,13 +106,13 @@ Future<void> _prepareRuntime() async {
   // Rust 核心日志的读取入口：日志页「Rust」视图读 runtime_dir/rust.log。
   // 核心只在 Android 落盘（桌面/测试构建不装 logger），读不到时页面给空态。
   RustLogSource.reader = BackendService.instance.readRustLog;
-  if (isWindowsDesktop) {
-    DesktopPlatform.instance.beforeClose = () async {
+  if (isWindowsDesktop || isLinuxDesktop) {
+    DesktopPlatform.instance.beforeClose = LinuxPlatform.beforeClose = () async {
       DramaDownloader.instance.pauseAll();
       AudioDownloader.instance.pauseAll();
       await FairMemoryService.instance.flushForExit();
       try {
-        await NativePlayer.pauseOthers();
+        if (isMediaDesktop) await NativePlayer.pauseOthers();
       } catch (error, stack) {
         // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
         AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
@@ -125,7 +127,13 @@ Future<void> _prepareRuntime() async {
   }
 }
 
-Future<void> _initializeLocalData() async {
+Future<void> _initializeLocalData() {
+  final initialization = _loadLocalData();
+  if (isLinuxDesktop) LinuxPlatform.localDataInitialization = initialization;
+  return initialization;
+}
+
+Future<void> _loadLocalData() async {
   await Hive.initFlutter();
   // 以下初始化互相独立（各开各的 box / 各读各的配置），串行等只会把
   // 磁盘 I/O 叠加到冷启动里；并行发起，失败语义与串行时一致：必需项

@@ -23,6 +23,11 @@ import 'desktop_media.dart';
 import 'app_log.dart';
 import 'platform_channel.dart';
 
+bool get isMediaDesktop =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux);
+
 bool get isWindowsDesktop =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
@@ -31,7 +36,7 @@ bool get isWindowsDesktop =>
 bool playbackAppIsActive(AppLifecycleState? state) =>
     state == null ||
     state == AppLifecycleState.resumed ||
-    (isWindowsDesktop && state == AppLifecycleState.inactive);
+    (isMediaDesktop && state == AppLifecycleState.inactive);
 
 /// 桌面窗口只是失焦时，是否仍算「在前台」。
 ///
@@ -138,6 +143,14 @@ class DesktopPlatform with WindowListener {
     }
   }
 
+  Future<void> disposeMedia() async {
+    final hosts = _players.values.toList();
+    _players.clear();
+    for (final host in hosts) {
+      await host.dispose();
+    }
+  }
+
   Widget videoSurface(int id, {Key? key}) {
     final host = _players[id];
     return host == null
@@ -199,6 +212,7 @@ class DesktopPlatform with WindowListener {
     switch (channel) {
       case 'fqapp/native_player':
         if (method == 'create') {
+          MediaKit.ensureInitialized();
           final id = _nextId++;
           final host = _DesktopPlayer(
             id,
@@ -211,6 +225,8 @@ class DesktopPlatform with WindowListener {
           return {'playerId': id};
         }
         if (method == 'setKeepScreenOn') {
+          // Linux idle inhibition is a later batch.
+          if (!isWindowsDesktop) return null;
           _playerAwake = args['on'] == true;
           _updateAwake();
           return null;
@@ -268,7 +284,7 @@ class DesktopPlatform with WindowListener {
       case 'fqapp/library_backup':
         return _backup(method, args);
       case 'fqapp/local_books':
-        if (method == 'pickBookFile') return _pickBook();
+        if (method == 'pickBookFile') return pickBook();
       case 'fqapp/downloads':
         if (method == 'saveText') {
           final path = await _save(
@@ -530,7 +546,7 @@ class DesktopPlatform with WindowListener {
     throw MissingPluginException(method);
   }
 
-  Future<Map<String, dynamic>?> _pickBook() async {
+  Future<Map<String, dynamic>?> pickBook() async {
     final file = await openFile(
       acceptedTypeGroups: [
         const XTypeGroup(label: '本地书籍', extensions: ['txt', 'epub']),
@@ -541,13 +557,43 @@ class DesktopPlatform with WindowListener {
       throw PlatformException(code: 'file_size', message: '书籍不能超过 32 MB');
     }
     final bytes = await file.readAsBytes();
+    final text = Platform.isLinux && file.name.toLowerCase().endsWith('.txt')
+        ? await decodeLinuxText(bytes)
+        : null;
     return {
       'name': file.name,
       'bytes': bytes,
       'byteLength': bytes.length,
       if (file.name.toLowerCase().endsWith('.txt'))
-        'text': decodeDesktopText(bytes),
+        'text': text ?? decodeDesktopText(bytes),
     };
+  }
+}
+
+/// Decode the already size-checked bytes; never re-read a mutable picked file.
+Future<String> decodeLinuxText(Uint8List bytes) async {
+  if (bytes.length >= 2 &&
+      ((bytes[0] == 255 && bytes[1] == 254) ||
+          (bytes[0] == 254 && bytes[1] == 255))) {
+    return decodeDesktopText(bytes);
+  }
+  try {
+    return utf8.decode(bytes).replaceFirst(RegExp('^\uFEFF'), '');
+  } on FormatException {
+    final process = await Process.start('iconv', [
+      '-f',
+      'GB18030',
+      '-t',
+      'UTF-8',
+    ]);
+    final output = process.stdout.transform(utf8.decoder).join();
+    final errors = process.stderr.drain<void>();
+    process.stdin.add(bytes);
+    await process.stdin.close();
+    final text = await output;
+    await errors;
+    if (await process.exitCode != 0) throw const FormatException('无法解码本地书籍');
+    return text;
   }
 }
 
@@ -597,6 +643,10 @@ String decodeDesktopText(Uint8List bytes) {
 class _DesktopPlayer {
   _DesktopPlayer(this.id, this.emit) {
     video = VideoController(player);
+    // media_kit initializes textures after a frame, including on an idle window.
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      WidgetsBinding.instance.scheduleFrame();
+    }
     void event(String type, dynamic value) {
       if (!disposed) emit({'playerId': id, 'type': type, 'value': value});
     }
@@ -701,10 +751,14 @@ class _DesktopPlayer {
   Future<void> dispose() async {
     if (disposed) return;
     disposed = true;
+    if (!ready.isCompleted) ready.complete();
     for (final subscription in subscriptions) {
       await subscription.cancel();
     }
-    await player.dispose();
-    media?.close();
+    try {
+      await player.dispose();
+    } finally {
+      media?.close();
+    }
   }
 }

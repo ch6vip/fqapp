@@ -1147,3 +1147,78 @@ ChapterContent 原文、legacyText、缓存和导入文件保持原语义。Read
 用户行为提示词优先于去屏蔽词等可选功能；JSON Schema 字段说明与 JSON 文本协议共用契约。
 「更多工具 → JSON 校验」可离线检查原文与模型响应，或带入已完成请求的原文和响应。
 WebDAV 配置与诊断由数据同步功能负责。
+
+## Linux / Arch x86_64（实验性运行基础）
+
+支持 Linux runner、bundle 内 Rust 核心、阅读/书架及 TXT/EPUB 本地导入。
+听书播放由下方第二批媒体基础提供；短剧、系统朗读、媒体键、常亮、亮度/系统栏、备份文件选择等桌面集成尚未实现。
+目前没有 Arch 打包或 Linux CI，也不提供正式 Release。
+
+Arch 构建依赖：Flutter stable（本批验证 3.47.9 / Dart 3.13.7）、Rust stable
+及 x86_64-unknown-linux-gnu target、clang、cmake、ninja、pkgconf、gtk3、libsecret。
+运行需要 GTK3、libsecret、glibc（含 iconv）、xdg-user-dirs 和图形会话，
+以及已启动且已解锁的 Secret Service（如 GNOME Keyring）。不要用 sudo 运行应用。
+媒体构建及运行还需要系统 libmpv（Arch 的 mpv 包），详见下方媒体说明。
+
+```bash
+flutter pub get
+flutter analyze --no-pub
+flutter build linux --release --no-pub
+./build/linux/x64/release/bundle/fqapp
+```
+
+请运行完整 bundle，保留同目录的 data/、lib/；Rust 只从可执行文件旁的
+lib/libfqapi_core.so 加载，不依赖启动时的工作目录。不需要手改 FRB 生成文件。
+CMake 调用 Cargo --locked 构建 release 核心，首次构建需可用的 pub/Cargo 缓存或网络。
+
+本地资料沿用 path_provider/Hive 的上游目录：Hive 在用户 Documents，
+导入书籍和后端在 application support 目录。不要将日常资料目录指向测试目录。
+Linux 每个 HOME 只允许一个写者（锁位于 ~/.local/share/fqapp/.writer.lock），
+第二个进程返回 23；锁随进程退出释放，不要删除正在使用的锁文件。
+密钥服务失败不回落为明文；密钥损坏或现有加密资料无法解密时拒绝替换资料。
+请恢复原 keyring 后重试，勿通过删除密钥或资料来解决启动错误。
+Linux 密钥操作等待真实完成，避免超时后迟到写与重试产生两个不同密钥；
+若 Secret Service 卡住，需要先修复服务，再关闭并重新启动应用。
+
+隔离启动检查应同时设置新的 HOME、XDG_CONFIG_HOME、XDG_DATA_HOME、
+XDG_CACHE_HOME、XDG_RUNTIME_DIR，并使用私有 D-Bus 与临时 keyring；仅改 HOME
+仍可能连接日常会话的密钥服务。虚拟显示器的启动结果不能替代实际 GPU、
+Wayland/X11 桌面、媒体或音频验收。
+
+### Linux 实验性媒体（第二批，依赖 Linux runtime base）
+
+Linux 复用桌面 media_kit 播放器，增加锁定的 media_kit_libs_linux 1.2.1。
+需系统 libmpv（Arch 的 mpv 包）；构建时检查库存在，不下载另一套 allocator。
+Rust/C CENC 使用 PIC 并与 core 一起构建。FRB 与媒体 FFI 从可执行文件相邻的
+绝对 lib/libfqapi_core.so 加载，不依赖启动 cwd。Windows/Android 加载与代理
+策略保留；Linux 沿用 reqwest 环境路由，不新增应用代理设置语义。
+
+听书支持普通 URI 与 CENC loopback Range、暂停、seek、倍速和销毁。
+关闭窗口在首批刷盘/后端关闭后释放全部播放器；创建期间销毁会关闭迟到会话。
+Linux 视频入口仍为 unavailable，等待真实图形播放验证再开放。
+TTS、MPRIS、portal、锁屏/挂起恢复与 idle inhibition 不在本批；播放器通知和
+保亮请求无系统集成效果。合成媒体 null 输出不证明物理声卡、GPU、Wayland。
+
+离线验证：构建 core 后，以 FQAPP_MEDIA_LIBRARY 指向 bundle 中绝对 core 路径，
+运行 python3 scripts/verify_windows_media.py；它复用 Windows 实际 FFI 合成媒体
+验证，覆盖本地/HTTP CENC、导出明文字节的音视频帧一致性、随机 Range、安全
+边界及会话撤销，只写 build/。然后设置 FQAPP_TEST_MEDIA 为生成的
+build/validation/windows-media/decoded.mp4 绝对路径，运行
+flutter test --no-pub --concurrency=1 test/desktop_media_playback_test.dart，
+验证实际 libmpv 播放、暂停、seek、倍速、完成及释放。
+
+上游完整检查使用 CI；本地运行 flutter analyze --no-pub、上述定向媒体检查及
+相关构建，不运行完整 Flutter/Rust 套件。资源受限机器串行执行，
+使用 systemd scope 限制 CPU/内存及 CARGO_BUILD_JOBS=2、
+CMAKE_BUILD_PARALLEL_LEVEL=2。隔离 HOME/keyring，不读取真实账号/媒体缓存。
+
+真实 Linux engine 接线回归入口：
+`flutter build linux --release --no-pub -t test/support/linux_media_runtime.dart`。
+在私有 HOME/XDG、D-Bus、Xvfb 和虚拟音频会话内运行生成的 bundle，设置
+`FQAPP_RUNTIME_ORIGIN=http://127.0.0.1:<port>`。该本地 HTTP 服务需提供支持 Range 的
+8 秒合成 `audio.wav` 和 `encrypted.mp4`（AAC/CENC，测试 key 为
+`00112233445566778899aabbccddeeff`）。入口使用真实 LinuxPlatform、NativePlayer、
+media_kit 原生纹理插件和 bundle 内 Rust/C 核心，检查创建、实际进度、暂停、seek、
+释放后 CENC listener 撤销，再在活跃 CENC 播放中正常关窗；监督进程须检查退出码 0。
+它是独立测试 target，不由产品 main 引用。此 bundle 不是产品包；交付前重新构建默认 target。
+该测试不证明物理声卡/GPU、完整产品存储关窗链或 Windows/Android 运行通过。
