@@ -105,6 +105,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
     }
     final content = _content;
     final prompt = _behaviorPrompt;
+    final restoreCensoredWords = _restore;
     final watch = Stopwatch()..start();
     final cancel = Completer<void>();
     _cancel = cancel;
@@ -126,7 +127,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
         content: content,
         kind: AiRunKind.trial,
         behaviorPromptOverride: prompt,
-        restoreCensoredWords: _restore,
+        restoreCensoredWords: restoreCensoredWords,
         cancelTrigger: cancel.future,
       );
       if (!mounted) return;
