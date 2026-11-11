@@ -6,7 +6,10 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 revision=$(git -C "$root" rev-parse --verify --end-of-options "$2^{commit}")
 [[ $revision == "$(git -C "$root" rev-parse HEAD)" ]]
 python "$root/packaging/arch/check_source.py" "$root"
-output=$(realpath -m -- "$1")
+requested=$1
+while [[ $requested == */ && $requested != / ]]; do requested=${requested%/}; done
+[[ ! -e $requested && ! -L $requested ]] || { echo 'Output already exists' >&2; exit 2; }
+output=$(realpath -m -- "$requested")
 case "$output/" in "$root/"*|/) echo 'Output must be outside checkout' >&2; exit 2;; esac
 [[ ! -e $output && ! -L $output ]]
 : "${FLUTTER_ROOT:?Set FLUTTER_ROOT to official Flutter 3.47.9}"

@@ -77,6 +77,24 @@ class ReleaseInputsTest(unittest.TestCase):
             self.assertEqual(sentinel.read_text(), "original")
         self.assertFalse((self.root / "build/out").exists())
 
+        target = Path(self.temp.name) / "unexpected target"
+        link = Path(self.temp.name) / "existing link"
+        link.symlink_to(target)
+        tools = Path(self.temp.name) / "preflight tools"
+        tools.mkdir()
+        (tools / "patchelf").write_text("#!/bin/sh\nexit 99\n")
+        (tools / "patchelf").chmod(0o755)
+        env = dict(os.environ, FLUTTER_ROOT=self.temp.name, PUB_CACHE=self.temp.name,
+                   PATH=str(tools) + os.pathsep + os.environ["PATH"])
+        for suffix in ("", "/", "///"):
+            result = subprocess.run(["bash", "scripts/build_linux_package.sh",
+                                     str(link) + suffix, "HEAD"], cwd=self.root,
+                                    env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(link.is_symlink())
+            self.assertFalse(target.exists(), result.stdout + result.stderr)
+            self.assertIn("Output already exists", result.stderr)
+
     def test_spaced_paths_reach_real_compilers_as_single_arguments(self):
         tools = Path(self.temp.name) / "tool bin"
         tools.mkdir()
