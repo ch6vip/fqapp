@@ -1,6 +1,6 @@
 番茄小铺 · Windows 电脑版（社区移植版）
 
-原项目：https://github.com/ch6vip/fqapp
+原项目：https://github.com/ch6vip/novel-sound
 本版本沿用原项目 GPL-3.0 许可证和作者署名。
 
 支持 Windows 10（1809 或以上）/ Windows 11，x64。
