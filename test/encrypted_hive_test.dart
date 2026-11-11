@@ -1,6 +1,6 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -25,6 +25,46 @@ void main() {
   tearDown(() async {
     await Hive.close();
     await dir.delete(recursive: true);
+  });
+
+  test('Linux refuses plaintext fallback when key storage fails', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await storage.write(SecureKeyProvider.hiveBoxKeyName, 'malformed');
+    await expectLater(EncryptedHive.openBox(Hive, 'no_key', keys: keys), throwsStateError);
+    await expectLater(EncryptedHive.openLazyBox(Hive, 'no_key_lazy', keys: keys), throwsStateError);
+    expect(dir.listSync().whereType<File>(), isEmpty);
+  });
+
+  test('Linux wrong key preserves eager and lazy ciphertext', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    for (final lazy in [false, true]) {
+      final name = lazy ? 'linux_lazy' : 'linux_eager';
+      if (lazy) {
+        final box = await EncryptedHive.openLazyBox<String>(
+          Hive,
+          name,
+          keys: keys,
+        );
+        await box.put('sentinel', 'private content');
+        await box.close();
+      } else {
+        final box = await EncryptedHive.openBox<String>(Hive, name, keys: keys);
+        await box.put('sentinel', 'private content');
+        await box.close();
+      }
+      final file = File('${dir.path}/${name}_enc.hive');
+      final original = file.readAsBytesSync();
+      final wrong = SecureKeyProvider(storage: InMemorySecureKeyStorage());
+      await expectLater(
+        lazy
+            ? EncryptedHive.openLazyBox<String>(Hive, name, keys: wrong)
+            : EncryptedHive.openBox<String>(Hive, name, keys: wrong),
+        throwsA(isA<HiveError>()),
+      );
+      expect(file.readAsBytesSync(), original);
+    }
   });
 
   test('encrypted box does not leave plaintext on disk', () async {

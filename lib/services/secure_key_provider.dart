@@ -85,7 +85,8 @@ class SecureKeyProvider {
   /// treated as unavailable. The platform channel normally answers in
   /// milliseconds; without a bound, a wedged Keystore — or, in widget tests,
   /// an unmocked channel whose Future never resolves — would hang startup
-  /// forever instead of letting callers degrade.
+  /// forever instead of letting callers degrade. Linux deliberately waits for
+  /// completion under the process writer lock to avoid late key writes.
   final Duration storageTimeout;
 
   /// Cooldown after a failed key load: lookups within one startup return the
@@ -115,7 +116,12 @@ class SecureKeyProvider {
 
   Future<Uint8List?> _loadOrCreate(String name) async {
     try {
-      final stored = await _storage.read(name).timeout(storageTimeout);
+      final read = _storage.read(name);
+      // Linux key operations retain ownership until completion; a timed-out
+      // write must never race a retry which creates a different key.
+      final stored = await (defaultTargetPlatform == TargetPlatform.linux
+          ? read
+          : read.timeout(storageTimeout));
       if (stored != null) {
         try {
           final decoded = base64Decode(stored);
@@ -128,8 +134,18 @@ class SecureKeyProvider {
           // Malformed entry: fall through and replace it (key lost).
         }
       }
+      if (stored != null && defaultTargetPlatform == TargetPlatform.linux) {
+        throw StateError('密钥损坏，拒绝替换现有 Linux 密钥');
+      }
       final fresh = Uint8List.fromList(Hive.generateSecureKey());
-      await _storage.write(name, base64Encode(fresh)).timeout(storageTimeout);
+      final write = _storage.write(name, base64Encode(fresh));
+      await (defaultTargetPlatform == TargetPlatform.linux
+          ? write
+          : write.timeout(storageTimeout));
+      if (defaultTargetPlatform == TargetPlatform.linux &&
+          await _storage.read(name) != base64Encode(fresh)) {
+        throw StateError('Linux 密钥写入确认失败');
+      }
       _cache[name] = fresh;
       return fresh;
     } catch (_) {

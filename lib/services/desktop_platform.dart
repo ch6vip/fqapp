@@ -268,7 +268,7 @@ class DesktopPlatform with WindowListener {
       case 'fqapp/library_backup':
         return _backup(method, args);
       case 'fqapp/local_books':
-        if (method == 'pickBookFile') return _pickBook();
+        if (method == 'pickBookFile') return pickBook();
       case 'fqapp/downloads':
         if (method == 'saveText') {
           final path = await _save(
@@ -530,7 +530,7 @@ class DesktopPlatform with WindowListener {
     throw MissingPluginException(method);
   }
 
-  Future<Map<String, dynamic>?> _pickBook() async {
+  Future<Map<String, dynamic>?> pickBook() async {
     final file = await openFile(
       acceptedTypeGroups: [
         const XTypeGroup(label: '本地书籍', extensions: ['txt', 'epub']),
@@ -541,13 +541,43 @@ class DesktopPlatform with WindowListener {
       throw PlatformException(code: 'file_size', message: '书籍不能超过 32 MB');
     }
     final bytes = await file.readAsBytes();
+    final text = Platform.isLinux && file.name.toLowerCase().endsWith('.txt')
+        ? await decodeLinuxText(bytes)
+        : null;
     return {
       'name': file.name,
       'bytes': bytes,
       'byteLength': bytes.length,
       if (file.name.toLowerCase().endsWith('.txt'))
-        'text': decodeDesktopText(bytes),
+        'text': text ?? decodeDesktopText(bytes),
     };
+  }
+}
+
+/// Decode the already size-checked bytes; never re-read a mutable picked file.
+Future<String> decodeLinuxText(Uint8List bytes) async {
+  if (bytes.length >= 2 &&
+      ((bytes[0] == 255 && bytes[1] == 254) ||
+          (bytes[0] == 254 && bytes[1] == 255))) {
+    return decodeDesktopText(bytes);
+  }
+  try {
+    return utf8.decode(bytes).replaceFirst(RegExp('^\uFEFF'), '');
+  } on FormatException {
+    final process = await Process.start('iconv', [
+      '-f',
+      'GB18030',
+      '-t',
+      'UTF-8',
+    ]);
+    final output = process.stdout.transform(utf8.decoder).join();
+    final errors = process.stderr.drain<void>();
+    process.stdin.add(bytes);
+    await process.stdin.close();
+    final text = await output;
+    await errors;
+    if (await process.exitCode != 0) throw const FormatException('无法解码本地书籍');
+    return text;
   }
 }
 
