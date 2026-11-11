@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=novel-sound
+Name[zh_CN]=novel-sound 阅读器
+Comment=Books, comics and audio
+Exec=/usr/bin/fqapp
+Icon=com.fqapp.fqapp
+Terminal=false
+Categories=AudioVideo;
+StartupWMClass=com.fqapp.fqapp
