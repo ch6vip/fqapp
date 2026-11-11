@@ -231,14 +231,17 @@ class AiSandboxField extends StatelessWidget {
               ),
             ),
             if (action != null)
-              Flexible(
-                child: TextButtonTheme(
-                  data: TextButtonThemeData(
-                    style: AiSandboxStyle(
-                      context,
-                    ).textButton(muted: true, size: 12),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButtonTheme(
+                    data: TextButtonThemeData(
+                      style: AiSandboxStyle(
+                        context,
+                      ).textButton(muted: true, size: 12),
+                    ),
+                    child: action!,
                   ),
-                  child: action!,
                 ),
               ),
           ],

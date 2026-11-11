@@ -228,7 +228,15 @@ void main() {
       await settle(tester);
       await tester.tap(find.text('行为提示词'));
       await settle(tester);
-      gaps['editor'] = gap(find.byKey(const ValueKey('sandbox-prompt-panel')));
+      final promptPanel = find.byKey(const ValueKey('sandbox-prompt-panel'));
+      gaps['editor'] = gap(promptPanel);
+      expect(gaps['editor'], 16);
+      final footer = tester.getRect(
+        find.byKey(const ValueKey('sandbox-prompt-toolbar')),
+      );
+      expect(footer.height, 44);
+      expect(footer.bottom, 1000 - 34 - 16);
+      expect(footer.top - tester.getRect(promptPanel).bottom, 12);
       // Record all three first, so a failure identifies each page's real inset.
       debugPrint(jsonEncode(gaps));
       for (final entry in gaps.entries) {
@@ -375,6 +383,66 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await settle(tester);
   });
+
+  testWidgets(
+    'all field actions stay at the right edge at normal and large text sizes',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      void expectActionsRight() {
+        for (final field in find.byType(AiSandboxField).evaluate()) {
+          final fieldFinder = find.byWidget(field.widget);
+          final action = find.descendant(
+            of: fieldFinder,
+            matching: find.byType(TextButton),
+          );
+          expect(
+            tester.getRect(action).right,
+            closeTo(tester.getRect(fieldFinder).right, .1),
+          );
+        }
+        expect(tester.takeException(), isNull);
+      }
+
+      for (final largeText in [false, true]) {
+        tester.view.physicalSize = Size(largeText ? 320 : 411, 914);
+        tester.platformDispatcher.textScaleFactorTestValue = largeText ? 2 : 1;
+        await open(tester);
+        expectActionsRight();
+        final menu = find.byIcon(Icons.more_horiz);
+        expect(menu.hitTestable(), findsOneWidget);
+        expect(
+          tester.getSize(find.byTooltip('更多工具')).shortestSide,
+          greaterThanOrEqualTo(44),
+        );
+        await jsonPage(tester);
+        expectActionsRight();
+        await visible(tester, find.text('使用测试正文'));
+        await tester.tap(find.text('使用测试正文'));
+        expect(
+          tester
+              .widget<TextField>(find.byType(TextField).first)
+              .controller!
+              .text,
+          aiSandboxSample,
+        );
+        await visible(tester, find.widgetWithText(TextButton, '填入示例'));
+        await tester.tap(find.widgetWithText(TextButton, '填入示例'));
+        expect(
+          tester
+              .widget<TextField>(find.byType(TextField).last)
+              .controller!
+              .text,
+          aiSandboxExampleResponse,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await settle(tester);
+      }
+    },
+  );
 
   testWidgets('prompt source is inline and primary action fills input column', (
     tester,
