@@ -264,28 +264,36 @@ class _AudioPlaybackController extends ChangeNotifier
     final savedTone = saved?['toneId'];
     final savedRate = saved?['rate'];
     final initialTone = request.initialToneId?.trim();
-    // Only a saved voice that the decorations endpoint knows is worth waiting
-    // for before the first source request. Letting /tones, /related or /detail
-    // gate playback for everyone else is the p09 defect; the wait is bounded
-    // so a slow or hung decorations call can never block playback forever.
+    // Downloaded audio proves the saved voice is playable even when voice
+    // discovery is offline. Otherwise give decorations a bounded chance to
+    // resolve it before falling back to the default voice.
+    var savedToneDownloaded = false;
     AudioExtras? resolved;
     if ((initialTone == null || initialTone.isEmpty) &&
         savedTone is String &&
         savedTone.trim().isNotEmpty &&
         !byId.containsKey(savedTone)) {
-      try {
-        resolved = await extras.timeout(const Duration(seconds: 3));
-      } catch (_) {
-        resolved = null;
+      if (generation == 1 && _chapters.isNotEmpty) {
+        savedToneDownloaded =
+            await _localSource(_chapters[_index].itemId, savedTone) != null;
+        if (_closed || generation != _settingsGeneration) return;
       }
-      if (_closed || generation != _settingsGeneration) return;
-      if (resolved != null) _mergeToneVoices(resolved, byId);
+      if (!savedToneDownloaded) {
+        try {
+          resolved = await extras.timeout(const Duration(seconds: 3));
+        } catch (_) {
+          resolved = null;
+        }
+        if (_closed || generation != _settingsGeneration) return;
+        if (resolved != null) _mergeToneVoices(resolved, byId);
+      }
     }
     _update(() {
       if (resolved != null) _extras = resolved;
       _voices = List.unmodifiable(byId.values);
       if (generation == 1) {
-        if (savedTone is String && byId.containsKey(savedTone)) {
+        if (savedTone is String &&
+            (byId.containsKey(savedTone) || savedToneDownloaded)) {
           _toneId = savedTone;
         }
         if (initialTone != null && initialTone.isNotEmpty) {

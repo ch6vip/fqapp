@@ -344,11 +344,19 @@ class _FqAppState extends State<FqApp> {
                                         ? Brightness.light
                                         : Brightness.dark,
                                   ),
-                          child: AudioFloatingRouteScope(
-                            routes: _audioRoutes,
-                            child: isWindowsDesktop
-                                ? DesktopAppFrame(child: playback)
-                                : playback,
+                          // Playback reads recent history in initState, so
+                          // local data must be ready before it or routes mount.
+                          child: AppBootstrap(
+                            backendStarter:
+                                widget.backendStarter ??
+                                BackendService.instance.start,
+                            initializer: widget.initializer,
+                            child: AudioFloatingRouteScope(
+                              routes: _audioRoutes,
+                              child: isWindowsDesktop
+                                  ? DesktopAppFrame(child: playback)
+                                  : playback,
+                            ),
                           ),
                         ),
                       );
@@ -375,13 +383,7 @@ class _FqAppState extends State<FqApp> {
                     supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
                     localizationsDelegates:
                         GlobalMaterialLocalizations.delegates,
-                    home: AppBootstrap(
-                      backendStarter:
-                          widget.backendStarter ??
-                          BackendService.instance.start,
-                      initializer: widget.initializer,
-                      child: RootShell(backendStarter: widget.backendStarter),
-                    ),
+                    home: RootShell(backendStarter: widget.backendStarter),
                   ),
                 );
               },
