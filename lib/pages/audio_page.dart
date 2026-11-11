@@ -625,7 +625,10 @@ class _AudioPageState extends State<AudioPage> {
     // Keep a restored local voice visible even if discovery returns other tones.
     final hasToneOptions = options.isNotEmpty;
     for (final voice in c._voices) {
-      if (hasToneOptions && voice.id != c._toneId) continue;
+      if (hasToneOptions &&
+          (voice.id != c._toneId || voice.id != c._restoredLocalVoice?.id)) {
+        continue;
+      }
       if (!c._selectableTone(voice.id) || !ids.add(voice.id)) continue;
       options.add(VoiceOption(id: voice.id, title: voice.label));
     }

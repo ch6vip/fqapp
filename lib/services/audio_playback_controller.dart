@@ -67,6 +67,7 @@ class _AudioPlaybackController extends ChangeNotifier
   final ValueNotifier<double?> _seekPreview = ValueNotifier(null);
   Duration _duration = Duration.zero;
   List<AudioVoice> _voices = const [_defaultVoice];
+  AudioVoice? _restoredLocalVoice;
   AudioExtras _extras = const AudioExtras();
   // A selected version's family is known before its decorations arrive.
   bool? _versionHasFixedTone;
@@ -294,6 +295,7 @@ class _AudioPlaybackController extends ChangeNotifier
     _update(() {
       if (resolved != null) _extras = resolved;
       _voices = List.unmodifiable(byId.values);
+      _restoredLocalVoice = savedToneDownloaded ? byId[savedTone] : null;
       if (generation == 1) {
         if (savedTone is String && byId.containsKey(savedTone)) {
           _toneId = savedTone;
@@ -1381,6 +1383,7 @@ class _AudioPlaybackController extends ChangeNotifier
         _chapters = List<Chapter>.unmodifiable(chapters);
         _index = start;
         _toneId = toneId;
+        _restoredLocalVoice = null;
         _versionHasFixedTone = targetHasFixedTone;
         _extras = const AudioExtras();
         _excerpt = '';
