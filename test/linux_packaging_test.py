@@ -19,7 +19,7 @@ class ReleaseInputsTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "source with spaces"
         (self.root / "packaging/arch").mkdir(parents=True)
-        for name in ("build_release.sh", "check_source.py"):
+        for name in ("build_release.sh", "check_source.py", "toolchain.cmake"):
             shutil.copy(source / "packaging/arch" / name,
                         self.root / "packaging/arch" / name)
         (self.root / "assets").mkdir()
@@ -89,6 +89,16 @@ out.mkdir(parents=True)
                       flags["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"))
         self.assertEqual((bundle / "source-commit.txt").read_text().strip(),
                          self.run_command("git", "rev-parse", "HEAD").stdout.strip())
+        # An archive has no .git; its revision is supplied by the export caller.
+        shutil.rmtree(self.root / ".git")
+        shutil.rmtree(bundle)
+        env["FQAPP_SOURCE_REVISION"] = "a" * 40
+        self.run_command("bash", "packaging/arch/build_release.sh", env=env)
+        self.assertEqual((bundle / "source-commit.txt").read_text().strip(), "a" * 40)
+        self.run_command("git", "init", "-q")
+        self.run_command("git", "add", ".")
+        self.run_command("git", "-c", "user.name=Test", "-c",
+                         "user.email=test@example.invalid", "commit", "-qm", "fixture")
         (bundle / "generated.cmake").write_text("# generated build output\n")
         self.run_command("python", "packaging/arch/check_source.py", str(self.root))
 
