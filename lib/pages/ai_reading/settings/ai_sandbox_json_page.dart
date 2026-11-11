@@ -32,6 +32,7 @@ class _AiSandboxJsonPageState extends State<AiSandboxJsonPage> {
     title: 'JSON 校验',
     code: 'JSON / VALIDATION',
     child: AiSandboxLayout(
+      padding: featurePadding(context),
       input: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

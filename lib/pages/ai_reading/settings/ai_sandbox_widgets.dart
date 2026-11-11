@@ -6,7 +6,6 @@ import '../../../services/ai_reading/ai_protocol.dart';
 import '../../../services/chapter_text_formatter.dart';
 import '../../../widgets/home/home_design.dart';
 import '../../../widgets/settings/settings_widgets.dart';
-import '../../../widgets/wenku/wenku_ui.dart';
 import 'ai_sandbox_request_page.dart';
 
 const aiSandboxSample = '他以经在门口等了半个小时。\n“我踏马真是服了。”他叹了口气。\n他拿出手机，打开*****给朋友发消息。';
@@ -45,15 +44,23 @@ class AiSandboxResult {
 }
 
 class AiSandboxLayout extends StatelessWidget {
-  const AiSandboxLayout({super.key, required this.input, required this.result});
+  const AiSandboxLayout({
+    super.key,
+    required this.input,
+    required this.result,
+    required this.padding,
+  });
   final Widget input;
   final Widget result;
+  // Resolve above AppFeaturePage: Scaffold changes the body MediaQuery in
+  // classic mode, so reading featurePadding inside this layout counts chrome twice.
+  final EdgeInsets padding;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final wide = constraints.maxWidth >= 720;
       return SingleChildScrollView(
-        padding: featurePadding(context),
+        padding: padding,
         child: wide
             ? Row(
                 crossAxisAlignment: CrossAxisAlignment.start,

@@ -19,6 +19,9 @@ import 'package:fqapp/services/ai_reading/ai_prompt.dart';
 import 'package:fqapp/services/ai_reading/ai_settings.dart';
 import 'package:fqapp/services/ai_reading/ai_models.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
+import 'package:fqapp/services/app_theme_style.dart';
+import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
+import 'package:fqapp/widgets/settings/settings_widgets.dart';
 
 /// Controllable HTTP/SSE transport. Cancellation is delivered through the same
 /// AbortableRequest used in production, without a network or paid credential.
@@ -181,6 +184,79 @@ void main() {
     await settle(tester);
   }
 
+  testWidgets(
+    'classic scoped console and child pages clear the actual AppBar once',
+    (tester) async {
+      tester.view.physicalSize = const Size(420, 1000);
+      tester.view.devicePixelRatio = 1;
+      tester.view.viewPadding = const FakeViewPadding(top: 24, bottom: 34);
+      tester.view.padding = const FakeViewPadding(top: 24, bottom: 34);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewPadding);
+      final style = AppThemeStyleStore()..value = AppThemeStyle.classic;
+      addTearDown(style.dispose);
+      Widget app() => MaterialApp(
+        theme: ThemeData(
+          extensions: [
+            style.value == AppThemeStyle.classic
+                ? const AppStyleTokens.classic()
+                : const AppStyleTokens.archive(),
+          ],
+        ),
+        builder: (context, child) => AppUiScope(store: style, child: child!),
+        home: const DeveloperToolsPage(),
+      );
+      await tester.pumpWidget(app());
+      await settle(tester);
+      final gaps = <String, double>{};
+      double gap(Finder content) =>
+          tester.getTopLeft(content).dy -
+          tester.getBottomLeft(find.byType(AppBar)).dy;
+      gaps['console'] = gap(find.text('Fixture\nfixture-model'));
+      await jsonPage(tester);
+      gaps['json'] = gap(find.byType(AiSandboxField).first);
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await tester.tap(find.text('查看请求'));
+      await settle(tester);
+      gaps['request'] = gap(find.text('当前配置预览'));
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await tester.tap(find.text('行为提示词'));
+      await settle(tester);
+      gaps['editor'] = gap(find.byType(SurfacePanel));
+      // Record all three first, so a failure identifies each page's real inset.
+      debugPrint(jsonEncode(gaps));
+      for (final entry in gaps.entries) {
+        expect(entry.value, inInclusiveRange(12, 18), reason: entry.key);
+      }
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settle(tester);
+      style.value = AppThemeStyle.archive;
+      await tester.pumpWidget(app());
+      await settle(tester);
+      expect(
+        tester.getTopLeft(find.text('Fixture\nfixture-model')).dy,
+        inInclusiveRange(100, 108),
+      );
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.resetViewInsets);
+      await settle(tester);
+      expect(
+        tester.getTopLeft(find.text('Fixture\nfixture-model')).dy,
+        inInclusiveRange(100, 108),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settle(tester);
+    },
+  );
+
   testWidgets('prompt source is inline and primary action fills input column', (
     tester,
   ) async {
@@ -191,6 +267,10 @@ void main() {
     expect(source.center.dy, closeTo(title.center.dy, 1));
     expect(source.left, greaterThan(title.right));
     expect(source.right, lessThan(arrow.left));
+    expect(
+      arrow.right,
+      closeTo(tester.getBottomRight(find.byType(AiSandboxField)).dx, 1),
+    );
     final inputWidth = tester.getSize(find.byType(AiSandboxField)).width;
     expect(
       tester.getSize(find.widgetWithText(FilledButton, '开始测试')).width,
@@ -206,6 +286,19 @@ void main() {
       closeTo(tester.getCenter(find.text('行为提示词')).dy, 1),
     );
     expect(find.text('查看本次请求'), findsNothing);
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await settle(tester);
+    expect(
+      tester.getRect(find.byIcon(Icons.chevron_right)).right,
+      closeTo(tester.getBottomRight(find.byType(AiSandboxField)).dx, 1),
+    );
+    expect(find.text('本次自定义'), findsOneWidget);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     await settle(tester);
   });
