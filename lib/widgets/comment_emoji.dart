@@ -111,19 +111,40 @@ List<InlineSpan> commentEmojiSpans(String text, {required double fontSize}) {
 /// Without a token it stays a plain [Text] so existing layout, selection and
 /// `find.text` lookups are unchanged.
 class CommentEmojiText extends StatelessWidget {
-  const CommentEmojiText({super.key, required this.text, required this.style});
+  const CommentEmojiText({
+    super.key,
+    required this.text,
+    required this.style,
+    this.maxLines,
+    this.overflow,
+    this.textAlign,
+  });
 
   final String text;
   final TextStyle style;
+  final int? maxLines;
+  final TextOverflow? overflow;
+  final TextAlign? textAlign;
 
   @override
   Widget build(BuildContext context) {
-    if (!hasCommentEmoji(text)) return Text(text, style: style);
+    if (!hasCommentEmoji(text)) {
+      return Text(
+        text,
+        style: style,
+        maxLines: maxLines,
+        overflow: overflow,
+        textAlign: textAlign,
+      );
+    }
     return Text.rich(
       TextSpan(
         style: style,
         children: commentEmojiSpans(text, fontSize: style.fontSize ?? 16),
       ),
+      maxLines: maxLines,
+      overflow: overflow,
+      textAlign: textAlign,
     );
   }
 }

@@ -5,6 +5,7 @@ import '../../models/book_comment.dart';
 import '../../models/book_detail.dart';
 import '../../services/poster_cache.dart';
 import '../app_ui/app_ui_scope.dart';
+import '../comment_emoji.dart';
 import '../home/home_design.dart';
 import '../home/home_shelf.dart';
 import '../wenku/wenku_ui.dart';
@@ -245,9 +246,9 @@ class _PreviewReview extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           if (comment.text.isNotEmpty)
-            AppText(
-              comment.text,
+            CommentEmojiText(
               key: ValueKey('detail_review_text_${comment.id}'),
+              text: comment.text,
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
