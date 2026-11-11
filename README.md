@@ -1,125 +1,155 @@
 <p align="center">
-  <img src="assets/images/app_logo.webp" width="100" alt="什锦铺">
+  <img src="assets/images/app_logo.webp" width="120" alt="什锦铺">
 </p>
 
-<h1 align="center">什锦铺 · 看小说、短剧、漫画的手机 App</h1>
-
-<p align="center">不用注册 · 不用付费 · 打开就能看</p>
+<h1 align="center">什锦铺</h1>
 
 <p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/ch6vip/fqapp?color=EF5038&label=Release&logo=github"></a>
-  <a href="https://github.com/ch6vip/fqapp/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/ch6vip/fqapp/total?color=14B8A6&label=Downloads&logo=github"></a>
-  <img alt="Android" src="https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white">
-  <img alt="Windows" src="https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows&logoColor=white">
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a>
-  <a href="https://github.com/ch6vip/fqapp/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/ch6vip/fqapp?style=social"></a>
+  <strong>让阅读和追剧，简单一点。</strong><br>
+  小说 · 听书 · 短剧 · 漫剧 · 漫画
 </p>
 
 <p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest">
-    <img alt="下载 APK" height="40" src="https://img.shields.io/badge/下载-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white">
-  </a>
-  <a href="https://github.com/ch6vip/fqapp/releases/latest">
-    <img alt="下载 Windows" height="40" src="https://img.shields.io/badge/下载-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white">
-  </a>
+  <a href="https://github.com/ch6vip/fqapp/releases/latest"><img src="https://img.shields.io/github/v/release/ch6vip/fqapp?label=Release&color=E89B35" alt="最新版本"></a>
+  <img src="https://img.shields.io/badge/Android%20%7C%20Windows-087E8B" alt="支持 Android 和 Windows">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="GPL-3.0 开源协议"></a>
 </p>
 
-所有内容实时从网上获取，App 本身不存任何内容。
+<p align="center">
+  <a href="#主要功能">主要功能</a> ·
+  <a href="#下载与安装">下载安装</a> ·
+  <a href="#常见问题">常见问题</a> ·
+  <a href="DEVELOPMENT.md">开发文档</a>
+</p>
 
-> [!WARNING]
-> 仅供学习研究，不提供、不存放任何内容。内容来自第三方公开接口，版权归原作者所有。使用后果自负，如有侵权请联系删除。
+---
 
-## 能做什么
+什锦铺是一款支持 **安卓和 Windows** 的开源阅读与影音应用。在线看故事，也能导入自己的电子书，把喜欢的作品和进度留在书架里。
 
-- **📖 看小说** —— 左右翻页或上下滑动，字号字体随意调，有段落评论
-- **🎧 听书** —— 机器朗读和真人讲书，有人声字幕、定时关闭、倍速、自动下一章
-- **🎬 看短剧 / 漫剧** —— 播完自动下一集，能快进快退、调倍速、全屏
-- **🖼 看漫画** —— 竖着往下滑，缓存过的断网也能看
-- **🔍 找内容** —— 搜关键词或编号，有排行榜、作者主页、书评
-- **🕘 记住进度** —— 看到哪自动记，下次接着看
-- **⬇️ 下载离线** —— 整本下载后彻底离线，不会被自动清掉
+## 主要功能
 
-## 怎么用
+### 📖 看小说，听故事
 
-**找内容** —— 首页推荐各类内容，下拉刷新换一批。想找特定的就点搜索，输关键词或作品编号。
+- 在线阅读小说，也能导入 TXT / EPUB 电子书。
+- 字体、字号、翻页方式随心调，支持深色、纯黑和墨水屏模式。
+- 支持系统朗读和真人有声书，可调倍速、定时停止、后台播放。
 
-**看小说** —— 点屏幕中间呼出菜单，调目录、排版、缓存。翻过本章最后一页自动进下一章。
+### 🎬 追短剧，看漫画
 
-**滚动跨章** ——「阅读菜单 → 设置 → 翻页」选中滚动后，下方显示「跨章」选项，默认用分割线拼接相邻章节，也可直接切换下一章。拼接模式提前准备正文与段评排版，按实际读到的章节保存进度。
+- 短剧、漫剧、漫画集中浏览，按作品名称或编号搜索。
+- 自动保存阅读和播放进度，下次打开接着看。
 
-**正文替换** ——「设置 → 阅读 → 正文替换」添加普通文本或正则规则，按顺序在本地处理正文；默认关闭，关闭后显示原文。系统朗读也会使用替换后的文字，真人音频保持原样；规则暂不包含在备份中。
+### 📚 整理书架，离线慢慢看
 
-**听书** —— 声音可选，进度会记住。切到别的页面还能接着听，底部有控制条，支持通知栏和锁屏控制。
+- 收藏喜欢的作品，分组整理，导出备份后可在新设备恢复。
+- 提前下载内容，没网时继续阅读或播放。
 
-**播放页布局** ——「设置 → 外观 → 播放页布局」可选沉浸式、横屏片源自动分屏、始终分屏；分屏时竖屏上下、横屏左右，拖动分隔条调比例、点一下收起。
+## 下载与安装
 
-**下载离线** —— 详情页点「下载」存整本；阅读器点「缓存」批量下载后面几十章。手动下载的不会被自动清理。
+前往 [**下载最新版**](https://github.com/ch6vip/fqapp/releases/latest) 获取安装包和更新说明。
 
-**Windows 核心网络代理** ——「设置 → 服务 → 核心网络代理」默认直连，不跟随系统代理或代理环境变量。点击「检测本机代理」，选择结果后「保存并应用」；也可手动输入 HTTP、HTTPS、SOCKS5 / SOCKS5h 地址（含端口，无需账号密码）。可检测系统代理关闭时仍在运行的本机代理；手机端不显示此功能。代理需要支持对应握手，HTTP 检测还需要允许连接本机回环地址，未列出的服务可手动填写。保存会重启核心并中断进行中的核心请求一次；代理故障直接报错，不自动回退直连。此设置覆盖 Rust API、Windows 加密媒体分段和 Rust 视频下载，Flutter 下载器、网页登录及非加密播放保持各自行为。
+| 平台 | 系统要求 | 下载 |
+| --- | --- | --- |
+| 安卓 | Android 7.0 及以上 | [推荐安装包](https://github.com/ch6vip/fqapp/releases/latest/download/app-arm64-v8a-release.apk) |
+| Windows | Windows 10 / 11，64 位 | [进入下载页](https://github.com/ch6vip/fqapp/releases/latest) |
+
+- **安卓**：大多数手机选择推荐安装包；旧款 32 位设备使用[备用安装包](https://github.com/ch6vip/fqapp/releases/latest/download/app-armeabi-v7a-release.apk)。
+- **Windows**：下载 Windows 压缩包，完整解压后打开 `fqapp.exe`，保留同目录的其他文件。更多用法见 [Windows 说明](WINDOWS.md)。
+
+Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/fqapp/issues/308)。目前没有正式的 Linux、iPhone 或 Mac 安装包。
+
+### 开始使用
+
+1. **找作品**：在首页浏览，或搜索作品名称、编号。
+2. **导入自己的书**：在书架菜单选择「导入图书」，打开 TXT / EPUB 文件。
+3. **下载小说**：在作品详情点「下载」，在「我的 → 离线缓存」管理已下载内容。
+
+看小说时点击屏幕中间，可以调整阅读设置。主题和听书选项在「我的 → 设置」；经典主题点击右上角齿轮。
 
 ## 常见问题
 
-<details><summary><b>打开后一直卡在初始化？</b></summary>
+<details>
+<summary><b>没网也能用吗？</b></summary>
 
-第一次打开必须联网完成设备注册，检查网络再重试。
-
-</details>
-
-<details><summary><b>正文乱码 / 视频放不出来？</b></summary>
-
-一般是设备信息过期。清除应用数据后重开会自动重新注册。
-
-> [!CAUTION]
-> 清除应用数据会同时删掉阅读记录和缓存。
+可以看已导入的电子书、读已缓存的章节、播放已下载的媒体。只有已下载完成的内容才能离线使用，搜索和获取新内容仍需要联网。启动时可选择「离线阅读」。
 
 </details>
 
-<details><summary><b>搜索或播放突然失败？</b></summary>
+<details>
+<summary><b>一直加载、搜索失败或播放不了，怎么办？</b></summary>
 
-内容都来自上游网站，对方调整或网络波动都会临时影响，过会儿再试。这个 App 没有自己的服务器，没法绕过上游的变化。
+先检查网络，换个网络或重启应用再试。在线内容依赖第三方服务，对方调整或网络波动可能导致暂时不可用。
 
-</details>
-
-<details><summary><b>换手机怎么搬书架和进度？</b></summary>
-
-「设置 → 数据 → 备份与恢复」导出文件，传到新手机后选文件、确认合并。
-
-能搬：收藏、阅读和播放进度、看过哪些剧集。搬不了：本地 TXT/EPUB 文件、下载缓存、阅读时长、划线和设置。
+持续失败请[反馈问题](https://github.com/ch6vip/fqapp/issues)，附上应用版本、设备型号、作品名称或编号，以及错误截图。
 
 </details>
 
-<details><summary><b>需要注册或付费吗？有 iOS 版吗？</b></summary>
+<details>
+<summary><b>换设备怎么搬书架和进度？</b></summary>
 
-不用注册也不用付费，App 里没有任何登录和支付功能。没有 iOS 版，目前只有安卓。
+在「我的 → 备份与导入」导出备份文件，传到新设备后选择「从备份文件恢复」，预览并确认。
+
+备份包含收藏、书架分组、已保存的阅读和播放进度、已看剧集；不包含本地电子书、下载缓存、阅读时长、划线和设置。导出前先退出阅读或暂停播放，让进度保存，本地书文件请单独保留。
 
 </details>
 
-## 参与贡献
+<details>
+<summary><b>系统朗读没有声音？</b></summary>
 
-一个人维护精力有限，欢迎提 issue、发 PR，修个小问题、补个功能都行，我都会看。参与方式见 [如何反馈](CONTRIBUTING.md)。
+检查媒体音量，并确认设备安装了语音引擎和中文音色。在「设置 → 听书 → 系统朗读」选择可用语音；Windows 用户可在系统语音设置中安装中文音色。
+
+</details>
+
+## 参与与支持
+
+使用中遇到问题，或有想要的功能，欢迎[提交反馈](https://github.com/ch6vip/fqapp/issues)。想一起改进项目，可以查看[贡献指南](CONTRIBUTING.md)和[开发文档](DEVELOPMENT.md)。
+
+### 🤝 QQ 交流群
+
+欢迎加入 **樱道** 交流群，分享使用心得、交流问题。用 QQ 扫码，或搜索群号 **726870896** 加入。
+
+<p align="center">
+  <a href=".github/qq-group.png">
+    <img src=".github/qq-group.png" width="320" alt="QQ 交流群：樱道，群号 726870896">
+  </a>
+</p>
+
+### ❤️ 赞助
+
+如果什锦铺让你的阅读和追剧更方便，欢迎点个 [⭐ Star](https://github.com/ch6vip/fqapp/stargazers)。也可以通过[爱发电](https://afdian.com/a/ch6vip)、微信或支付宝请作者喝杯咖啡，支持后续更新。
+
+<p align="center">
+  <a href=".github/wechat.png">
+    <img src=".github/wechat.png" width="640" alt="赞助什锦铺：微信支付和支付宝收款码">
+  </a>
+</p>
+
+点击图片可查看原图，方便扫码。
+
+## 👥 贡献者
+
+感谢每一位参与改进什锦铺的朋友。
 
 <a href="https://github.com/ch6vip/fqapp/graphs/contributors">
   <img src=".github/contributors.svg" alt="贡献者">
 </a>
 
-## 支持作者
+## Star History
 
-如果对你有用，欢迎请我喝杯咖啡，或给项目点个 ⭐ Star。
+<a href="https://www.star-history.com/?repos=ch6vip%2Ffqapp&type=date&legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip%2Ffqapp&type=date&theme=dark&legend=top-left">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip%2Ffqapp&type=date&legend=top-left">
+    <img src="https://api.star-history.com/chart?repos=ch6vip%2Ffqapp&type=date&legend=top-left" alt="什锦铺 Star History">
+  </picture>
+</a>
 
-<p>
-  <a href="https://afdian.com/a/ch6vip">
-    <img alt="Afdian" src="https://img.shields.io/badge/Afdian-Sponsor-946ce6?style=social&logo=afdian">
-  </a>
-</p>
+## 致谢与许可
 
-**微信赞助**
+感谢 [Wenku8 界面项目](assets/licenses/wenku8/PORTING.md)与 [LINUX DO](https://linux.do/) 社区。
 
-<img src=".github/wechat.png" width="260" alt="微信赞助">
+项目采用 [GPL-3.0](LICENSE) 开源协议，Copyright © 2026 ch6vip。
 
-App 里也有入口：「设置 → 关于 → 支持作者」。
+在线内容来自第三方，版权归各自权利人。本项目与内容提供方无隶属关系，不托管作品，不绕过付费或访问权限。
 
----
-
- **开发者** [编译与开发](DEVELOPMENT.md) ｜ [如何反馈](CONTRIBUTING.md) ｜ **许可** [GPL-3.0](LICENSE)，Copyright (C) 2026 ch6vip ｜ **致谢** [LINUX DO](https://linux.do/)
-
-<a href="https://www.star-history.com/?repos=ch6vip%2Ffqapp&type=date&legend=top-left"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&theme=dark&legend=top-left" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" /><img alt="Star History" src="https://api.star-history.com/chart?repos=ch6vip/fqapp&type=date&legend=top-left" /></picture></a>
+书架、进度和缓存保存在设备上。如开启 AI 校对或云端同步，相关内容会发送到你选择的服务，使用前请阅读应用内说明。
