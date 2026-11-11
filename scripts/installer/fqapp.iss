@@ -1,4 +1,4 @@
-; Community Windows port of ch6vip/fqapp. All application licenses ship in {app}.
+; Community Windows port of ch6vip/novel-sound. All application licenses ship in {app}.
 #ifndef BundleDir
   #error BundleDir must point to the complete Windows release bundle.
 #endif
@@ -18,8 +18,8 @@ AppName=番茄小铺 · 电脑版
 AppVersion={#AppVersion}
 AppVerName=番茄小铺 · 电脑版 {#AppVersion}
 AppPublisher=ch6vip / fqapp desktop contributors
-AppPublisherURL=https://github.com/ch6vip/fqapp
-AppSupportURL=https://github.com/ch6vip/fqapp
+AppPublisherURL=https://github.com/ch6vip/novel-sound
+AppSupportURL=https://github.com/ch6vip/novel-sound
 AppCopyright=Copyright (C) 2026 ch6vip and fqapp desktop contributors. GPL-3.0.
 DefaultDirName={localappdata}\Programs\fqapp Desktop
 DefaultGroupName=番茄小铺电脑版

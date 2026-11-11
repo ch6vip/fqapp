@@ -1,4 +1,4 @@
-# fqapp 开发者文档
+# novel-sound 开发者文档
 
 面向构建、修改和调试本项目的开发者。用户使用说明见 [README.md](README.md)。
 
@@ -84,7 +84,7 @@ Android WebView 由用户本人完成官方手机号登录和人机验证。Cook
 ## 项目结构
 
 ```
-fqapp/
+novel-sound/
 ├── lib/                             # Flutter UI、模型和本地状态
 │   ├── main.dart                    # AppBootstrap + RootShell
 │   ├── models/                      # 数据模型与响应解析
@@ -215,7 +215,7 @@ Rust 核心库由 `scripts/build_rust_backend.*` 生成；C 库由下一步 APK 
 ### 3. 构建 APK
 
 ```powershell
-cd fqapp
+cd novel-sound
 flutter pub get
 # 演示只出 arm64 调试包；正式出包是双 ABI 分包，见下方说明
 flutter build apk --debug --target-platform android-arm64
@@ -237,7 +237,7 @@ Rust 核心按 `arm64-v8a` 与 `armeabi-v7a` 两个 ABI 产出（`scripts/build_
 
 ### GitHub Actions 云端编译
 
-打开 [Actions → Android APK](https://github.com/ch6vip/fqapp/actions/workflows/android-apk.yml)，
+打开 [Actions → Android APK](https://github.com/ch6vip/novel-sound/actions/workflows/android-apk.yml)，
 点击 **Run workflow** 即可从源码构建。`master` 上的应用、原生库及构建配置变更也会自动触发。
 运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
 `app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。

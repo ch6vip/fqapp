@@ -9,12 +9,12 @@
 import { writeFileSync } from 'node:fs';
 
 const OWNER = 'ch6vip';
-const REPO = 'fqapp';
+const REPO = 'novel-sound';
 const OUT = new URL('../.github/contributors.svg', import.meta.url);
 const SIZE = 64; // avatar edge, px
 const GAP = 4;
 
-const headers = { 'User-Agent': 'fqapp-contributors-script' };
+const headers = { 'User-Agent': 'novel-sound-contributors-script' };
 if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
 
 const res = await fetch(
