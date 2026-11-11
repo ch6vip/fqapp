@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ch6vip/fqapp/releases/latest"><img src="https://img.shields.io/github/v/release/ch6vip/fqapp?label=Release&color=E89B35" alt="最新版本"></a>
+  <a href="https://github.com/ch6vip/novel-sound/releases/latest"><img src="https://img.shields.io/github/v/release/ch6vip/novel-sound?label=Release&color=E89B35" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Android%20%7C%20Windows-087E8B" alt="支持 Android 和 Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue" alt="GPL-3.0 开源协议"></a>
 </p>
@@ -46,17 +46,17 @@
 
 ## 下载与安装
 
-前往 [**下载最新版**](https://github.com/ch6vip/fqapp/releases/latest) 获取安装包和更新说明。
+前往 [**下载最新版**](https://github.com/ch6vip/novel-sound/releases/latest) 获取安装包和更新说明。
 
 | 平台 | 系统要求 | 下载 |
 | --- | --- | --- |
-| 安卓 | Android 7.0 及以上 | [推荐安装包](https://github.com/ch6vip/fqapp/releases/latest/download/app-arm64-v8a-release.apk) |
-| Windows | Windows 10 / 11，64 位 | [进入下载页](https://github.com/ch6vip/fqapp/releases/latest) |
+| 安卓 | Android 7.0 及以上 | [推荐安装包](https://github.com/ch6vip/novel-sound/releases/latest/download/app-arm64-v8a-release.apk) |
+| Windows | Windows 10 / 11，64 位 | [进入下载页](https://github.com/ch6vip/novel-sound/releases/latest) |
 
-- **安卓**：大多数手机选择推荐安装包；旧款 32 位设备使用[备用安装包](https://github.com/ch6vip/fqapp/releases/latest/download/app-armeabi-v7a-release.apk)。
+- **安卓**：大多数手机选择推荐安装包；旧款 32 位设备使用[备用安装包](https://github.com/ch6vip/novel-sound/releases/latest/download/app-armeabi-v7a-release.apk)。
 - **Windows**：下载 Windows 压缩包，完整解压后打开 `fqapp.exe`，保留同目录的其他文件。更多用法见 [Windows 说明](WINDOWS.md)。
 
-Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/fqapp/issues/308)。目前没有正式的 Linux、iPhone 或 Mac 安装包。
+Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/novel-sound/issues/308)。目前没有正式的 Linux、iPhone 或 Mac 安装包。
 
 ### 开始使用
 
@@ -80,7 +80,7 @@ Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/fqa
 
 先检查网络，换个网络或重启应用再试。在线内容依赖第三方服务，对方调整或网络波动可能导致暂时不可用。
 
-持续失败请[反馈问题](https://github.com/ch6vip/fqapp/issues)，附上应用版本、设备型号、作品名称或编号，以及错误截图。
+持续失败请[反馈问题](https://github.com/ch6vip/novel-sound/issues)，附上应用版本、设备型号、作品名称或编号，以及错误截图。
 
 </details>
 
@@ -102,7 +102,7 @@ Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/fqa
 
 ## 参与与支持
 
-使用中遇到问题，或有想要的功能，欢迎[提交反馈](https://github.com/ch6vip/fqapp/issues)。想一起改进项目，可以查看[贡献指南](CONTRIBUTING.md)和[开发文档](DEVELOPMENT.md)。
+使用中遇到问题，或有想要的功能，欢迎[提交反馈](https://github.com/ch6vip/novel-sound/issues)。想一起改进项目，可以查看[贡献指南](CONTRIBUTING.md)和[开发文档](DEVELOPMENT.md)。
 
 ### 🤝 QQ 交流群
 
@@ -116,7 +116,7 @@ Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/fqa
 
 ### ❤️ 赞助
 
-如果什锦铺让你的阅读和追剧更方便，欢迎点个 [⭐ Star](https://github.com/ch6vip/fqapp/stargazers)。也可以通过[爱发电](https://afdian.com/a/ch6vip)、微信或支付宝请作者喝杯咖啡，支持后续更新。
+如果什锦铺让你的阅读和追剧更方便，欢迎点个 [⭐ Star](https://github.com/ch6vip/novel-sound/stargazers)。也可以通过[爱发电](https://afdian.com/a/ch6vip)、微信或支付宝请作者喝杯咖啡，支持后续更新。
 
 <p align="center">
   <a href=".github/wechat.png">
@@ -130,17 +130,17 @@ Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/fqa
 
 感谢每一位参与改进什锦铺的朋友。
 
-<a href="https://github.com/ch6vip/fqapp/graphs/contributors">
+<a href="https://github.com/ch6vip/novel-sound/graphs/contributors">
   <img src=".github/contributors.svg" alt="贡献者">
 </a>
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=ch6vip%2Ffqapp&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=ch6vip%2Fnovel-sound&type=date&legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip%2Ffqapp&type=date&theme=dark&legend=top-left">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip%2Ffqapp&type=date&legend=top-left">
-    <img src="https://api.star-history.com/chart?repos=ch6vip%2Ffqapp&type=date&legend=top-left" alt="什锦铺 Star History">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ch6vip%2Fnovel-sound&type=date&theme=dark&legend=top-left">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ch6vip%2Fnovel-sound&type=date&legend=top-left">
+    <img src="https://api.star-history.com/chart?repos=ch6vip%2Fnovel-sound&type=date&legend=top-left" alt="什锦铺 Star History">
   </picture>
 </a>
 
