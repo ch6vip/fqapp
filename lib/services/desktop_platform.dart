@@ -22,6 +22,7 @@ import '../widgets/desktop_login.dart';
 import 'desktop_media.dart';
 import 'app_log.dart';
 import 'platform_channel.dart';
+import 'linux_platform.dart';
 
 bool get isMediaDesktop =>
     !kIsWeb &&
@@ -34,9 +35,10 @@ bool get isWindowsDesktop =>
 /// On Windows an inactive window is still visible; it simply lacks input focus.
 /// Only hidden/paused/detached windows should defer foreground video playback.
 bool playbackAppIsActive(AppLifecycleState? state) =>
-    state == null ||
-    state == AppLifecycleState.resumed ||
-    (isMediaDesktop && state == AppLifecycleState.inactive);
+    !(isLinuxDesktop && DesktopSystemSession.instance.blocked) &&
+    (state == null ||
+        state == AppLifecycleState.resumed ||
+        (isMediaDesktop && state == AppLifecycleState.inactive));
 
 /// 桌面窗口只是失焦时，是否仍算「在前台」。
 ///
@@ -47,12 +49,44 @@ bool playbackAppIsActive(AppLifecycleState? state) =>
 /// 与 [playbackAppIsActive] 是同一件事的两处用法：那个管视频前台播放，这个
 /// 管阅读页的跟随与高亮。平台范围比它宽一点，三个桌面平台都成立。
 bool desktopInactiveStillVisible(AppLifecycleState state) =>
-    state == AppLifecycleState.resumed ||
-    ((!kIsWeb &&
-            (defaultTargetPlatform == TargetPlatform.windows ||
-                defaultTargetPlatform == TargetPlatform.macOS ||
-                defaultTargetPlatform == TargetPlatform.linux)) &&
-        state == AppLifecycleState.inactive);
+    !(isLinuxDesktop && DesktopSystemSession.instance.blocked) &&
+    (state == AppLifecycleState.resumed ||
+        ((!kIsWeb &&
+                (defaultTargetPlatform == TargetPlatform.windows ||
+                    defaultTargetPlatform == TargetPlatform.macOS ||
+                    defaultTargetPlatform == TargetPlatform.linux)) &&
+            state == AppLifecycleState.inactive));
+
+/// logind hints are observable, but compositor lock reliability is unverified.
+class DesktopSystemSession extends ChangeNotifier {
+  static final instance = DesktopSystemSession();
+  bool locked = false;
+  bool suspended = false;
+  bool serviceAvailable = false;
+  bool get blocked => locked || suspended;
+  void accept(dynamic event) {
+    if (event is! Map || event['value'] is! bool) return;
+    final value = event['value'] as bool;
+    switch (event['type']) {
+      case 'locked':
+        if (locked == value) return;
+        locked = value;
+      case 'suspend':
+        if (suspended == value) return;
+        suspended = value;
+      case 'service':
+        serviceAvailable = value;
+        if (!value) AppLog.w('session', 'logind 不可用，无法保证锁屏/挂起通知');
+      default:
+        return;
+    }
+    notifyListeners();
+  }
+
+  AppLifecycleState get lifecycle => blocked
+      ? AppLifecycleState.hidden
+      : WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+}
 
 class DesktopPlatform with WindowListener {
   DesktopPlatform._();
@@ -68,6 +102,7 @@ class DesktopPlatform with WindowListener {
   int _nextId = 1000000;
   bool _closing = false;
   Future<void> Function()? beforeClose;
+  Future<void> _awakeQueue = Future.value();
   bool _readerAwake = false;
   bool _playerAwake = false;
   String? _readerSession;
@@ -225,10 +260,7 @@ class DesktopPlatform with WindowListener {
           return {'playerId': id};
         }
         if (method == 'setKeepScreenOn') {
-          // Linux idle inhibition is a later batch.
-          if (!isWindowsDesktop) return null;
-          _playerAwake = args['on'] == true;
-          _updateAwake();
+          await _setAwake(player: args['on'] == true);
           return null;
         }
         if (method == 'startListenForeground') {
@@ -269,6 +301,21 @@ class DesktopPlatform with WindowListener {
           await _smtc?.disableSmtc();
           return null;
         }
+        if (isLinuxDesktop &&
+            !const {
+              'dispose',
+              'play',
+              'pause',
+              'seek',
+              'setRate',
+              'setVolume',
+              'getPlaybackSettings',
+            }.contains(method)) {
+          throw PlatformException(
+            code: 'unsupported_platform',
+            message: method,
+          );
+        }
         final id = (args['id'] as num?)?.toInt();
         final host = _players[id];
         if (method == 'dispose') {
@@ -278,6 +325,12 @@ class DesktopPlatform with WindowListener {
         }
         if (host == null) {
           throw PlatformException(code: 'player_closed', message: '播放器已关闭');
+        }
+        if (method == 'getPlaybackSettings') {
+          return {
+            'volume': host.player.state.volume / 100,
+            'rate': host.player.state.rate,
+          };
         }
         await host.command(method, args);
         return null;
@@ -387,6 +440,13 @@ class DesktopPlatform with WindowListener {
   }
 
   Future<dynamic> _reader(String method, Map args) async {
+    if (isLinuxDesktop &&
+        (method == 'setImmersive' || method == 'setBrightness')) {
+      throw PlatformException(
+        code: 'unsupported_platform',
+        message: 'Linux does not provide this Android device control',
+      );
+    }
     switch (method) {
       case 'start':
         _readerSession = args['session'] as String?;
@@ -395,21 +455,19 @@ class DesktopPlatform with WindowListener {
           const Duration(minutes: 1),
           (_) => _emit('fqapp/reader/events', _readerStatus()),
         );
-        _setBrightness(args['brightness']);
+        if (!isLinuxDesktop) _setBrightness(args['brightness']);
         return _readerStatus();
       case 'setBrightness':
         _setBrightness(args['brightness']);
         return true;
       case 'keepScreenOn':
-        _readerAwake = args['on'] == true;
-        _updateAwake();
+        await _setAwake(reader: args['on'] == true);
         return null;
       case 'stop':
       case 'suspend':
         _readerTimer?.cancel();
         readerBrightness.value = 1;
-        _readerAwake = false;
-        _updateAwake();
+        await _setAwake(reader: false);
         return null;
       case 'setImmersive':
         return null;
@@ -433,6 +491,9 @@ class DesktopPlatform with WindowListener {
         await File(file.path).copy(target.path);
         return {'path': target.path, 'name': file.name};
     }
+    if (isLinuxDesktop) {
+      throw PlatformException(code: 'unsupported_platform', message: method);
+    }
     return null;
   }
 
@@ -444,9 +505,33 @@ class DesktopPlatform with WindowListener {
   Map<String, dynamic> _readerStatus() => {
     'session': _readerSession,
     'timestamp': DateTime.now().millisecondsSinceEpoch,
-    'systemBrightness': 1.0,
+    if (!isLinuxDesktop) 'systemBrightness': 1.0,
   };
-  void _updateAwake() {
+  Future<void> _setAwake({bool? reader, bool? player}) {
+    final request = _awakeQueue.then((_) async {
+      final oldReader = _readerAwake, oldPlayer = _playerAwake;
+      _readerAwake = reader ?? oldReader;
+      _playerAwake = player ?? oldPlayer;
+      try {
+        await _updateAwake();
+      } catch (_) {
+        _readerAwake = oldReader;
+        _playerAwake = oldPlayer;
+        rethrow;
+      }
+    });
+    _awakeQueue = request.catchError((Object _) {});
+    return request;
+  }
+
+  Future<void> _updateAwake() async {
+    if (isLinuxDesktop) {
+      await const MethodChannel('fqapp/desktop_session').invokeMethod<void>(
+        'setKeepScreenOn',
+        {'on': _readerAwake || _playerAwake},
+      );
+      return;
+    }
     final call = DynamicLibrary.open('kernel32.dll')
         .lookupFunction<Uint32 Function(Uint32), int Function(int)>(
           'SetThreadExecutionState',

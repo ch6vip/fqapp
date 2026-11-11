@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/audio_preferences.dart';
@@ -9,6 +10,8 @@ import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/narration_sentence.dart';
 import 'package:fqapp/services/system_tts.dart';
+import 'package:fqapp/services/desktop_platform.dart';
+import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:fqapp/models/text_replacement_rule.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +27,30 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late List<MethodCall> calls;
   Completer<int>? initialization;
+
+  test(
+    'Linux volume clamps, persists and keeps other platform wire contracts',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      await SystemTts.initialize(await SystemTtsPreferences.load());
+      expect((calls.last.arguments as Map).containsKey('volume'), isFalse);
+      for (final value in [-1.0, 0.0, 0.5, 1.0, 2.0, double.nan]) {
+        final prefs = SystemTtsPreferences(volume: value);
+        await prefs.save();
+        final loaded = await SystemTtsPreferences.load();
+        expect(loaded.volume, prefs.safeVolume);
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+        await SystemTts.initialize(loaded);
+        expect((calls.last.arguments as Map)['volume'], prefs.safeVolume);
+      }
+      for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {
+        debugDefaultTargetPlatformOverride = platform;
+        await SystemTts.initialize(const SystemTtsPreferences());
+        expect((calls.last.arguments as Map).containsKey('volume'), isFalse);
+      }
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -41,6 +68,7 @@ void main() {
   });
 
   tearDown(() {
+    debugDefaultTargetPlatformOverride = null;
     messenger.setMockMethodCallHandler(_eventMethods, null);
     messenger.setMockMethodCallHandler(_methods, null);
     messenger.setMockMethodCallHandler(_playerMethods, null);
@@ -252,6 +280,92 @@ void main() {
         await tester.pump();
       }
     },
+  );
+
+  testWidgets(
+    'Linux visibility resumes only an automatically paused TTS session',
+    (tester) async {
+      await AudioPreferences.instance.setBackgroundPlayback(false);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final playback = session();
+      try {
+        playback.start();
+        await tester.pump();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        await tester.pump();
+        expect(playback.wantPlay, isTrue);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        await tester.pump();
+        expect(playback.wantPlay, isFalse);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(playback.wantPlay, isTrue);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        await tester.pump();
+        await playback.pause();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        expect(playback.wantPlay, isFalse);
+      } finally {
+        await playback.close();
+        await tester.pump();
+      }
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.linux),
+  );
+
+  testWidgets(
+    'Linux suspend reconnects TTS; owner replacement prevents revival',
+    (tester) async {
+      await AudioPreferences.instance.setBackgroundPlayback(true);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final playback = session();
+      final system = DesktopSystemSession.instance;
+      try {
+        playback.start();
+        await tester.pump();
+        expect(playback.wantPlay, isTrue);
+        system.accept({'type': 'locked', 'value': true});
+        await tester.pump();
+        expect(playback.wantPlay, isTrue);
+        system.accept({'type': 'suspend', 'value': true});
+        await tester.pump();
+        expect(playback.wantPlay, isFalse);
+        final initializations = calls
+            .where((c) => c.method == 'initialize')
+            .length;
+        system.accept({'type': 'locked', 'value': false});
+        await tester.pump();
+        expect(playback.wantPlay, isFalse);
+        system.accept({'type': 'suspend', 'value': false});
+        await tester.pump();
+        expect(playback.wantPlay, isTrue);
+        expect(
+          calls.where((c) => c.method == 'initialize').length,
+          greaterThan(initializations),
+        );
+        system.accept({'type': 'suspend', 'value': true});
+        await tester.pump();
+        final other = NativePlayer.allocateRemoteOwner();
+        NativePlayer.setRemoteCommandHandler(owner: other);
+        system.accept({'type': 'suspend', 'value': false});
+        await tester.pump();
+        expect(playback.wantPlay, isFalse);
+        NativePlayer.clearRemoteCommandHandler(owner: other);
+      } finally {
+        await playback.close();
+        system.accept({'type': 'locked', 'value': false});
+        system.accept({'type': 'suspend', 'value': false});
+        await tester.pump();
+      }
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.linux),
   );
 
   testWidgets('a temporary focus loss resumes once the focus comes back', (
