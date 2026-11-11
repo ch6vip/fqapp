@@ -181,6 +181,35 @@ void main() {
     await settle(tester);
   }
 
+  testWidgets('prompt source is inline and primary action fills input column', (
+    tester,
+  ) async {
+    await open(tester);
+    final title = tester.getRect(find.text('行为提示词'));
+    final source = tester.getRect(find.text('全局'));
+    final arrow = tester.getRect(find.byIcon(Icons.chevron_right));
+    expect(source.center.dy, closeTo(title.center.dy, 1));
+    expect(source.left, greaterThan(title.right));
+    expect(source.right, lessThan(arrow.left));
+    final inputWidth = tester.getSize(find.byType(AiSandboxField)).width;
+    expect(
+      tester.getSize(find.widgetWithText(FilledButton, '开始测试')).width,
+      closeTo(inputWidth, 1),
+    );
+    await tester.tap(find.text('行为提示词'));
+    await settle(tester);
+    await tester.enterText(find.byType(TextField), '本次校对规则');
+    await tester.tap(find.text('使用'));
+    await settle(tester);
+    expect(
+      tester.getCenter(find.text('本次自定义')).dy,
+      closeTo(tester.getCenter(find.text('行为提示词')).dy, 1),
+    );
+    expect(find.text('查看本次请求'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await settle(tester);
+  });
+
   testWidgets('custom behavior, restore and discarded drafts stay local', (
     tester,
   ) async {
@@ -294,6 +323,27 @@ void main() {
       await settle(tester);
       expect(find.textContaining('思考中'), findsOneWidget);
       expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await settle(tester);
+      final startRect = tester.getRect(find.byType(FilledButton));
+      final stopRect = tester.getRect(
+        find.widgetWithText(OutlinedButton, '停止'),
+      );
+      expect(
+        startRect.width,
+        closeTo(tester.getSize(find.byType(AiSandboxField)).width, 1),
+      );
+      expect(stopRect.top, greaterThan(startRect.bottom));
+      expect(tester.takeException(), isNull);
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+      await settle(tester);
       final system =
           (client.body!['messages'] as List).first['content'] as String;
       expect(
@@ -339,6 +389,76 @@ void main() {
       await visible(tester, find.text('测试完成'));
       expect(find.text('0 处修改'), findsOneWidget);
       expect(find.text('150 tokens'), findsOneWidget);
+      final result = tester
+          .widget<AiSandboxResultView>(find.byType(AiSandboxResultView))
+          .result!;
+      expect(result.request!.settings.modelId, 'fixture-model');
+      expect(result.request!.behaviorSource, '全局提示词');
+      expect(find.text('上次结果'), findsOneWidget);
+      expect(find.text('fixture-model · 全局提示词 · 去屏蔽词开启'), findsOneWidget);
+      await visible(tester, find.text('查看请求'));
+      await tester.tap(find.text('查看请求'));
+      await settle(tester);
+      expect(find.text('当前配置预览'), findsOneWidget);
+      expect(find.text('Fixture / other-model'), findsOneWidget);
+      expect(find.textContaining('后来修改的全局规则'), findsOneWidget);
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await visible(tester, find.text('查看本次请求'));
+      await tester.tap(find.text('查看本次请求'));
+      await settle(tester);
+      expect(find.text('本次请求快照'), findsOneWidget);
+      expect(find.text('Fixture / fixture-model'), findsOneWidget);
+      expect(find.text(system), findsOneWidget);
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await tester.enterText(find.byType(TextField), '下一次的正文');
+      await visible(tester, find.text('行为提示词'));
+      await tester.tap(find.text('行为提示词'));
+      await settle(tester);
+      await tester.enterText(find.byType(TextField), '下一次自定义规则');
+      await tester.tap(find.text('使用'));
+      await settle(tester);
+      await tester.tap(find.byType(SwitchListTile));
+      await settle(tester);
+      expect(
+        tester
+            .widget<AiSandboxResultView>(find.byType(AiSandboxResultView))
+            .result,
+        same(result),
+      );
+      expect(result.request!.source, aiSandboxSample);
+      expect(result.request!.behavior, '全局校对规则');
+      expect(result.request!.restore, isTrue);
+      await visible(tester, find.text('查看请求'));
+      await tester.tap(find.text('查看请求'));
+      await settle(tester);
+      expect(find.text('当前配置预览'), findsOneWidget);
+      expect(
+        find.text(
+          aiBuildSystemPrompt(
+            behaviorPrompt: '下一次自定义规则',
+            outputMode: AiOutputMode.jsonObject,
+            restoreCensoredWords: false,
+          ),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('User'));
+      await settle(tester);
+      expect(find.text('下一次的正文'), findsOneWidget);
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await visible(tester, find.text('查看本次请求'));
+      await tester.tap(find.text('查看本次请求'));
+      await settle(tester);
+      expect(find.text(system), findsOneWidget);
+      await tester.tap(find.text('User'));
+      await settle(tester);
+      expect(find.text(aiSandboxSample), findsOneWidget);
+      await tester.tap(find.byTooltip('返回'));
+      await settle(tester);
+      await visible(tester, find.text('原始 JSON'));
       await tester.tap(find.text('原始 JSON'));
       await settle(tester);
       expect(
@@ -437,6 +557,43 @@ void main() {
   });
 
   testWidgets(
+    'blocked test keeps configuration without claiming a sent request',
+    (tester) async {
+      final client = (await tester.runAsync(() async => _SseClient()))!;
+      await tester.runAsync(
+        () => settings.saveGlobal(settings.global.copyWith(enabled: false)),
+      );
+      await open(tester, client: client);
+      await visible(tester, find.widgetWithText(FilledButton, '开始测试'));
+      final callback =
+          tester
+                  .widget<FilledButton>(
+                    find.widgetWithText(FilledButton, '开始测试'),
+                  )
+                  .onPressed!
+              as Future<void> Function();
+      await tester.runAsync(
+        () => callback().timeout(const Duration(seconds: 5)),
+      );
+      await settle(tester);
+      final result = tester
+          .widget<AiSandboxResultView>(find.byType(AiSandboxResultView))
+          .result!;
+      expect(result.requests, 0);
+      expect(result.request!.settings.modelId, 'fixture-model');
+      expect(client.calls, 0);
+      expect(find.text('查看本次请求'), findsNothing);
+      await visible(tester, find.text('查看请求'));
+      await tester.tap(find.text('查看请求'));
+      await settle(tester);
+      expect(find.text('当前配置预览'), findsOneWidget);
+      expect(find.text('本次请求快照'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settle(tester);
+    },
+  );
+
+  testWidgets(
     'budget confirmation sends exactly one manually approved request',
     (tester) async {
       final client = (await tester.runAsync(() async => _SseClient()))!;
@@ -462,6 +619,7 @@ void main() {
       await settle(tester);
       expect(find.text('本次请求将超出预算'), findsOneWidget);
       expect(client.calls, 0);
+      expect(find.text('查看本次请求'), findsNothing);
       await tester.tap(find.text('仍然请求'));
       await tester.runAsync(() async {
         await client.received.future.timeout(const Duration(seconds: 5));
