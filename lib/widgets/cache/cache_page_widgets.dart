@@ -81,11 +81,14 @@ class CacheEmptyState extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    // 全页空态把块体抬到视觉重心（页面顶栏已占据顶部，纯居中会偏低）。
+    this.alignment = const Alignment(0, -0.2),
   });
 
   final IconData icon;
   final String title;
   final String message;
+  final AlignmentGeometry alignment;
 
   @override
   Widget build(BuildContext context) => HomeStateView(
@@ -93,6 +96,7 @@ class CacheEmptyState extends StatelessWidget {
     title: title,
     message: message,
     scrollable: true,
+    alignment: alignment,
   );
 }
 
@@ -102,10 +106,12 @@ class CacheErrorState extends StatelessWidget {
     super.key,
     required this.message,
     required this.onRetry,
+    this.alignment = const Alignment(0, -0.2),
   });
 
   final String message;
   final VoidCallback onRetry;
+  final AlignmentGeometry alignment;
 
   @override
   Widget build(BuildContext context) => HomeStateView(
@@ -116,5 +122,6 @@ class CacheErrorState extends StatelessWidget {
     actionIcon: LucideIcons.rotate_ccw,
     onAction: onRetry,
     scrollable: true,
+    alignment: alignment,
   );
 }

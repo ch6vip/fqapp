@@ -30,12 +30,25 @@ import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
 import 'package:fqapp/widgets/classic_shell_dock.dart';
 import 'package:fqapp/widgets/desktop_app_frame.dart';
 import 'package:fqapp/widgets/desktop_settings_body.dart';
-import 'package:fqapp/widgets/lazy_indexed_stack.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/shell_dock.dart';
 
 import 'support/app_ui_host.dart';
 import 'support/fakes.dart';
+
+/// 移动端壳层的页面容器是 Stack + Offstage：当前 tab 是唯一 offstage=false
+/// 的页（替代原 LazyIndexedStack.index / PageController.page）。
+int rootTab(WidgetTester tester, {bool skipOffstage = true}) {
+  for (var i = 0; i < 4; i++) {
+    final finder = find.byKey(
+      ValueKey('root-tab-offstage-$i'),
+      skipOffstage: skipOffstage,
+    );
+    if (finder.evaluate().isEmpty) continue;
+    if (!tester.widget<Offstage>(finder).offstage) return i;
+  }
+  fail('no visible root tab found');
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -86,21 +99,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(RootShell), findsOneWidget);
-    expect(find.byType(LazyIndexedStack), findsOneWidget);
+    expect(find.byKey(const ValueKey('root-page-stack')), findsOneWidget);
     expect(backendStarts, isNotEmpty);
     expect(find.byType(HomePage), findsOneWidget);
 
     final rootShellState = tester.state(find.byType(RootShell));
-    final stackState = tester.state(find.byType(LazyIndexedStack));
+    final stackElement = tester.element(
+      find.byKey(const ValueKey('root-page-stack')),
+    );
     final homeState = tester.state(find.byType(HomePage));
     final rootNavigator = tester.state<NavigatorState>(
       find.byType(Navigator).first,
     );
 
-    Finder dockLabel(String label) => find.descendant(
-      of: find.byType(ShellDock),
-      matching: find.text(label),
-    );
+    Finder dockLabel(String label) =>
+        find.descendant(of: find.byType(ShellDock), matching: find.text(label));
 
     await tester.tap(dockLabel('书架'));
     await tester.pumpAndSettle();
@@ -111,9 +124,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(MinePage), findsOneWidget);
     final mineState = tester.state(find.byType(MinePage));
-    final currentTab = tester
-        .widget<LazyIndexedStack>(find.byType(LazyIndexedStack))
-        .index;
+    final currentTab = rootTab(tester);
     expect(currentTab, 3);
 
     final chapterLoads = <String>[];
@@ -141,9 +152,7 @@ void main() {
     expect(find.byType(ReaderPage), findsOneWidget);
     expect(find.textContaining('这是 第一章 的正文。'), findsOneWidget);
     final readerState = tester.state(find.byType(ReaderPage));
-    final readerRoute = ModalRoute.of(
-      tester.element(find.byType(ReaderPage)),
-    );
+    final readerRoute = ModalRoute.of(tester.element(find.byType(ReaderPage)));
     final loadsBeforeSwitch = List<String>.of(chapterLoads);
     expect(loadsBeforeSwitch, isNotEmpty);
 
@@ -155,8 +164,10 @@ void main() {
         reason: label,
       );
       expect(
-        tester.state(find.byType(LazyIndexedStack, skipOffstage: false)),
-        same(stackState),
+        tester.element(
+          find.byKey(const ValueKey('root-page-stack'), skipOffstage: false),
+        ),
+        same(stackElement),
         reason: label,
       );
       expect(
@@ -174,25 +185,13 @@ void main() {
         same(mineState),
         reason: label,
       );
-      expect(
-        tester
-            .widget<LazyIndexedStack>(
-              find.byType(LazyIndexedStack, skipOffstage: false),
-            )
-            .index,
-        currentTab,
-        reason: label,
-      );
+      expect(rootTab(tester, skipOffstage: false), currentTab, reason: label);
       expect(
         tester.state<NavigatorState>(find.byType(Navigator).first),
         same(rootNavigator),
         reason: label,
       );
-      expect(
-        find.byType(ReaderPage),
-        findsOneWidget,
-        reason: label,
-      );
+      expect(find.byType(ReaderPage), findsOneWidget, reason: label);
       expect(
         tester.state(find.byType(ReaderPage, skipOffstage: false)),
         same(readerState),
@@ -214,8 +213,8 @@ void main() {
         'RootShell': tester.element(
           find.byType(RootShell, skipOffstage: false),
         ),
-        'LazyIndexedStack': tester.element(
-          find.byType(LazyIndexedStack, skipOffstage: false),
+        'root stack': tester.element(
+          find.byKey(const ValueKey('root-page-stack'), skipOffstage: false),
         ),
         'HomePage tab': tester.element(
           find.byType(HomePage, skipOffstage: false),
@@ -245,10 +244,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ReaderPage), findsNothing);
     expect(find.byType(MinePage), findsOneWidget);
-    expect(
-      tester.widget<LazyIndexedStack>(find.byType(LazyIndexedStack)).index,
-      currentTab,
-    );
+    expect(rootTab(tester), currentTab);
     expect(
       tester.state<NavigatorState>(find.byType(Navigator).first),
       same(rootNavigator),
@@ -327,9 +323,7 @@ void main() {
       // A real settings subpage pushed on the nested Navigator.
       unawaited(
         nestedNavigator.push(
-          MaterialPageRoute<void>(
-            builder: (_) => const TextReplacementPage(),
-          ),
+          MaterialPageRoute<void>(builder: (_) => const TextReplacementPage()),
         ),
       );
       await tester.pumpAndSettle();
@@ -383,17 +377,10 @@ void main() {
           'TextReplacementPage': tester.element(
             find.byType(TextReplacementPage),
           ),
-          '主题 row': tester.element(
-            find.widgetWithText(SettingsRow, '主题'),
-          ),
+          '主题 row': tester.element(find.widgetWithText(SettingsRow, '主题')),
         };
         for (final entry in contexts.entries) {
-          _expectLiveScope(
-            entry.value,
-            expected,
-            store,
-            '$label ${entry.key}',
-          );
+          _expectLiveScope(entry.value, expected, store, '$label ${entry.key}');
         }
       }
 
@@ -464,16 +451,13 @@ Widget _withFakeHome(Widget child) => ProviderScope(
       () => HomeNotifier(
         usesLocalTabs: true,
         homepageLoader:
-            ({
-              int tabType = 2,
-              int offset = 0,
-              String? sessionId,
-            }) async => const HomepagePage(
-              items: [],
-              cells: [],
-              nextOffset: null,
-              sessionId: null,
-            ),
+            ({int tabType = 2, int offset = 0, String? sessionId}) async =>
+                const HomepagePage(
+                  items: [],
+                  cells: [],
+                  nextOffset: null,
+                  sessionId: null,
+                ),
         searchLoader: (query, {int page = 1}) async => const [],
       ),
     ),

@@ -66,7 +66,22 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     };
   }
 
+  /// 空态锚点补偿用的动态头部总高：筛选状态栏定高（行内文字已钳制
+  /// 1.3 倍内，定高恒成立）；缓存扫描行只在扫描未完成时占高（完成后
+  /// 是 SizedBox.shrink），高度随 textScaler 与实际渲染同源计算。
+  double get _classicDynamicHeaderHeight {
+    var height = 0.0;
+    if (_classicHasFilters) height += ShelfTokens.filterStatusHeight;
+    if (_tab != 1 &&
+        ShelfViewStore.instance.state.source == ShelfSourceFilter.cached &&
+        !_cacheScanComplete) {
+      height += shelfCacheStatusHeight(context);
+    }
+    return height;
+  }
+
   Widget _classicEmptyState() {
+    final headerHeight = _classicDynamicHeaderHeight;
     final category = _tab == 0 ? _category : ShelfCategory.all;
     // A selected group is empty only when no shelf entry belongs to it at all.
     // Other active filters must keep the generic "没有符合筛选" copy: the
@@ -90,6 +105,7 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
         actionKey: const Key('shelf-browse-button'),
         onAction: widget.onBrowse,
         onCachedBooks: _openCachedBooks,
+        headerHeight: headerHeight,
       );
     }
     if (_tab == 2 &&
@@ -102,9 +118,10 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
           'manju' => '暂无漫剧',
           _ => '暂无收藏内容',
         },
-        actionLabel: '找短剧',
+        actionLabel: _collectionFilter == 'manju' ? '找漫剧' : '找短剧',
         actionKey: const Key('collection-find-drama-button'),
         onAction: widget.onFindDrama,
+        headerHeight: headerHeight,
       );
     }
     final filtered = _classicHasFilters;
@@ -125,6 +142,7 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
       actionLabel: filtered ? '清除筛选' : null,
       actionKey: const Key('shelf-clear-filters'),
       onAction: _clearFilters,
+      headerHeight: headerHeight,
     );
   }
 
