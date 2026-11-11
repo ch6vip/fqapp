@@ -62,6 +62,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
     return AiSandboxRequest(
       source: snapshot.requestText,
       behavior: _customBehavior ?? _globalBehavior,
+      behaviorSource: _customBehavior == null ? '全局提示词' : '本次自定义提示词',
       restore: _restore,
       settings: effective,
       provider: _settings.provider(effective.providerId),
@@ -100,14 +101,24 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
     );
   }
 
-  void _viewRequest() {
+  bool get _previousResult {
+    final request = _result?.request;
+    if (request == null) return false;
     try {
-      final request = _request ?? _capture();
+      return !request.hasSameInputs(_capture());
+    } on AiSnapshotException {
+      return true;
+    }
+  }
+
+  void _viewRequest({AiSandboxRequest? resultRequest}) {
+    try {
+      final request = resultRequest ?? (_running ? _request! : _capture());
       Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => AiSandboxRequestPage(
             request: request,
-            captured: _request != null,
+            captured: resultRequest != null || _running,
           ),
         ),
       );
@@ -209,6 +220,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
           _result = AiSandboxResult(
             title: cancel.isCompleted ? '测试已停止' : '测试失败',
             source: request.source,
+            request: request,
             elapsed: watch.elapsed,
             message: '测试请求未完成：$error',
           );
@@ -220,9 +232,11 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
       if (mounted) {
         setState(() {
           _running = false;
+          _request = null;
           _result ??= AiSandboxResult(
             title: '测试已停止',
             source: request.source,
+            request: request,
             elapsed: watch.elapsed,
             requests: 0,
           );
@@ -244,6 +258,7 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
             : result.ok
             ? '测试完成'
             : '测试失败',
+        request: request,
         source: result.snapshot.requestText,
         raw: result.rawResponse,
         validation: result.validation,
@@ -327,13 +342,25 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('行为提示词'),
-                  subtitle: Text(_customBehavior == null ? '全局' : '本次自定义'),
-                  trailing: const Icon(Icons.chevron_right),
-                  enabled: !_running,
+                InkWell(
                   onTap: _running ? null : _editBehavior,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Row(
+                      children: [
+                        const Expanded(child: Text('行为提示词')),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            _customBehavior == null ? '全局' : '本次自定义',
+                            textAlign: TextAlign.end,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                  ),
                 ),
                 const Divider(height: 1),
                 SwitchListTile(
@@ -348,26 +375,45 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
                         }),
                 ),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton(
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final start = FilledButton(
                       onPressed: _running ? null : _run,
                       child: Text(
                         _running
                             ? '$_stage${progress == null ? '…' : ' ${progress.exact ? '' : '约 '}${progress.estimatedTokens} tokens'}'
                             : '开始测试',
                       ),
-                    ),
-                    if (_running)
-                      OutlinedButton(onPressed: _stop, child: const Text('停止')),
-                  ],
+                    );
+                    final stop = OutlinedButton(
+                      onPressed: _stop,
+                      child: const Text('停止'),
+                    );
+                    if (_running &&
+                        constraints.maxWidth <
+                            260 *
+                                MediaQuery.textScalerOf(context).scale(14) /
+                                14) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [start, const SizedBox(height: 8), stop],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: start),
+                        if (_running) ...[const SizedBox(width: 12), stop],
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
             result: AiSandboxResultView(
               result: _result,
+              previous: _previousResult,
+              onViewRequest: () =>
+                  _viewRequest(resultRequest: _result!.request),
               onValidate: () => _openJson(useResponse: true),
             ),
           ),

@@ -15,13 +15,23 @@ class AiSandboxRequest {
     required this.restore,
     required this.settings,
     required this.provider,
+    required this.behaviorSource,
   });
   final String source;
   final String behavior;
+  final String behaviorSource;
   final bool restore;
   final AiEffectiveSettings settings;
   final AiProviderProfile? provider;
   AiOutputMode get mode => provider?.outputMode ?? AiOutputMode.jsonObject;
+  bool hasSameInputs(AiSandboxRequest other) =>
+      source == other.source &&
+      behavior == other.behavior &&
+      behaviorSource == other.behaviorSource &&
+      restore == other.restore &&
+      settings.modelId == other.settings.modelId &&
+      jsonEncode(provider?.toJson()) == jsonEncode(other.provider?.toJson());
+
   List<Map<String, String>> get messages => aiBuildChatMessages(
     behaviorPrompt: behavior,
     outputMode: mode,
