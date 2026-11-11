@@ -33,6 +33,9 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      # The first step runs before any checkout, so there is no git remote for
+      # gh to infer the repository from; GH_REPO is the only thing gh reads.
+      GH_REPO: ${{ github.repository }}
       SHA: ${{ github.event.workflow_run.head_sha }}
       PREVIEW_TAG: preview
       # Formal signing certificate (SHA-256) every APK must carry, so a
