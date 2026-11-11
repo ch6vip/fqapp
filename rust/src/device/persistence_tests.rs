@@ -502,3 +502,44 @@ async fn usage_only_picks_are_debounced_until_a_structural_save() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A separate process keeps the global FRB pool key isolated from legacy tests.
+#[test]
+fn linux_runtime_pool_preserves_ciphertext_on_key_failure() {
+    if std::env::var_os("FQAPP_STRICT_POOL_CHILD").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg(
+                "device::persistence_tests::linux_runtime_pool_preserves_ciphertext_on_key_failure",
+            )
+            .arg("--exact")
+            .env("FQAPP_STRICT_POOL_CHILD", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let dir = temp_dir("strict-key");
+        let path = dir.join("device_pool.json");
+        assert!(
+            DevicePool::build_with_policy(&path, None, String::new(), true)
+                .await
+                .is_err()
+        );
+        pool_crypto::provision_pool_key(vec![7; 32]).unwrap();
+        let original = pool_crypto::encrypt_pool_file(pool_json(2).as_bytes()).unwrap();
+        tokio::fs::write(&path, &original).await.unwrap();
+        let pool = DevicePool::build_with_policy(&path, None, String::new(), true)
+            .await
+            .unwrap();
+        pool_crypto::provision_pool_key(vec![8; 32]).unwrap();
+        assert!(
+            DevicePool::build_with_policy(&path, None, String::new(), true)
+                .await
+                .is_err()
+        );
+        assert!(pool.save().await.is_err());
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), original);
+        std::fs::remove_dir_all(dir).unwrap();
+    });
+}
