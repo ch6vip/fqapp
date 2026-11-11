@@ -1,10 +1,11 @@
+import '../native_secure_key_storage.dart';
 import '../secure_key_provider.dart';
 
 /// API keys live only in platform secure storage. The settings box stores a
 /// random `credentialRef`; backups and logs never contain this value.
 class AiCredentialStore {
   AiCredentialStore({SecureKeyStorage? storage})
-    : _storage = storage ?? const FlutterSecureKeyStorage();
+    : _storage = storage ?? defaultSecureKeyStorage();
 
   static final instance = AiCredentialStore();
   static const _prefix = 'fqapp_ai_credential_';

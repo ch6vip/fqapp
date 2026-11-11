@@ -96,6 +96,7 @@ void main() {
           chapters: _chapters,
           startIndex: 0,
           readerStore: MemoryReaderStore(),
+          cache: MemoryChapterCache(),
           chapterLoader: (chapter) async => const [
             ComicImage(url: 'memory://page-1'),
           ],

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:http/http.dart' as http;
@@ -17,6 +16,8 @@ import 'package:fqapp/services/ai_reading/ai_settings.dart';
 import 'package:fqapp/services/ai_reading/ai_store.dart';
 import 'package:fqapp/services/ai_reading/ai_trials.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
+
+import '../support/secure_key_storage_mock.dart';
 
 const _behavior = '请按上下文润色。';
 final _chapters = [
@@ -58,7 +59,7 @@ void main() {
   late Directory directory;
 
   setUpAll(() async {
-    FlutterSecureStorage.setMockInitialValues({});
+    mockSecureKeyStorage();
     directory = await Directory.systemTemp.createTemp('ai-trial-config-');
     Hive.init(directory.path);
     await settings.init();

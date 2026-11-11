@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 
@@ -12,6 +11,8 @@ import 'package:fqapp/services/ai_reading/ai_models.dart';
 import 'package:fqapp/services/ai_reading/ai_settings.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 
+import '../support/secure_key_storage_mock.dart';
+
 /// The consent row is a single withdraw-only entry shown only after consent was
 /// granted from the AI master switch dialog. Persisted settings serialise writes,
 /// so this file keeps one consent state and walks grant -> withdraw in order.
@@ -21,7 +22,7 @@ void main() {
   final settings = AiSettingsStore.instance;
 
   setUpAll(() async {
-    FlutterSecureStorage.setMockInitialValues({});
+    mockSecureKeyStorage();
     directory = await Directory.systemTemp.createTemp('ai-settings-consent-');
     Hive.init(directory.path);
     await settings.init();
