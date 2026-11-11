@@ -315,17 +315,10 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
             input: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 8,
-                  children: [
-                    Text('${provider?.label ?? '未选择提供商'}\n${model ?? '未选择模型'}'),
-                    TextButton(
-                      onPressed: _viewRequest,
-                      child: const Text('查看请求'),
-                    ),
-                  ],
+                AiSandboxProviderSummary(
+                  provider: provider?.label ?? '未选择提供商',
+                  model: model ?? '未选择模型',
+                  onViewRequest: _viewRequest,
                 ),
                 const SizedBox(height: 12),
                 AiSandboxField(
