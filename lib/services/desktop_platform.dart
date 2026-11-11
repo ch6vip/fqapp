@@ -643,6 +643,10 @@ String decodeDesktopText(Uint8List bytes) {
 class _DesktopPlayer {
   _DesktopPlayer(this.id, this.emit) {
     video = VideoController(player);
+    // media_kit initializes textures after a frame, including on an idle window.
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      WidgetsBinding.instance.scheduleFrame();
+    }
     void event(String type, dynamic value) {
       if (!disposed) emit({'playerId': id, 'type': type, 'value': value});
     }
