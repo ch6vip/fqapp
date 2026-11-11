@@ -1183,3 +1183,30 @@ Linux 密钥操作等待真实完成，避免超时后迟到写与重试产生�
 XDG_CACHE_HOME、XDG_RUNTIME_DIR，并使用私有 D-Bus 与临时 keyring；仅改 HOME
 仍可能连接日常会话的密钥服务。虚拟显示器的启动结果不能替代实际 GPU、
 Wayland/X11 桌面、媒体或音频验收。
+
+### Linux 实验性媒体（第二批，依赖 Linux runtime base）
+
+Linux 复用桌面 media_kit 播放器，增加锁定的 media_kit_libs_linux 1.2.1。
+需系统 libmpv（Arch 的 mpv 包）；构建时检查库存在，不下载另一套 allocator。
+Rust/C CENC 使用 PIC 并与 core 一起构建。FRB 与媒体 FFI 从可执行文件相邻的
+绝对 lib/libfqapi_core.so 加载，不依赖启动 cwd。Windows/Android 加载与代理
+策略保留；Linux 沿用 reqwest 环境路由，不新增应用代理设置语义。
+
+听书支持普通 URI 与 CENC loopback Range、暂停、seek、倍速和销毁。
+关闭窗口在首批刷盘/后端关闭后释放全部播放器；创建期间销毁会关闭迟到会话。
+Linux 视频入口仍为 unavailable，等待真实图形播放验证再开放。
+TTS、MPRIS、portal、锁屏/挂起恢复与 idle inhibition 不在本批；播放器通知和
+保亮请求无系统集成效果。合成媒体 null 输出不证明物理声卡、GPU、Wayland。
+
+离线验证：构建 core 后，以 FQAPP_MEDIA_LIBRARY 指向 bundle 中绝对 core 路径，
+运行 python3 scripts/verify_windows_media.py；它复用 Windows 实际 FFI 合成媒体
+验证，覆盖本地/HTTP CENC、导出明文字节的音视频帧一致性、随机 Range、安全
+边界及会话撤销，只写 build/。然后设置 FQAPP_TEST_MEDIA 为生成的
+build/validation/windows-media/decoded.mp4 绝对路径，运行
+flutter test --no-pub --concurrency=1 test/desktop_media_playback_test.dart，
+验证实际 libmpv 播放、暂停、seek、倍速、完成及释放。
+
+上游门：flutter analyze --no-pub、flutter test --concurrency=1、
+cargo test --manifest-path rust/Cargo.toml --locked。资源受限机器串行执行，
+使用 systemd scope 限制 CPU/内存及 CARGO_BUILD_JOBS=2、
+CMAKE_BUILD_PARALLEL_LEVEL=2。隔离 HOME/keyring，不读取真实账号/媒体缓存。

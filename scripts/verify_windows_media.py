@@ -8,6 +8,7 @@ import http.client
 import http.server
 import json
 import pathlib
+import os
 import random
 import subprocess
 import threading
@@ -18,7 +19,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / 'build' / 'validation' / 'windows-media'
 OUTPUT.mkdir(parents=True, exist_ok=True)
-LIB = ctypes.CDLL(str(ROOT / 'rust/target/release/fqapi_core.dll'))
+LIB = ctypes.CDLL(os.environ.get('FQAPP_MEDIA_LIBRARY', str(ROOT / 'rust/target/release/fqapi_core.dll')))
 LIB.fq_desktop_media_open.argtypes = [ctypes.c_char_p]
 LIB.fq_desktop_media_open.restype = ctypes.c_void_p
 LIB.fq_desktop_media_free.argtypes = [ctypes.c_void_p]

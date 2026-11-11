@@ -211,7 +211,10 @@ class _AudioPlaybackController extends ChangeNotifier
     );
     _history = AudioHistory(request.historyStore ?? LibraryStore.instance);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    _appActive = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    _appActive =
+        lifecycle == null ||
+        lifecycle == AppLifecycleState.resumed ||
+        (isLinuxDesktop && lifecycle == AppLifecycleState.inactive);
     _bookId = request.bookId;
     _title = request.title;
     _cover = request.cover;
@@ -454,7 +457,9 @@ class _AudioPlaybackController extends ChangeNotifier
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_closed) return;
-    _appActive = state == AppLifecycleState.resumed;
+    _appActive =
+        state == AppLifecycleState.resumed ||
+        (isLinuxDesktop && state == AppLifecycleState.inactive);
     if (!_appActive) {
       // 切换到后台或锁屏时立即持久化当前进度，防止后续被系统杀后台导致进度丢失。
       unawaited(_persistProgress());
