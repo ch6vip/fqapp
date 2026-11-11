@@ -97,18 +97,15 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
           ],
           child: Padding(
             padding: const EdgeInsets.only(right: ShelfTokens.screenPadding),
+            // 48×48 matches the M3 IconButton the search button actually
+            // renders as; with the end-aligned row this keeps both glyph
+            // centers on the same baseline (a shorter box would sink the
+            // dots below it).
             child: SizedBox(
-              width: 42,
-              height: 42,
+              width: 48,
+              height: 48,
               child: Center(
-                child: Transform.translate(
-                  offset: const Offset(0, -1),
-                  child: Icon(
-                    LucideIcons.ellipsis,
-                    size: 22,
-                    color: palette.ink,
-                  ),
-                ),
+                child: Icon(LucideIcons.ellipsis, size: 22, color: palette.ink),
               ),
             ),
           ),
@@ -276,30 +273,43 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
 
   /// No permanent archive toolbar. Applied filters must nevertheless never be
   /// invisible, including a category selected while the archive was active.
-  Widget _classicFilterStatus(HomePalette palette) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: ShelfTokens.screenPadding),
-    child: Row(
-      key: const Key('classic-shelf-active-filters'),
-      children: [
-        Icon(Icons.filter_list, size: 13, color: palette.muted),
-        const SizedBox(width: 5),
-        Expanded(
-          child: Text(
-            '已筛选${_category == ShelfCategory.all ? '' : ' · ${ShelfGroupStore.instance.nameOf(_category)}'}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: ShelfTokens.subtitle,
-              color: palette.muted,
+  Widget _classicFilterStatus(HomePalette palette) => SizedBox(
+    // 定高等于 M3 TextButton 默认 40：与 [ShelfTokens.filterStatusHeight]
+    // 互为约定，空态锚点按它补偿。
+    height: ShelfTokens.filterStatusHeight,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: ShelfTokens.screenPadding,
+      ),
+      // 辅助功能大字号（iOS 可达 ~3x）下 TextButton 标签固有高度
+      // （14 × 3 × 1.43 ≈ 60）会超过 40 定高向行外溢出；钳制 1.3 倍
+      // （≈26 < 40）保住定高契约，与 dock 入口的钳制做法一致。
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.3,
+        child: Row(
+          key: const Key('classic-shelf-active-filters'),
+          children: [
+            Icon(Icons.filter_list, size: 13, color: palette.muted),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                '已筛选${_category == ShelfCategory.all ? '' : ' · ${ShelfGroupStore.instance.nameOf(_category)}'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: ShelfTokens.subtitle,
+                  color: palette.muted,
+                ),
+              ),
             ),
-          ),
+            TextButton(
+              key: const Key('classic-shelf-clear-filters'),
+              onPressed: _clearFilters,
+              child: const Text('清除筛选'),
+            ),
+          ],
         ),
-        TextButton(
-          key: const Key('classic-shelf-clear-filters'),
-          onPressed: _clearFilters,
-          child: const Text('清除筛选'),
-        ),
-      ],
+      ),
     ),
   );
 

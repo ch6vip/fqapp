@@ -28,6 +28,12 @@ class ShelfTokens {
   /// 编辑态顶部操作栏高度（全选 / 已选择 N 本 / 完成）。
   static const double editBarHeight = 52.0;
 
+  /// 经典书架筛选状态栏（“已筛选 · 清除筛选”）定高：M3 TextButton 默认
+  /// 40。定高让空态锚点补偿有稳定基准；行内文字经
+  /// MediaQuery.withClampedTextScaling 钳制在 1.3 倍内（14 × 1.3 × 1.43
+  /// ≈ 26 < 40），辅助功能大字号下也不溢出定高，与 dock 入口同一套做法。
+  static const double filterStatusHeight = 40.0;
+
   /// 宫格 / 双列封面圆角。
   static const double radiusCover = 10.0;
 
@@ -209,6 +215,13 @@ double shelfDoubleCellWidth(double availableWidth) => math.max(
 /// 双列类型小标签的实测高度（10sp 文本 + 上下 3dp 内边距）。
 double shelfKindTagHeight(BuildContext context) =>
     MediaQuery.textScalerOf(context).scale(ShelfTokens.kindTagSize) * 1.2 + 6;
+
+/// 经典书架缓存扫描提示行的实测高度（top 6 + 12px 文字 × 1.4 行高，
+/// 渲染见 library_shelf_chrome.dart 的 _cacheStatus）：文字部分随
+/// textScaler 缩放，空态锚点补偿必须与实际渲染同源，否则大字号下
+/// 少补、锚点漂移（与 [shelfKindTagHeight] 同一套做法）。
+double shelfCacheStatusHeight(BuildContext context) =>
+    6 + MediaQuery.textScalerOf(context).scale(12) * 1.4;
 
 /// 双列整卡高度：卡片内边距 + 封面 + 标题 1 行 + 副信息 1 行 + 类型标签。
 double shelfDoubleChildAspectRatio(
