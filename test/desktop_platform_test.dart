@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/desktop_platform.dart';
+import 'package:fqapp/services/book_txt_export.dart';
 import 'package:fqapp/services/desktop_media.dart';
 import 'package:flutter/foundation.dart';
 import 'package:fqapp/services/platform_channel.dart';
@@ -433,6 +434,90 @@ void main() {
       ),
     );
   });
+
+  test(
+    'Linux TXT sink saves UTF-8 and reports cancellation and failures',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const selector = MethodChannel('plugins.flutter.io/file_selector');
+      const window = MethodChannel('window_manager');
+      messenger.setMockMethodCallHandler(window, (_) async => null);
+      final directory = await Directory.systemTemp.createTemp(
+        'linux-text-export-',
+      );
+      addTearDown(() async {
+        messenger.setMockMethodCallHandler(selector, null);
+        messenger.setMockMethodCallHandler(window, null);
+        await directory.delete(recursive: true);
+      });
+      final file = File('${directory.path}/小说与日志.txt');
+      String? selectedPath = file.path;
+      var unavailable = false;
+      messenger.setMockMethodCallHandler(selector, (call) async {
+        expect(call.method, 'getSavePath');
+        final args = call.arguments as Map;
+        expect(args['suggestedName'], '导出.txt');
+        expect((args['acceptedTypeGroups'] as List).single['extensions'], [
+          'txt',
+        ]);
+        if (unavailable) {
+          throw PlatformException(
+            code: 'dialog_unavailable',
+            message: '选择器不可用',
+          );
+        }
+        return selectedPath;
+      });
+      await LinuxPlatform.install();
+      const sink = PlatformTxtSink();
+      final result = await sink.saveText(fileName: '导出.txt', text: '正文\n日志 😀');
+      expect(result.path, file.path);
+      expect(result.isPublic, isTrue);
+      expect(await file.readAsString(), '正文\n日志 😀');
+      selectedPath = null;
+      await expectLater(
+        sink.saveText(fileName: '导出.txt', text: '取消后不得覆盖'),
+        throwsA(
+          isA<ExportWriteException>().having(
+            (e) => e.message,
+            'message',
+            '已取消保存',
+          ),
+        ),
+      );
+      expect(await file.readAsString(), '正文\n日志 😀');
+      unavailable = true;
+      await expectLater(
+        sink.saveText(fileName: '导出.txt', text: '失败'),
+        throwsA(
+          isA<ExportWriteException>().having(
+            (e) => e.message,
+            'message',
+            '选择器不可用',
+          ),
+        ),
+      );
+      unavailable = false;
+      selectedPath = directory.path;
+      await expectLater(
+        sink.saveText(fileName: '导出.txt', text: '不能写入目录'),
+        throwsA(isA<FileSystemException>()),
+      );
+      await expectLater(
+        const AppMethodChannel(
+          'fqapp/downloads',
+        ).invokeMethod<void>('deleteAll'),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'unsupported_platform',
+          ),
+        ),
+      );
+    },
+  );
 
   test('platform adapters preserve typed bytes and errors', () async {
     final bytes = Uint8List.fromList([1, 2, 3]);

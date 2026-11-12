@@ -11,13 +11,10 @@ import '../models/media_item.dart';
 class ExportTarget {
   const ExportTarget({required this.path, required this.isPublic});
 
-  /// Path shown to the user. Either the shared Downloads entry or, on Android
-  /// 9 and older, the app's own external directory.
+  /// Path chosen in the desktop save dialog or reported by Android.
   final String path;
 
-  /// Whether [path] is the shared Downloads collection instead of app-private
-  /// storage. The completion message has to tell the two apart: a private file
-  /// is not where the file manager looks.
+  /// Whether [path] is user-accessible rather than app-private storage.
   final bool isPublic;
 }
 
@@ -40,7 +37,7 @@ abstract class TxtSink {
   });
 }
 
-/// The system Downloads collection through the `fqapp/downloads` channel.
+/// Saves through `fqapp/downloads`: Android Downloads or a desktop save dialog.
 ///
 /// Android 10 (API 29) and newer insert into `MediaStore.Downloads`, which
 /// needs no storage permission; older devices fall back to the app's external
@@ -66,7 +63,7 @@ class PlatformTxtSink implements TxtSink {
     } on PlatformException catch (error) {
       throw ExportWriteException(error.message ?? '写入失败');
     } on MissingPluginException {
-      // Desktop and test hosts have no Android plugin: never report success.
+      // Hosts without a registered adapter must never report success.
       throw const ExportWriteException('当前平台不支持导出到 Downloads');
     }
     final path = result?['path'];
@@ -201,7 +198,7 @@ class BookTxtExport extends ValueNotifier<BookTxtExportState> {
       );
     } catch (_) {
       if (_alive(job)) {
-        value = const BookTxtExportState(message: '导出失败：写入 Downloads 失败，请重试');
+        value = const BookTxtExportState(message: '导出失败：文件写入失败，请重试');
       }
       return;
     }

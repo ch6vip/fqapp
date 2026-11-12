@@ -256,7 +256,7 @@ void main() {
       expect(sink.calls, isEmpty);
       expect(export.value.running, isFalse);
       expect(export.value.target, isNull);
-      expect(export.value.message, contains('写入 Downloads 失败'));
+      expect(export.value.message, contains('文件写入失败'));
     });
 
     test('a private target is labelled as such', () async {

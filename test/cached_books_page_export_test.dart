@@ -98,7 +98,7 @@ void main() {
 
     expect(sink.calls, isEmpty);
     expect(find.text('导出 0/2 章'), findsNothing);
-    expect(find.byTooltip('导出 TXT 到系统「下载」'), findsOneWidget);
+    expect(find.byTooltip('导出 TXT 文件'), findsOneWidget);
   });
 
   testWidgets('上游取不到目录时报告失败而不是写出空书', (tester) async {
