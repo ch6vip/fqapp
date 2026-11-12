@@ -153,6 +153,9 @@ Future<T?> showGlassMenu<T>({
   required WidgetBuilder builder,
   bool reduceMotion = false,
   bool preferBelow = false,
+  // Classic menus shrink to their widest label instead of the fixed 248dp
+  // slab; archive menus keep the upstream panel width.
+  bool compactWidth = false,
   // The settings row adapter keeps its previous behaviour: the trigger stays
   // in the tree (hidden by `GlassMenuAnchor`) and the route does not paint a
   // second copy of its foreground. Archive menus keep the upstream morph.
@@ -196,6 +199,7 @@ Future<T?> showGlassMenu<T>({
     themes: InheritedTheme.capture(from: context, to: navigator.context),
     kind: GlassOverlayKind.menu,
     preferBelow: preferBelow,
+    compactWidth: compactWidth,
     // Layout, stretching and hit testing all use the owning Overlay's space.
     // A global offset is wrong for an inset/scaled/nested Navigator.
     anchor: MatrixUtils.transformRect(
@@ -490,8 +494,8 @@ class _GlassMenuItemState extends State<GlassMenuItem> {
       child: InkWell(
         onTap: widget.enabled ? _activate : null,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 48),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
             color: selected ? scheme.primary.withValues(alpha: .10) : null,
             borderRadius: BorderRadius.circular(8),
@@ -500,6 +504,8 @@ class _GlassMenuItemState extends State<GlassMenuItem> {
                 : null,
           ),
           child: Row(
+            // Intrinsic width: the compact classic menu hugs its labels.
+            mainAxisSize: MainAxisSize.min,
             children: [
               if (widget.icon != null)
                 Icon(widget.icon, size: 20, color: scheme.onSurfaceVariant)
@@ -516,13 +522,15 @@ class _GlassMenuItemState extends State<GlassMenuItem> {
                   ),
                 ),
               SizedBox(width: widget.icon == null ? 10 : 12),
-              Expanded(
+              Flexible(
                 child: AppText(
                   widget.label,
+                  // 13sp / w400 mirrors the classic settings rows; selection
+                  // keeps the accent w600 used by classic chips.
                   style: TextStyle(
                     color: selected ? scheme.primary : null,
-                    fontSize: 14,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
               ),
@@ -640,6 +648,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
     this.surfaceWrapper,
     this.preferBelow = false,
     this.guardDragDismiss = false,
+    this.compactWidth = false,
   }) : _classicForBarrier = classicAtOpen;
   final WidgetBuilder builder;
   final GlassOverlayKind kind;
@@ -682,6 +691,7 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
   final Widget Function(Widget)? surfaceWrapper;
   final bool preferBelow;
   final bool guardDragDismiss;
+  final bool compactWidth;
 
   @override
   void install() {
@@ -887,7 +897,12 @@ class _GlassOverlayRoute<T> extends PopupRoute<T>
                   );
                   if (kind == GlassOverlayKind.menu) {
                     return CustomSingleChildLayout(
-                      delegate: _GlassMenuPlacement(origin!, safe, preferBelow),
+                      delegate: _GlassMenuPlacement(
+                        origin!,
+                        safe,
+                        preferBelow,
+                        compactWidth && classic,
+                      ),
                       child: surface,
                     );
                   }
@@ -1022,10 +1037,16 @@ Rect _popupSafeRect(RenderBox overlay, Size size, MediaQueryData media) {
 }
 
 class _GlassMenuPlacement extends SingleChildLayoutDelegate {
-  _GlassMenuPlacement(this.anchor, this.safe, this.preferBelow);
+  _GlassMenuPlacement(
+    this.anchor,
+    this.safe,
+    this.preferBelow, [
+    this.compactWidth = false,
+  ]);
   final Rect anchor;
   final Rect safe;
   final bool preferBelow;
+  final bool compactWidth;
   Rect get available => Rect.fromLTWH(
     safe.left + math.min(12, safe.width / 2),
     math.min(safe.top + math.min(12, safe.height / 2), math.max(0, anchor.top)),
@@ -1033,12 +1054,16 @@ class _GlassMenuPlacement extends SingleChildLayoutDelegate {
     math.max(0, safe.height - 24),
   );
   @override
-  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
-      BoxConstraints(
-        minWidth: math.min(248, available.width),
-        maxWidth: math.min(248, available.width),
-        maxHeight: available.height,
-      );
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    final double maxWidth = math.min(248.0, available.width);
+    return BoxConstraints(
+      // Compact classic menus still need a readable floor, but may shrink to
+      // their widest label instead of a fixed slab.
+      minWidth: compactWidth ? math.min(168.0, maxWidth) : maxWidth,
+      maxWidth: maxWidth,
+      maxHeight: available.height,
+    );
+  }
 
   @override
   Offset getPositionForChild(Size size, Size childSize) {
@@ -1061,7 +1086,8 @@ class _GlassMenuPlacement extends SingleChildLayoutDelegate {
   bool shouldRelayout(_GlassMenuPlacement oldDelegate) =>
       anchor != oldDelegate.anchor ||
       safe != oldDelegate.safe ||
-      preferBelow != oldDelegate.preferBelow;
+      preferBelow != oldDelegate.preferBelow ||
+      compactWidth != oldDelegate.compactWidth;
 }
 
 class _GlassSheet extends StatefulWidget {
@@ -1464,14 +1490,26 @@ class _ClassicMenuSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final panel = Material(
-      color: theme.colorScheme.surface,
-      elevation: 8,
-      shadowColor: Colors.black54,
+      key: const ValueKey('reader-classic-menu-surface'),
+      // The captured reader Theme supplies the panel colour: night menu on a
+      // night page, warm parchment on a parchment page.
+      color: scheme.surface,
+      surfaceTintColor: Colors.transparent,
+      // Same depth and hairline border as the classic bottom panel, so the
+      // menu reads as part of the reader chrome rather than a generic popup.
+      elevation: 16,
+      shadowColor: Colors.black38,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: theme.colorScheme.outlineVariant, width: .6),
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: scheme.brightness == Brightness.dark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.06),
+          width: 0.8,
+        ),
       ),
       child: child,
     );

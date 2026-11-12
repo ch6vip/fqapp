@@ -97,7 +97,7 @@ void main() {
     }
   });
 
-  testWidgets('经典主题顶部与底部两行动作齐全，入口都接真实 callbacks', (tester) async {
+  testWidgets('经典主题顶部与单行动作齐全，入口都接真实 callbacks', (tester) async {
     final store = AppThemeStyleStore();
     addTearDown(store.dispose);
     await store.select(AppThemeStyle.classic);
@@ -115,12 +115,9 @@ void main() {
     expect(_textOf(tester, 'reader-classic-chapter-label'), '正在阅读 · 第 1 章');
     expect(find.byKey(const ValueKey('reader-cache')), findsOneWidget);
     expect(find.byKey(const ValueKey('reader-shelf-button')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('reader-classic-collapse')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('reader-classic-more')), findsOneWidget);
 
-    // 底部：整块上圆角面板、整书选章滑条、章内进度、两行动作。
+    // 底部：整块上圆角面板、整书选章滑条、章内进度、单行动作。
     expect(
       find.byKey(const ValueKey('reader-classic-controls')),
       findsOneWidget,
@@ -142,12 +139,11 @@ void main() {
     expect(seekSemantics.label, '整书选章');
     expect(seekSemantics.value, '第 1 章 / 共 4 章');
 
-    // 动作恢复旧的两行：内容导航行在上，显示/功能行在下。
+    // 动作合并为一行：目录接替操作的位置，查找留在动作行，书签移入顶栏
+    // “更多”菜单，操作入口移除。
     for (final key in [
       'reader-catalogue-entry',
       'reader-find-entry',
-      'reader-bookmarks-entry',
-      'reader-operations-entry',
       'reader-night-entry',
       'reader-settings',
     ]) {
@@ -155,47 +151,32 @@ void main() {
       expect(_actionEnabled(tester, key), isTrue, reason: '$key 未接线');
     }
     expect(
-      find.byKey(const ValueKey('reader-classic-nav-row')),
+      find.byKey(const ValueKey('reader-classic-action-row')),
       findsOneWidget,
     );
+    expect(find.byKey(const ValueKey('reader-classic-nav-row')), findsNothing);
     expect(
       find.byKey(const ValueKey('reader-classic-feature-row')),
-      findsOneWidget,
+      findsNothing,
     );
-    final navTops = {
+    final actionTops = {
       for (final key in [
         'reader-catalogue-entry',
         'reader-find-entry',
-        'reader-bookmarks-entry',
-      ])
-        _topOf(tester, key),
-    };
-    final featureTops = {
-      for (final key in [
-        'reader-operations-entry',
         'reader-night-entry',
         'reader-settings',
       ])
         _topOf(tester, key),
     };
-    expect(navTops, hasLength(1), reason: '目录/查找/书签应在同一行');
-    expect(featureTops, hasLength(1), reason: '操作/夜间/设置应在同一行');
-    expect(
-      featureTops.single,
-      greaterThan(navTops.single),
-      reason: '功能行必须在内容导航行下方',
-    );
-    expect(
-      tester
-          .getBottomLeft(find.byKey(const ValueKey('reader-bookmarks-entry')))
-          .dy,
-      lessThanOrEqualTo(featureTops.single),
-      reason: '两行不能重叠',
-    );
+    expect(actionTops, hasLength(1), reason: '目录/夜间/查找/设置在同行');
+    for (final key in ['reader-bookmarks-entry', 'reader-operations-entry']) {
+      expect(find.byKey(ValueKey(key)), findsNothing, reason: '$key 应已移出底部动作行');
+    }
     expect(find.text('目录'), findsOneWidget);
-    expect(find.text('查找'), findsOneWidget);
-    expect(find.text('书签'), findsOneWidget);
     expect(find.text('夜间'), findsOneWidget);
+    expect(find.text('查找'), findsOneWidget);
+    expect(find.text('书签'), findsNothing);
+    expect(find.text('操作'), findsNothing);
 
     // 听/看胶囊仍走当前 _buildReaderMenuPlayers。
     expect(find.byKey(const ValueKey('reader-listen-entry')), findsOneWidget);
@@ -205,6 +186,104 @@ void main() {
     expect(find.byType(ReaderControls), findsNothing);
     // 生产 scope 全程在场，本次没有任何主题回退读取。
     expect(AppUiScope.debugFallbackReads, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('经典顶栏“更多”打开二级菜单，只保留动作入口', (tester) async {
+    final store = AppThemeStyleStore();
+    addTearDown(store.dispose);
+    await store.select(AppThemeStyle.classic);
+    await _mountReader(tester, store, ideasLoader: (_) async => _ideas());
+    await _openControls(tester);
+
+    await tester.tap(find.byKey(const ValueKey('reader-classic-more')));
+    await tester.pumpAndSettle();
+
+    // 二级菜单打开时顶栏和底板都还在，不会顺带收起。
+    expect(
+      find.byKey(const ValueKey('reader-classic-toolbar')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('reader-classic-controls-panel')),
+      findsOneWidget,
+    );
+    for (final label in ['缓存', '本章评论', '加入书架', '书签']) {
+      expect(find.text(label), findsOneWidget, reason: '二级菜单缺少 $label');
+    }
+    // 阅读设置 / 隐藏控件已从经典菜单移除：设置走底板，收起点正文中央。
+    expect(find.text('阅读设置'), findsNothing);
+    expect(find.text('专注阅读 · 隐藏控件'), findsNothing);
+    // 菜单条目使用 classic- 前缀，和顶栏直连按钮的 key 不冲突。
+    expect(
+      find.byKey(const ValueKey('classic-reader-more-settings')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('classic-reader-more-hide')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('classic-reader-cache')), findsOneWidget);
+    // 查找仍在底部动作行，不再进二级菜单。
+    expect(
+      find.byKey(const ValueKey('classic-reader-find-entry')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('classic-reader-bookmarks-entry')),
+      findsOneWidget,
+    );
+    // preferBelow：菜单开在“更多”按钮下方，不盖住顶栏触发按钮。
+    expect(
+      tester.getRect(find.byKey(const ValueKey('classic-reader-cache'))).top,
+      greaterThanOrEqualTo(
+        tester
+            .getRect(find.byKey(const ValueKey('reader-classic-more')))
+            .bottom,
+      ),
+    );
+
+    // 紧凑右对齐：卡片按标签收窄（不再固定 248dp），右边缘贴住“更多”，
+    // 颜色取自当前阅读主题的 panelColor。
+    final surface = find.byKey(const ValueKey('reader-classic-menu-surface'));
+    final surfaceRect = tester.getRect(surface);
+    final moreRect = tester.getRect(
+      find.byKey(const ValueKey('reader-classic-more')),
+    );
+    expect(surfaceRect.width, lessThan(232), reason: '经典菜单应按内容收窄');
+    expect(surfaceRect.width, greaterThanOrEqualTo(168));
+    // 贴右：菜单右缘对齐锚点右缘，最多被弹层安全边距（12dp）内收。
+    expect(
+      moreRect.right - surfaceRect.right,
+      inInclusiveRange(0, 12),
+      reason: '菜单应右对齐锚点',
+    );
+    // 行宽对齐：短标签（缓存）和长标签（加入书架）左缘一致。
+    expect(
+      tester.getRect(find.byKey(const ValueKey('classic-reader-cache'))).left,
+      tester
+          .getRect(find.byKey(const ValueKey('classic-reader-shelf-button')))
+          .left,
+    );
+    expect(
+      tester.widget<Material>(surface).color,
+      ReaderThemePreset.light.panelColor,
+    );
+
+    // 关闭菜单本身不会收起阅读界面。
+    await tester.tapAt(const Offset(24, 700));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('classic-reader-cache')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reader-classic-toolbar')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('reader-classic-controls-panel')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -446,7 +525,10 @@ void main() {
     final panelHeight = tester.getSize(panel).height;
     final toolbarTop = tester.getTopLeft(toolbar).dy;
 
-    await tester.tap(find.byKey(const ValueKey('reader-classic-collapse')));
+    // 顶栏已不再放独立的“收起”按钮：点正文中央仍走同一条 _toggleControls。
+    await tester.tapAt(
+      tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 80));
 
@@ -494,7 +576,11 @@ void main() {
       final panel = find.byKey(const ValueKey('reader-classic-controls-panel'));
       final panelTop = tester.getTopLeft(panel).dy;
 
-      await tester.tap(find.byKey(const ValueKey('reader-classic-collapse')));
+      await tester.tapAt(
+        tester
+            .getRect(find.byKey(const ValueKey('reader-page-surface')))
+            .center,
+      );
       await tester.pump();
       // 一帧就消失，没有中间位移。
       expect(panel, findsNothing);
@@ -514,7 +600,7 @@ void main() {
     });
   }
 
-  testWidgets('真实入口：缓存/章评/书签/设置/操作/AI/入架', (tester) async {
+  testWidgets('真实入口：缓存/章评/书签/设置/AI/入架', (tester) async {
     const bookId = 'reader-classic-entries';
     final store = AppThemeStyleStore();
     addTearDown(store.dispose);
@@ -565,7 +651,8 @@ void main() {
     ).pop();
     await tester.pumpAndSettle();
 
-    // 设置：经典一屏面板（不是档案分类网格）；操作：同一面板内联操作项。
+    // 设置：经典一屏面板（不是档案分类网格）；操作入口已移除，操作项仍从
+    // 更多设置里的“操作”分类进入。
     await openAction('reader-settings');
     expect(
       find.byKey(const ValueKey('reader-appearance-scroll')),
@@ -576,18 +663,37 @@ void main() {
       find.byKey(const ValueKey('reader-settings-category-grid')),
       findsNothing,
     );
-    await closePanel('reader-appearance-scroll');
-    await openAction('reader-operations-entry');
+    await tester.tap(find.byKey(const ValueKey('reader-more-appearance')));
+    await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey('reader-appearance-scroll')),
+      find.byKey(const ValueKey('reader-more-settings-scroll')),
       findsOneWidget,
     );
     expect(find.text('点击区域'), findsOneWidget);
     expect(find.text('音量键翻页'), findsOneWidget);
+    Navigator.of(tester.element(find.text('点击区域'))).pop();
+    await tester.pumpAndSettle();
     await closePanel('reader-appearance-scroll');
 
-    // 书签：面板能加书签，记录落在注入的 store 且锚在当前章。
-    await openAction('reader-bookmarks-entry');
+    // 查找：底部动作行直接打开章内查找（经典面板由 body 自己管理滚动，
+    // 不套外框的 scrollKey，因此按标题和输入框断言）。
+    await openAction('reader-find-entry');
+    expect(find.text('章内查找'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reader-find-field')), findsOneWidget);
+    await closePanel('reader-find-field');
+
+    // 书签：已移入顶栏“更多阅读操作”菜单；面板能加书签，记录落在注入的
+    // store 且锚在当前章。
+    await _openControls(tester);
+    final more = find.byKey(const ValueKey('reader-classic-more'));
+    await tester.ensureVisible(more);
+    await tester.pumpAndSettle();
+    await tester.tap(more);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('classic-reader-bookmarks-entry')),
+    );
+    await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('reader-bookmarks-scroll')),
       findsOneWidget,
@@ -687,12 +793,10 @@ void main() {
         'reader-cache': 'cache',
         'reader-toolbar-chapter-comments': 'comments',
         'reader-shelf-button': 'shelf',
-        'reader-classic-collapse': 'collapse',
+        'reader-classic-more': 'more',
         'reader-catalogue-entry': 'directory',
-        'reader-find-entry': 'find',
-        'reader-bookmarks-entry': 'bookmarks',
-        'reader-operations-entry': 'operations',
         'reader-ai': 'ai',
+        'reader-find-entry': 'find',
         'reader-night-entry': 'night',
         'reader-settings': 'appearance',
       };
@@ -711,14 +815,12 @@ void main() {
         expect(tester.takeException(), isNull);
       }
 
-      // 两行结构在窄屏/横屏也不退化成一行。
+      // 动作合并为一行后，窄屏/横屏也不拆回两行。
       expect(
         tester.getTopLeft(find.byKey(const ValueKey('reader-settings'))).dy,
-        greaterThan(
-          tester
-              .getTopLeft(find.byKey(const ValueKey('reader-catalogue-entry')))
-              .dy,
-        ),
+        tester
+            .getTopLeft(find.byKey(const ValueKey('reader-catalogue-entry')))
+            .dy,
       );
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -856,7 +958,7 @@ Widget _chromeHarness(Size size, List<String> fired) => MaterialApp(
             onCache: () => fired.add('cache'),
             onComments: () => fired.add('comments'),
             onShelf: () => fired.add('shelf'),
-            onCollapse: () => fired.add('collapse'),
+            onMore: (_) => fired.add('more'),
           ),
           const Spacer(),
           ReaderClassicControls(
@@ -872,11 +974,9 @@ Widget _chromeHarness(Size size, List<String> fired) => MaterialApp(
             onCommitted: (_) => fired.add('chapter-progress'),
             onPreviewChanged: (_) {},
             onDirectory: () => fired.add('directory'),
-            onBookmarks: () => fired.add('bookmarks'),
             onFind: () => fired.add('find'),
             onNight: () => fired.add('night'),
             onAppearance: () => fired.add('appearance'),
-            onOperations: () => fired.add('operations'),
             onAi: () => fired.add('ai'),
           ),
         ],
