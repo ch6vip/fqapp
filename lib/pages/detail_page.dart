@@ -24,6 +24,7 @@ import '../services/connectivity_status.dart';
 import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/player_history.dart';
+import '../services/platform_capabilities.dart';
 import '../services/reader_history.dart';
 import '../services/shelf_store.dart';
 import '../services/user_facing_error.dart';
@@ -1888,6 +1889,12 @@ class _DetailPageState extends State<DetailPage> {
     ++_openGeneration;
     ++_historyGeneration;
     if (_opening) setState(() => _opening = false);
+    if (_isVideo && !supportsVideoPlayback) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前平台暂不支持视频播放')));
+      return;
+    }
     final index = _allChapters.indexWhere((c) => c.itemId == chapter.itemId);
     final startIndex = index < 0 ? 0 : index;
     final page = switch (widget.item.kind) {

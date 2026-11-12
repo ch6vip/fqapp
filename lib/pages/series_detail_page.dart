@@ -11,6 +11,7 @@ import '../services/api_client.dart';
 import '../services/backend_transport.dart';
 import '../services/library_store.dart';
 import '../services/player_history.dart';
+import '../services/platform_capabilities.dart';
 import '../services/video_catalogue.dart';
 import '../services/shelf_store.dart';
 import '../services/watched_episodes.dart' show WatchedEpisodes, watchedIndexes;
@@ -338,6 +339,12 @@ class _SeriesDetailPageState extends State<SeriesDetailPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('该剧集暂不可播放')));
+      return;
+    }
+    if (!supportsVideoPlayback) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前平台暂不支持视频播放')));
       return;
     }
     if (widget.onPlaySelection != null) {
