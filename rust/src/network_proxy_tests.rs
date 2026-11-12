@@ -433,7 +433,7 @@ fn unified_network_policy() {
         b"socks-remote",
     );
     for bad in [
-        "http://user:password@localhost:8080",
+        "http://user:placeholder@localhost:8080",
         "http://localhost",
         "ftp://localhost:21",
         "socks5://localhost",
