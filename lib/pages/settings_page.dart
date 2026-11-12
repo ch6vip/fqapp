@@ -88,6 +88,7 @@ class SettingsPage extends StatelessWidget {
         icon: CupertinoIcons.paintbrush,
         title: '主题',
         subtitle: '经典主题、档案主题',
+        value: AppThemeStyleStore.instance.value.label,
         pageBuilder: (_) => const ThemePage(),
         items: const [],
       ),
@@ -239,9 +240,8 @@ class SettingsPage extends StatelessWidget {
                     icon: category.icon,
                     iconTile: true,
                     title: category.title,
-                    subtitle: category.title == '主题'
-                        ? AppThemeStyleStore.instance.value.label
-                        : category.subtitle,
+                    subtitle: category.subtitle,
+                    value: category.value,
                     onTap: () => _openCategory(context, category),
                   ),
               ],
@@ -271,9 +271,7 @@ class SettingsPage extends StatelessWidget {
                   // The current theme is a value, not a control: it belongs
                   // next to the chevron, and the chevron has to land in the
                   // same place as every other row's.
-                  trailingText: categories[index].title == '主题'
-                      ? AppThemeStyleStore.instance.value.label
-                      : null,
+                  trailingText: categories[index].value,
                   onTap: () => _openCategory(context, categories[index]),
                 ),
               ],
@@ -289,6 +287,7 @@ class SettingsPage extends StatelessWidget {
         icon: classicSettingsIcon(category.title, category.icon),
         title: category.title,
         subtitle: category.subtitle,
+        value: category.value,
         items: category.items,
         itemsBuilder: category.itemsBuilder,
         pageBuilder: category.pageBuilder,
