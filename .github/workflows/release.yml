@@ -63,7 +63,7 @@ jobs:
 
       - name: Check out the commit
         if: steps.runs.outputs.ready == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.SHA }}
           fetch-depth: 0
