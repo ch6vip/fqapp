@@ -109,8 +109,8 @@ Linux / Arch 社区移植正在推进，见 [#308](https://github.com/ch6vip/nov
 欢迎加入 **什锦铺** 交流群，分享使用心得、交流问题。用 QQ 扫码，或搜索群号 **726870896** 加入。
 
 <p align="center">
-  <a href=".github/qq-group.png">
-    <img src=".github/qq-group.png" width="320" alt="QQ 交流群：樱道，群号 726870896">
+  <a href=".github/qq-group.jpg">
+    <img src=".github/qq-group.jpg" width="320" alt="QQ 交流群：什锦铺，群号 726870896">
   </a>
 </p>
 
