@@ -21,6 +21,7 @@ import 'package:fqapp/services/drama_channel_preferences.dart';
 import 'package:fqapp/services/drama_mute_preferences.dart';
 import 'package:fqapp/services/player_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
+import 'package:fqapp/services/shell_visibility.dart';
 import 'package:fqapp/services/swipe_guide_store.dart';
 import 'package:fqapp/widgets/player/playlet_danmaku_layer.dart';
 
@@ -626,11 +627,13 @@ void main() {
   });
 
   testWidgets('隐藏的底部 tab 只暂停，不重建播放器', (tester) async {
+    addTearDown(resetShellVisibility);
     final session = _Session();
     await _mount(tester, session);
     final player = session.players.single;
 
-    await tester.pumpWidget(session.app(tickerEnabled: false));
+    // 本页是壳层的第 2 页；切到第 1 页即模拟底部 tab 隐藏。
+    shellVisibleTab.value = 0;
     await _flush(tester);
 
     expect(player.calls, contains('pause'));
@@ -638,7 +641,7 @@ void main() {
     expect(player.disposed, isFalse);
     expect(session.players, hasLength(1));
 
-    await tester.pumpWidget(session.app());
+    resetShellVisibility();
     await _flush(tester);
     expect(player.isPlaying, isTrue);
     expect(session.players, hasLength(1));
@@ -673,6 +676,9 @@ void main() {
     await tester.tap(find.text('推荐'));
     await _flush(tester);
     expect(dramaLightPageNotifier.value, isFalse);
+    // 点选频道走 260ms 的 pager 动画，ScrollEnd 之后才恢复内联播放。
+    await tester.pump(const Duration(milliseconds: 400));
+    await _flush(tester);
     expect(session.players, hasLength(2));
     expect(session.players.last.isPlaying, isTrue);
     expect(tester.takeException(), isNull);
