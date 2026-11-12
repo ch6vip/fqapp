@@ -359,60 +359,113 @@ extension _ReaderPageBuild on _ReaderPageState {
         onComments: () =>
             unawaited(_showIdeas(focusParaIndex: _chapterEndParagraph())),
         onShelf: () => unawaited(toggleShelf(context, _shelfEntry)),
-        onCollapse: _toggleControls,
+        // 顶栏最后一个动作改成“更多”：点开与档案主题同款的二级菜单。
+        // 收起菜单仍可点正文中央或返回键。
+        onMore: (anchor) => unawaited(
+          _showReaderActions(
+            anchor,
+            keyPrefix: 'classic-',
+            preferBelow: true,
+            compactWidth: true,
+            includeBookmarks: true,
+            includeDisplayEntries: false,
+          ),
+        ),
       ),
     );
   }
 
-  Future<void> _showReaderActions(BuildContext anchor) async {
+  /// [keyPrefix] keeps the classic overflow menu's keys distinct from the
+  /// toolbar's direct entries, which stay visible while the menu is open.
+  /// [includeBookmarks] adds the classic-only 书签 entry; the archive glass
+  /// dock already exposes it directly. [includeDisplayEntries] keeps
+  /// 阅读设置/专注阅读·隐藏控件 in the menu for the archive toolbar; the
+  /// classic chrome already exposes both (底板 设置 / 点正文中央).
+  /// [compactWidth] shrinks the card to its labels for the classic reader.
+  Future<void> _showReaderActions(
+    BuildContext anchor, {
+    String keyPrefix = '',
+    bool preferBelow = false,
+    bool compactWidth = false,
+    bool includeBookmarks = false,
+    bool includeDisplayEntries = true,
+  }) async {
     _readerPanelOpen = true;
     final action = await showGlassMenu<String>(
       context: anchor,
       reduceMotion: _reduceReaderMotion,
-      builder: (menu) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (!widget.localOnly)
+      preferBelow: preferBelow,
+      compactWidth: compactWidth,
+      builder: (menu) {
+        final column = Column(
+          mainAxisSize: MainAxisSize.min,
+          // Compact classic menus hug their widest label; stretching every row
+          // to that width keeps the icons/labels on one left edge.
+          crossAxisAlignment: compactWidth
+              ? CrossAxisAlignment.stretch
+              : CrossAxisAlignment.center,
+          children: [
+            if (!widget.localOnly)
+              GlassMenuItem(
+                key: ValueKey('${keyPrefix}reader-cache'),
+                icon: CupertinoIcons.tray_arrow_down,
+                label: '缓存',
+                onPressed: () => Navigator.pop(menu, 'cache'),
+              ),
+            if (!_loading &&
+                _error == null &&
+                _ideas.total > 0 &&
+                _chapterEndParagraph() != null)
+              GlassMenuItem(
+                key: ValueKey('${keyPrefix}reader-toolbar-chapter-comments'),
+                icon: CupertinoIcons.chat_bubble,
+                label: '本章评论',
+                order: 1,
+                onPressed: () => Navigator.pop(menu, 'comments'),
+              ),
             GlassMenuItem(
-              key: const ValueKey('reader-cache'),
-              icon: CupertinoIcons.tray_arrow_down,
-              label: '缓存',
-              onPressed: () => Navigator.pop(menu, 'cache'),
+              key: ValueKey('${keyPrefix}reader-shelf-button'),
+              icon: inShelf(_shelfEntry)
+                  ? CupertinoIcons.bookmark_fill
+                  : CupertinoIcons.bookmark,
+              label: inShelf(_shelfEntry) ? '已在书架' : '加入书架',
+              order: 2,
+              onPressed: () => Navigator.pop(menu, 'shelf'),
             ),
-          if (!_loading &&
-              _error == null &&
-              _ideas.total > 0 &&
-              _chapterEndParagraph() != null)
-            GlassMenuItem(
-              key: const ValueKey('reader-toolbar-chapter-comments'),
-              icon: CupertinoIcons.chat_bubble,
-              label: '本章评论',
-              order: 1,
-              onPressed: () => Navigator.pop(menu, 'comments'),
-            ),
-          GlassMenuItem(
-            key: const ValueKey('reader-shelf-button'),
-            icon: inShelf(_shelfEntry)
-                ? CupertinoIcons.bookmark_fill
-                : CupertinoIcons.bookmark,
-            label: inShelf(_shelfEntry) ? '已在书架' : '加入书架',
-            order: 2,
-            onPressed: () => Navigator.pop(menu, 'shelf'),
-          ),
-          GlassMenuItem(
-            icon: CupertinoIcons.textformat,
-            label: '阅读设置',
-            order: 3,
-            onPressed: () => Navigator.pop(menu, 'settings'),
-          ),
-          GlassMenuItem(
-            icon: CupertinoIcons.chevron_up,
-            label: '专注阅读 · 隐藏控件',
-            order: 4,
-            onPressed: () => Navigator.pop(menu, 'hide'),
-          ),
-        ],
-      ),
+            // 经典主题把底部动作行的 书签 移到这里；档案主题的玻璃坞仍直接
+            // 提供，不重复。
+            if (includeBookmarks)
+              GlassMenuItem(
+                key: ValueKey('${keyPrefix}reader-bookmarks-entry'),
+                icon: CupertinoIcons.bookmark,
+                label: '书签',
+                order: 3,
+                onPressed: () => Navigator.pop(menu, 'bookmarks'),
+              ),
+            // 经典主题的菜单只保留动作项；阅读设置与隐藏控件分别由底板“设置”
+            // 和点击正文中央承担，菜单里不再重复。
+            if (includeDisplayEntries)
+              GlassMenuItem(
+                key: ValueKey('${keyPrefix}reader-more-settings'),
+                icon: CupertinoIcons.textformat,
+                label: '阅读设置',
+                order: 4,
+                onPressed: () => Navigator.pop(menu, 'settings'),
+              ),
+            if (includeDisplayEntries)
+              GlassMenuItem(
+                key: ValueKey('${keyPrefix}reader-more-hide'),
+                icon: CupertinoIcons.chevron_up,
+                label: '专注阅读 · 隐藏控件',
+                order: 5,
+                onPressed: () => Navigator.pop(menu, 'hide'),
+              ),
+          ],
+        );
+        // IntrinsicWidth resolves the widest row, then stretch fills exactly
+        // that width; without it stretch would take the whole 248dp cap.
+        return compactWidth ? IntrinsicWidth(child: column) : column;
+      },
     );
     if (!mounted) return;
     switch (action) {
@@ -422,6 +475,8 @@ extension _ReaderPageBuild on _ReaderPageState {
         await _showIdeas(focusParaIndex: _chapterEndParagraph());
       case 'shelf':
         await toggleShelf(context, _shelfEntry);
+      case 'bookmarks':
+        await _showBookmarks();
       case 'settings':
         await _showAppearanceSettings();
       case 'hide':
@@ -484,13 +539,9 @@ extension _ReaderPageBuild on _ReaderPageState {
                   onCommitted: _commitChapterFraction,
                   onPreviewChanged: _setChapterPreview,
                   onDirectory: _showDirectory,
-                  onBookmarks: _showBookmarks,
                   onFind: _loading || !_progressReady ? null : _showFind,
                   onNight: _toggleNightTheme,
                   onAppearance: _showAppearanceSettings,
-                  onOperations: () => _showAppearanceSettings(
-                    section: ReaderSettingsSection.operations,
-                  ),
                   onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
                   aiLabel: _currentAiView?.hasCache == true
                       ? 'AI 已校对'

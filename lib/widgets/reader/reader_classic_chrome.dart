@@ -17,11 +17,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_preferences.dart';
+import '../wenku/wenku_overlay.dart';
 import 'reader_theme.dart';
 import 'reader_value_slider.dart';
 
-/// Top chrome: solid panel, back, book title + reading chapter, then the four
-/// original actions.
+/// Top chrome: solid panel, back, book title + reading chapter, then the three
+/// quick actions and the 更多 overflow entry that opens the secondary menu.
 ///
 /// Narrow screens scroll the action cluster sideways instead of dropping an
 /// entry or overflowing the row; the title keeps at least half the width.
@@ -38,7 +39,7 @@ class ReaderClassicToolbar extends StatelessWidget {
     required this.onCache,
     required this.onComments,
     required this.onShelf,
-    required this.onCollapse,
+    required this.onMore,
   });
 
   final ReaderThemePreset preset;
@@ -51,7 +52,9 @@ class ReaderClassicToolbar extends StatelessWidget {
   final VoidCallback onCache;
   final VoidCallback onComments;
   final VoidCallback onShelf;
-  final VoidCallback onCollapse;
+
+  /// Opens the secondary (overflow) menu anchored to the 更多 entry.
+  final ValueChanged<BuildContext> onMore;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -145,12 +148,16 @@ class ReaderClassicToolbar extends StatelessWidget {
                         preset: preset,
                         onPressed: onShelf,
                       ),
-                      _ClassicToolbarAction(
-                        key: const ValueKey('reader-classic-collapse'),
-                        icon: LucideIcons.chevron_up,
-                        tooltip: '收起阅读菜单',
-                        preset: preset,
-                        onPressed: onCollapse,
+                      GlassMenuAnchor(
+                        child: Builder(
+                          builder: (anchor) => _ClassicToolbarAction(
+                            key: const ValueKey('reader-classic-more'),
+                            icon: LucideIcons.ellipsis,
+                            tooltip: '更多阅读操作',
+                            preset: preset,
+                            onPressed: () => onMore(anchor),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -197,8 +204,8 @@ class _ClassicToolbarAction extends StatelessWidget {
 ///
 /// Top down: the whole-book chapter picker (old semantics, commits on
 /// release), the current chapter's internal progress (a different control with
-/// its own key/semantics), then the old two action rows — 目录/查找/书签 above
-/// 操作/AI/夜间/设置.
+/// its own key/semantics), then one action row — 目录/AI/夜间/查找/设置. 书签
+/// lives in the top-bar 更多阅读操作 menu; 操作 was removed.
 class ReaderClassicControls extends StatefulWidget {
   const ReaderClassicControls({
     super.key,
@@ -214,11 +221,9 @@ class ReaderClassicControls extends StatefulWidget {
     required this.onCommitted,
     required this.onPreviewChanged,
     required this.onDirectory,
-    required this.onBookmarks,
     required this.onFind,
     required this.onNight,
     required this.onAppearance,
-    required this.onOperations,
     this.onAi,
     this.aiLabel = 'AI 校对',
   });
@@ -242,11 +247,12 @@ class ReaderClassicControls extends StatefulWidget {
   final ValueChanged<bool> onPreviewChanged;
 
   final VoidCallback onDirectory;
-  final VoidCallback onBookmarks;
+
+  /// 章内查找；章节未就绪时为 `null`，按钮置灰。
   final VoidCallback? onFind;
+
   final VoidCallback onNight;
   final VoidCallback onAppearance;
-  final VoidCallback onOperations;
   final VoidCallback? onAi;
   final String aiLabel;
 
@@ -447,83 +453,54 @@ class _ReaderClassicControlsState extends State<ReaderClassicControls> {
     );
   }
 
-  /// Two stable rows, as in the pre-#291 reader: content navigation first,
-  /// then display/feature actions. No horizontal scroll, so each entry keeps a
-  /// real touch target at 320dp; a short viewport scrolls the whole sheet
-  /// vertically instead of hiding a button sideways.
-  ///
-  /// `操作` rides in the feature row: it is a fqapp-only entry the old shell did
-  /// not have, and it must stay one tap away from 设置.
-  Widget _actions() => Column(
-    mainAxisSize: MainAxisSize.min,
+  /// One stable action row: 目录 took over 操作's slot when 操作 was removed;
+  /// 查找 sits next to 设置. 书签 lives in the top-bar 更多阅读操作 menu. No
+  /// horizontal scroll, so each entry keeps a real touch target at 320dp; a
+  /// short viewport scrolls the whole sheet vertically instead of hiding a
+  /// button sideways.
+  Widget _actions() => Row(
+    key: const ValueKey('reader-classic-action-row'),
     children: [
-      Row(
-        key: const ValueKey('reader-classic-nav-row'),
-        children: [
-          Expanded(
-            child: _ClassicAction(
-              key: const ValueKey('reader-catalogue-entry'),
-              icon: LucideIcons.book_open,
-              label: '目录',
-              onTap: widget.onDirectory,
-            ),
-          ),
-          Expanded(
-            child: _ClassicAction(
-              key: const ValueKey('reader-find-entry'),
-              icon: LucideIcons.search,
-              label: '查找',
-              onTap: widget.onFind,
-            ),
-          ),
-          Expanded(
-            child: _ClassicAction(
-              key: const ValueKey('reader-bookmarks-entry'),
-              icon: LucideIcons.bookmark,
-              label: '书签',
-              onTap: widget.onBookmarks,
-            ),
-          ),
-        ],
+      Expanded(
+        child: _ClassicAction(
+          key: const ValueKey('reader-catalogue-entry'),
+          icon: LucideIcons.book_open,
+          label: '目录',
+          onTap: widget.onDirectory,
+        ),
       ),
-      const SizedBox(height: 4),
-      Row(
-        key: const ValueKey('reader-classic-feature-row'),
-        children: [
-          Expanded(
-            child: _ClassicAction(
-              key: const ValueKey('reader-operations-entry'),
-              icon: LucideIcons.sliders_horizontal,
-              label: '操作',
-              onTap: widget.onOperations,
-            ),
+      if (widget.onAi != null)
+        Expanded(
+          child: _ClassicAction(
+            key: const ValueKey('reader-ai'),
+            icon: LucideIcons.sparkles,
+            label: widget.aiLabel,
+            onTap: widget.onAi,
           ),
-          if (widget.onAi != null)
-            Expanded(
-              child: _ClassicAction(
-                key: const ValueKey('reader-ai'),
-                icon: LucideIcons.sparkles,
-                label: widget.aiLabel,
-                onTap: widget.onAi,
-              ),
-            ),
-          Expanded(
-            child: _ClassicAction(
-              key: const ValueKey('reader-night-entry'),
-              icon: widget.preset.isDark ? LucideIcons.sun : LucideIcons.moon,
-              label: widget.preset.isDark ? '日间' : '夜间',
-              onTap: widget.onNight,
-            ),
-          ),
-          Expanded(
-            child: _ClassicAction(
-              key: const ValueKey('reader-settings'),
-              icon: LucideIcons.sliders_horizontal,
-              label: '设置',
-              onTap: widget.onAppearance,
-            ),
-          ),
-        ],
+        ),
+      Expanded(
+        child: _ClassicAction(
+          key: const ValueKey('reader-night-entry'),
+          icon: widget.preset.isDark ? LucideIcons.sun : LucideIcons.moon,
+          label: widget.preset.isDark ? '日间' : '夜间',
+          onTap: widget.onNight,
+        ),
+      ),
+      Expanded(
+        child: _ClassicAction(
+          key: const ValueKey('reader-find-entry'),
+          icon: LucideIcons.search,
+          label: '查找',
+          onTap: widget.onFind,
+        ),
+      ),
+      Expanded(
+        child: _ClassicAction(
+          key: const ValueKey('reader-settings'),
+          icon: LucideIcons.sliders_horizontal,
+          label: '设置',
+          onTap: widget.onAppearance,
+        ),
       ),
     ],
   );

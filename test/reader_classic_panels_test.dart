@@ -1370,8 +1370,7 @@ void main() {
     await _openControls(tester);
 
     // Save a bookmark in chapter one.
-    await tester.tap(find.byKey(const ValueKey('reader-bookmarks-entry')));
-    await tester.pumpAndSettle();
+    await _openClassicBookmarks(tester);
     await tester.tap(find.byKey(const ValueKey('reader-add-bookmark')));
     await tester.pumpAndSettle();
     expect(marks.records, hasLength(1));
@@ -1391,8 +1390,7 @@ void main() {
 
     // The stored source anchor brings the reader back to chapter one.
     await _openControls(tester);
-    await tester.tap(find.byKey(const ValueKey('reader-bookmarks-entry')));
-    await tester.pumpAndSettle();
+    await _openClassicBookmarks(tester);
     await tester.tap(
       find.byKey(ValueKey('reader-bookmark-${marks.records.single.key}')),
     );
@@ -1673,6 +1671,16 @@ Future<void> _openControls(WidgetTester tester) async {
   }
   await tester.tapAt(
     tester.getRect(find.byKey(const ValueKey('reader-page-surface'))).center,
+  );
+  await tester.pumpAndSettle();
+}
+
+/// 经典主题的“书签”已移入顶栏“更多”二级菜单，必须先开菜单再点条目。
+Future<void> _openClassicBookmarks(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('reader-classic-more')));
+  await tester.pumpAndSettle();
+  await tester.tap(
+    find.byKey(const ValueKey('classic-reader-bookmarks-entry')),
   );
   await tester.pumpAndSettle();
 }
