@@ -79,6 +79,9 @@ class LinuxPlatform with WindowListener {
           (method == 'saveBackup' || method == 'openBackup')) {
         return DesktopPlatform.instance.invoke(channel, method, arguments);
       }
+      if (channel == 'fqapp/downloads' && method == 'saveText') {
+        return DesktopPlatform.instance.invoke(channel, method, arguments);
+      }
       if (channel == 'fqapp/local_books' && method == 'pickBookFile') {
         return DesktopPlatform.instance.pickBook();
       }

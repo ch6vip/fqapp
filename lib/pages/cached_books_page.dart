@@ -272,7 +272,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
         else
           IconButton(
             key: Key('cached_book_export_$bookId'),
-            tooltip: '导出 TXT 到系统「下载」',
+            tooltip: '导出 TXT 文件',
             onPressed: _export == null ? () => _startExport(item.book) : null,
             icon: Icon(LucideIcons.download, size: 20, color: muted),
           ),
