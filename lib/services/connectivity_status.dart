@@ -33,6 +33,5 @@ Future<ConnectivityView?> probeConnectivity() async {
   }
 }
 
-Future<ConnectivityView> currentConnectivity() async {
-  return await probeConnectivity() ?? (online: true, metered: false);
-}
+Future<ConnectivityView> currentConnectivity() async =>
+    await probeConnectivity() ?? (online: true, metered: false);
