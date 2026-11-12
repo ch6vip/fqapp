@@ -19,6 +19,7 @@ enum AppThemeStyle {
 
   static AppThemeStyle fromStorage(Object? value) => switch (value) {
     'classic' => classic,
+    'archive' => archive,
     _ => archive,
   };
 }
@@ -26,14 +27,22 @@ enum AppThemeStyle {
 /// Device-local theme selection. Loading cannot overwrite a newer UI choice,
 /// and writes are serialized so rapid switching keeps the last choice on disk.
 class AppThemeStyleStore extends ValueNotifier<AppThemeStyle> {
-  AppThemeStyleStore({Future<SharedPreferences> Function()? preferences})
-    : _preferences = preferences ?? SharedPreferences.getInstance,
-      super(AppThemeStyle.archive);
+  AppThemeStyleStore({
+    Future<SharedPreferences> Function()? preferences,
+    AppThemeStyle missingStyle = AppThemeStyle.archive,
+  }) : _missingStyle = missingStyle,
+       _preferences = preferences ?? SharedPreferences.getInstance,
+       super(missingStyle);
 
-  static final instance = AppThemeStyleStore();
+  /// The app-wide store uses the classic UI for a fresh install. Isolated
+  /// stores keep the archive default unless their caller opts into a fallback.
+  static final instance = AppThemeStyleStore(
+    missingStyle: AppThemeStyle.classic,
+  );
   static const storageKey = 'app_theme_style';
 
   final Future<SharedPreferences> Function() _preferences;
+  final AppThemeStyle _missingStyle;
   Future<void>? _loading;
   Future<void> _writes = Future<void>.value();
   bool _loaded = false;
@@ -49,7 +58,10 @@ class AppThemeStyleStore extends ValueNotifier<AppThemeStyle> {
     try {
       final prefs = await _preferences();
       if (revision == _revision && _revision == 0) {
-        value = AppThemeStyle.fromStorage(prefs.get(storageKey));
+        final stored = prefs.get(storageKey);
+        value = stored == null
+            ? _missingStyle
+            : AppThemeStyle.fromStorage(stored);
       }
       _loaded = true;
     } catch (_) {
