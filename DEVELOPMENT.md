@@ -1204,7 +1204,8 @@ WebDAV 配置与诊断由数据同步功能负责。
 
 支持 Linux runner、bundle 内 Rust 核心、阅读/书架及 TXT/EPUB 本地导入。
 听书播放和系统朗读/桌面集成分别见下方第二、三批说明；短剧视频、Android 系统栏、备份文件选择等未实现通道明确报告暂不支持。
-目前没有 Arch 打包或 Linux CI，也不提供正式 Release。
+第四批提供实验性 Arch 打包脚本与 Linux CI artifact，不提供正式 Release。
+构建溯源、安装/卸载、升级回退边界与依赖见 [LINUX.md](LINUX.md)。
 
 Arch 构建依赖：Flutter stable（本批验证 3.47.9 / Dart 3.13.7）、Rust stable
 及 x86_64-unknown-linux-gnu target、clang、cmake、ninja、pkgconf、gtk3、libsecret。

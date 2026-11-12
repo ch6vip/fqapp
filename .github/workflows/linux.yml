@@ -1,0 +1,104 @@
+name: Linux Arch draft build
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: &linux_paths
+      - 'lib/**'
+      - 'test/**'
+      - 'rust/**'
+      - 'native/**'
+      - 'linux/**'
+      - 'third_party/**'
+      - 'assets/**'
+      - 'pubspec.*'
+      - 'scripts/**'
+      - 'packaging/arch/**'
+      - 'LINUX.md'
+      - '.github/workflows/linux.yml'
+  push:
+    branches: [master]
+    paths: *linux_paths
+permissions:
+  contents: read
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  arch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # Host OS only runs the container; package ABI comes from this Arch image.
+    container:
+      options: --cpus=2 --memory=6g --memory-swap=7g --memory-reservation=4g
+      image: archlinux:base@sha256:d4594bb2300cba11f41c2f27923eb56f63d9988909c402f9c95517d1e362c899
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      FLUTTER_ROOT: /opt/flutter
+      PUB_CACHE: /home/builder/.pub-cache
+      CARGO_HOME: /home/builder/.cargo
+      CARGO_NET_OFFLINE: 'true'
+    steps:
+      - name: Prepare isolated Arch snapshot (never the host)
+        run: |
+          printf 'Server = https://archive.archlinux.org/repos/2026/11/09/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm
+          pacman -S --needed --noconfirm base-devel git clang cmake ninja pkgconf gtk3 libsecret mpv libepoxy libglvnd libx11 dbus xdg-utils xdg-user-dirs hicolor-icon-theme rust python nodejs ffmpeg patchelf desktop-file-utils zstd unzip xz curl speech-dispatcher libspeechd espeak-ng xdg-desktop-portal
+          useradd -m builder
+          rustc --version | grep -E '^rustc 1\.99\.1 '
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Fetch exact official Flutter SDK
+        run: |
+          curl --fail --location --retry 3 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.9-stable.tar.xz -o /tmp/flutter.tar.xz
+          echo '25ed8c3c29d51a7353f2a944310b478af8214920639524b19c50a19e6c044c5a  /tmp/flutter.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/flutter.tar.xz -C /opt
+          chown -R builder:builder /opt/flutter "$GITHUB_WORKSPACE"
+      - name: Resolve locked inputs and run automatic gates
+        shell: bash
+        run: |
+          chown -R builder:builder /home/builder
+          runuser -u builder -- nice -n 10 bash -euo pipefail <<'BUILD'
+          export PATH="$FLUTTER_ROOT/bin:$PATH"
+          mkdir -p build/validation/linux
+          flutter --version --machine > build/validation/linux/flutter.json
+          python -c 'import json; assert json.load(open("build/validation/linux/flutter.json"))["frameworkRevision"] == "c197ca5199e9ee5661e865596c9c07294dfab51c"'
+          grep -q 'flutter_rust_bridge = "=2.13.0"' rust/Cargo.toml
+          flutter precache --linux
+          flutter pub get --enforce-lockfile
+          # SDK migration adds an analysis exclusion; preserve committed source.
+          git restore --source=HEAD -- analysis_options.yaml
+          CARGO_NET_OFFLINE=false cargo fetch --manifest-path rust/Cargo.toml --locked
+          flutter analyze --no-pub
+          python test/linux_packaging_test.py
+          bash scripts/build_linux_package.sh /tmp/arch-package HEAD
+          git diff --exit-code -- pubspec.lock rust/Cargo.lock
+          pacman -Q > build/validation/linux/arch-packages.txt
+          printf '%s\n' 'EXPERIMENTAL: no hardware, schema rollback, clean installation or licensing acceptance; no formal Release.' > build/validation/linux/ACCEPTANCE.txt
+          BUILD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          include-hidden-files: true
+          name: fqapp-arch-x86_64-draft-${{ github.sha }}
+          path: |
+            /tmp/arch-package/*.pkg.tar.zst
+            /tmp/arch-package/PKGBUILD
+            /tmp/arch-package/.SRCINFO
+            /tmp/arch-package/fqapp-bundle.tar.zst
+            /tmp/arch-package/*report.txt
+            /tmp/arch-package/build-manifest.txt
+            /tmp/arch-package/fqapp-source.tar.zst
+            /tmp/arch-package/source-PKGBUILD
+            /tmp/arch-package/license-inventory.txt
+            build/validation/linux/**
+            /tmp/arch-package/SHA256SUMS
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: failure()
+        with:
+          name: linux-failure-evidence-${{ github.sha }}
+          path: |
+            build/validation/linux/**
+            /tmp/arch-package/elf-report.txt
+          if-no-files-found: ignore
