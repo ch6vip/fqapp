@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -206,70 +207,192 @@ void main() {
   });
 
   group('番茄 import real actions', () {
-    testWidgets('经典从历史文件导入并合并到书架和历史', (tester) async {
-      const channel = MethodChannel('fqapp/library_backup');
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
-        call,
-      ) async {
-        if (call.method == 'openBackup') return _fanqieHistoryBytes();
-        return null;
-      });
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    testWidgets('Android 历史文件导入并合并到书架和历史', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        const channel = MethodChannel('fqapp/library_backup');
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           channel,
-          null,
-        ),
-      );
+          (call) async {
+            if (call.method == 'openBackup') return _fanqieHistoryBytes();
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
 
-      await pumpStyled(tester, const FanqieHistoryImportPage());
+        await pumpStyled(tester, const FanqieHistoryImportPage());
 
-      await tapAndWait(
-        tester,
-        find.text('从历史文件导入'),
-        find.textContaining('导入预览'),
-      );
-      expect(find.text('历史作品 0'), findsOneWidget);
+        await tapAndWait(
+          tester,
+          find.text('从历史文件导入'),
+          find.textContaining('导入预览'),
+        );
+        expect(find.text('历史作品 0'), findsOneWidget);
 
-      // Classic keeps the merge action in its fixed bottom bar.
-      await tapAndWait(
-        tester,
-        find.textContaining('导入 6 本到书架和历史'),
-        find.textContaining('已合并书架'),
-      );
+        // Classic keeps the merge action in its fixed bottom bar.
+        await tapAndWait(
+          tester,
+          find.textContaining('导入 6 本到书架和历史'),
+          find.textContaining('已合并书架'),
+        );
 
-      expect(find.textContaining('已合并书架'), findsOneWidget);
-      expect(
-        ShelfStore.instance.records().map((record) => record.item.id),
-        contains('100'),
-      );
-      expect(tester.takeException(), isNull);
+        expect(find.textContaining('已合并书架'), findsOneWidget);
+        expect(
+          ShelfStore.instance.records().map((record) => record.item.id),
+          contains('100'),
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
 
-    testWidgets('采集显示进度并可取消，取消后不导入', (tester) async {
-      final collector = _CancellingCaptureService();
-      addTearDown(collector.dispose);
-
-      await pumpStyled(
+    for (final style in AppThemeStyle.values) {
+      testWidgets('Linux ${style.name} 历史 JSON 预览切主题后确认合并保留较新进度', (
         tester,
-        FanqieHistoryImportPage(collector: collector),
-        style: AppThemeStyle.archive,
-      );
+      ) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+        try {
+          await tester.runAsync(() async {
+            await LibraryStore.instance.addHistory({
+              'id': '100',
+              'kind': 'book',
+              'title': '本机较新记录',
+              'time': 9000,
+              'chapterId': 'local-chapter',
+              'episode': 7,
+              'progress': 0.6,
+            });
+          });
+          const channel = MethodChannel('fqapp/library_backup');
+          final calls = <String>[];
+          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            (call) async {
+              calls.add(call.method);
+              if (call.method == 'openBackup') return _fanqieHistoryBytes();
+              return null;
+            },
+          );
+          addTearDown(
+            () => tester.binding.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null),
+          );
+          addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
-      await tester.tap(find.text('从番茄账号读取'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(collector.collectCalls, 1);
-      expect(find.text('正在读取书架列表…'), findsOneWidget);
-      // The archive shell reports progress inline with a cancel action.
-      expect(find.text('取消读取'), findsOneWidget);
-      expect(find.byType(LinearProgressIndicator), findsWidgets);
+          final store = await pumpStyled(
+            tester,
+            const FanqieHistoryImportPage(),
+            style: style,
+          );
+          await tapAndWait(
+            tester,
+            find.text('从历史文件导入'),
+            find.textContaining('导入预览'),
+          );
+          expect(find.text('历史作品 0'), findsOneWidget);
+          expect(ShelfStore.instance.records(), isEmpty, reason: '预览不能先写入书架');
+          expect(LibraryStore.instance.historySnapshot(), hasLength(1));
+          final state = tester.state(find.byType(FanqieHistoryImportPage));
+          final scrollable = find.descendant(
+            of: find.byKey(const ValueKey('fanqie-import-scroll')),
+            matching: find.byType(Scrollable),
+          );
+          final merge = find.textContaining('导入 6 本到书架和历史');
+          for (final next in [
+            style == AppThemeStyle.classic
+                ? AppThemeStyle.archive
+                : AppThemeStyle.classic,
+            style,
+          ]) {
+            store.value = next;
+            await tester.pumpAndSettle();
+            expect(
+              tester.state(find.byType(FanqieHistoryImportPage)),
+              same(state),
+            );
+            await tester.scrollUntilVisible(merge, 200, scrollable: scrollable);
+            expect(merge, findsOneWidget);
+            expect(
+              find.byKey(const ValueKey('fanqie-merge')),
+              next == AppThemeStyle.archive ? findsOneWidget : findsNothing,
+            );
+            expect(ShelfStore.instance.records(), isEmpty);
+          }
 
-      await tester.tap(find.text('取消读取'));
-      await tester.pumpAndSettle();
-      expect(find.text('读取已取消，未导入本机'), findsOneWidget);
-      expect(find.text('取消读取'), findsNothing);
-      expect(ShelfStore.instance.records(), isEmpty);
-      expect(tester.takeException(), isNull);
+          // Classic keeps the merge action in its fixed bar; archive uses the inline action.
+          await tester.ensureVisible(merge);
+          await tapAndWait(tester, merge, find.textContaining('已合并书架'));
+          expect(find.textContaining('已合并书架'), findsOneWidget);
+          expect(
+            ShelfStore.instance.records().map((record) => record.item.id),
+            contains('100'),
+          );
+          expect(ShelfStore.instance.records(), hasLength(6));
+          final history = LibraryStore.instance.historySnapshot();
+          expect(history, hasLength(6));
+          final local = history.singleWhere((record) => record['id'] == '100');
+          expect(local['time'], 9000);
+          expect(local['chapterId'], 'local-chapter');
+          expect(local['episode'], 7);
+          expect(local['progress'], 0.6);
+          // Reusing the same local file must not duplicate shelf/history records.
+          final pick = find.byKey(const ValueKey('fanqie-pick'));
+          await tester.scrollUntilVisible(pick, -240, scrollable: scrollable);
+          await tapAndWait(tester, pick, find.textContaining('导入预览'));
+          await tester.scrollUntilVisible(merge, 200, scrollable: scrollable);
+          await tapAndWait(tester, merge, find.textContaining('已合并书架'));
+          expect(ShelfStore.instance.records(), hasLength(6));
+          expect(LibraryStore.instance.historySnapshot(), hasLength(6));
+          expect(
+            LibraryStore.instance.historySnapshot().singleWhere(
+              (record) => record['id'] == '100',
+            ),
+            local,
+          );
+          expect(calls, ['openBackup', 'openBackup']);
+          expect(tester.takeException(), isNull);
+        } finally {
+          debugDefaultTargetPlatformOverride = null;
+        }
+      });
+    }
+
+    testWidgets('采集显示进度并可取消，取消后不导入', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        final collector = _CancellingCaptureService();
+        addTearDown(collector.dispose);
+
+        await pumpStyled(
+          tester,
+          FanqieHistoryImportPage(collector: collector),
+          style: AppThemeStyle.archive,
+        );
+
+        await tester.tap(find.text('从番茄账号读取'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(collector.collectCalls, 1);
+        expect(find.text('正在读取书架列表…'), findsOneWidget);
+        // The archive shell reports progress inline with a cancel action.
+        expect(find.text('取消读取'), findsOneWidget);
+        expect(find.byType(LinearProgressIndicator), findsWidgets);
+
+        await tester.tap(find.text('取消读取'));
+        await tester.pumpAndSettle();
+        expect(find.text('读取已取消，未导入本机'), findsOneWidget);
+        expect(find.text('取消读取'), findsNothing);
+        expect(ShelfStore.instance.records(), isEmpty);
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
   });
 
