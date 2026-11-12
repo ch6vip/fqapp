@@ -75,6 +75,10 @@ class LinuxPlatform with WindowListener {
       if (channel == 'fqapp/native_player' || channel == 'fqapp/reader') {
         return DesktopPlatform.instance.invoke(channel, method, arguments);
       }
+      if (channel == 'fqapp/library_backup' &&
+          (method == 'saveBackup' || method == 'openBackup')) {
+        return DesktopPlatform.instance.invoke(channel, method, arguments);
+      }
       if (channel == 'fqapp/local_books' && method == 'pickBookFile') {
         return DesktopPlatform.instance.pickBook();
       }

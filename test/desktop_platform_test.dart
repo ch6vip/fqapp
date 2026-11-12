@@ -354,6 +354,86 @@ void main() {
     },
   );
 
+  test('Linux backup selection saves bytes, reads and cancels', () async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const selector = MethodChannel('plugins.flutter.io/file_selector');
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('window_manager'),
+      (_) async => null,
+    );
+    final directory = await Directory.systemTemp.createTemp('linux-backup-');
+    addTearDown(() async {
+      messenger.setMockMethodCallHandler(selector, null);
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('window_manager'),
+        null,
+      );
+      await directory.delete(recursive: true);
+    });
+    final file = File('${directory.path}/备份.json');
+    var cancelled = false;
+    var unavailable = false;
+    messenger.setMockMethodCallHandler(selector, (call) async {
+      if (unavailable) throw PlatformException(code: 'dialog_unavailable');
+      if (cancelled) return null;
+      final args = call.arguments as Map;
+      expect((args['acceptedTypeGroups'] as List).single['extensions'], [
+        'json',
+      ]);
+      if (call.method == 'getSavePath') {
+        expect(args['suggestedName'], 'backup.json');
+        return file.path;
+      }
+      expect(call.method, 'openFile');
+      return [file.path];
+    });
+    await LinuxPlatform.install();
+    const channel = AppMethodChannel('fqapp/library_backup');
+    final bytes = Uint8List.fromList([123, 125]);
+    expect(
+      await channel.invokeMethod<bool>('saveBackup', {
+        'name': 'backup.json',
+        'bytes': bytes,
+      }),
+      isTrue,
+    );
+    expect(await file.readAsBytes(), bytes);
+    expect(await channel.invokeMethod<Uint8List>('openBackup'), bytes);
+    cancelled = true;
+    expect(
+      await channel.invokeMethod<bool>('saveBackup', {
+        'name': 'backup.json',
+        'bytes': Uint8List(0),
+      }),
+      isFalse,
+    );
+    expect(await channel.invokeMethod<Uint8List>('openBackup'), isNull);
+    expect(await file.readAsBytes(), bytes);
+    cancelled = false;
+    unavailable = true;
+    await expectLater(
+      channel.invokeMethod<Uint8List>('openBackup'),
+      throwsA(
+        isA<PlatformException>().having(
+          (e) => e.code,
+          'code',
+          'dialog_unavailable',
+        ),
+      ),
+    );
+    await expectLater(
+      channel.invokeMethod<void>('storeFanqieCapture'),
+      throwsA(
+        isA<PlatformException>().having(
+          (e) => e.code,
+          'code',
+          'unsupported_platform',
+        ),
+      ),
+    );
+  });
+
   test('platform adapters preserve typed bytes and errors', () async {
     final bytes = Uint8List.fromList([1, 2, 3]);
     PlatformChannels.invoke = (channel, method, args) async {
