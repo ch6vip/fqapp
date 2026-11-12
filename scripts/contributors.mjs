@@ -21,7 +21,8 @@ const headers = {
   'Content-Type': 'application/json',
 };
 const revision = execFileSync('git', ['rev-parse', 'HEAD'], {
-  cwd: new URL('../', import.meta.url), encoding: 'utf8',
+  cwd: new URL('../', import.meta.url),
+  encoding: 'utf8',
 }).trim();
 const query = `query($owner: String!, $repo: String!, $revision: GitObjectID!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -39,10 +40,15 @@ const contributors = new Map();
 let after = null;
 while (true) {
   const res = await fetch('https://api.github.com/graphql', {
-    method: 'POST', headers,
-    body: JSON.stringify({ query, variables: { owner: OWNER, repo: REPO, revision, after } }),
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      query,
+      variables: { owner: OWNER, repo: REPO, revision, after },
+    }),
   });
-  if (!res.ok) throw new Error(`commit history API: ${res.status} ${await res.text()}`);
+  if (!res.ok)
+    throw new Error(`commit history API: ${res.status} ${await res.text()}`);
   const result = await res.json();
   if (result.errors) throw new Error(JSON.stringify(result.errors));
   const history = result.data?.repository?.object?.history;
@@ -51,14 +57,17 @@ while (true) {
     const user = commit.author?.user;
     if (!user?.databaseId || user.login.endsWith('[bot]')) continue;
     const entry = contributors.get(user.databaseId) ?? {
-      id: user.databaseId, login: user.login, contributions: 0,
+      id: user.databaseId,
+      login: user.login,
+      contributions: 0,
     };
     entry.contributions++;
     contributors.set(entry.id, entry);
   }
   if (!history.pageInfo.hasNextPage) break;
   const next = history.pageInfo.endCursor;
-  if (!next || next === after) throw new Error('Commit history pagination did not advance');
+  if (!next || next === after)
+    throw new Error('Commit history pagination did not advance');
   after = next;
 }
 const list = [...contributors.values()].sort(
@@ -68,7 +77,9 @@ const list = [...contributors.values()].sort(
 let cells = '';
 for (let i = 0; i < list.length; i++) {
   const c = list[i];
-  const avatar = await fetch(`https://avatars.githubusercontent.com/u/${c.id}?s=128&v=4`);
+  const avatar = await fetch(
+    `https://avatars.githubusercontent.com/u/${c.id}?s=128&v=4`,
+  );
   if (!avatar.ok) throw new Error(`avatar ${c.login}: ${avatar.status}`);
   const b64 = Buffer.from(await avatar.arrayBuffer()).toString('base64');
   cells +=
@@ -85,4 +96,6 @@ const svg =
   `${cells}</svg>\n`;
 
 writeFileSync(OUT, svg);
-console.log(`wrote ${OUT.pathname}: ${list.length} contributors (${list.map((c) => c.login).join(', ')})`);
+console.log(
+  `wrote ${OUT.pathname}: ${list.length} contributors (${list.map((c) => c.login).join(', ')})`,
+);

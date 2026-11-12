@@ -12,6 +12,9 @@
 .swiftpm/
 migrate_working_dir/
 
+# Local Node tooling dependencies
+/node_modules/
+
 # IntelliJ related
 *.iml
 *.ipr
@@ -34,6 +37,7 @@ migrate_working_dir/
 /coverage/
 /.tools/
 /dist/
+/node_modules/
 
 # Local APK checkpoints survive flutter clean and are kept outside source control.
 /release-archives/

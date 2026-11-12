@@ -476,7 +476,9 @@ class _AudioPlaybackController extends ChangeNotifier
 
   Future<void> _pauseForOtherMedia() async {
     _visibilityResumeGeneration = null;
-    if (_closed || !_wantPlay) return;
+    if (_closed) return;
+    _cancelAdvanceCountdown(this);
+    if (!_wantPlay) return;
     _update(() => _wantPlay = false);
     _listenTime.stop();
     final player = _player;
@@ -515,13 +517,15 @@ class _AudioPlaybackController extends ChangeNotifier
       // 切换到后台或锁屏时立即持久化当前进度，防止后续被系统杀后台导致进度丢失。
       unawaited(_persistProgress());
       // 若后台听书开关关闭，切后台自动暂停播放并移除前台通知。
-      if ((!AudioPreferences.instance.backgroundPlayback.value ||
-              (isLinuxDesktop && DesktopSystemSession.instance.suspended)) &&
-          _wantPlay) {
-        final resume = isLinuxDesktop && _wantPlay;
-        _visibilityPause = _pauseForOtherMedia();
-        if (resume) _visibilityResumeGeneration = _generation;
-        unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
+      if (!AudioPreferences.instance.backgroundPlayback.value ||
+          (isLinuxDesktop && DesktopSystemSession.instance.suspended)) {
+        _cancelAdvanceCountdown(this);
+        if (_wantPlay) {
+          final resume = isLinuxDesktop;
+          _visibilityPause = _pauseForOtherMedia();
+          if (resume) _visibilityResumeGeneration = _generation;
+          unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
+        }
       }
     }
     _syncListenClock();
@@ -1151,6 +1155,7 @@ class _AudioPlaybackController extends ChangeNotifier
 
   void _fail(Object error, int generation) {
     if (!_current(generation)) return;
+    _cancelAdvanceCountdown(this);
     ListeningSession.instance.clear();
     unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
     ++_generation;
@@ -1209,6 +1214,7 @@ class _AudioPlaybackController extends ChangeNotifier
     _visibilityResumeGeneration = null;
     final player = _player;
     if (!_ready || player == null) return;
+    _cancelAdvanceCountdown(this);
     final generation = _generation;
     if (_wantPlay) {
       _update(() => _wantPlay = false);
@@ -1239,9 +1245,15 @@ class _AudioPlaybackController extends ChangeNotifier
     }
   }
 
+  void _previewSeek(double position) {
+    _cancelAdvanceCountdown(this);
+    _seekPreview.value = position;
+  }
+
   Future<void> _seekTo(Duration position) async {
     final player = _player;
     if (!_ready || player == null) return;
+    _cancelAdvanceCountdown(this);
     final generation = _generation;
     final seekGeneration = ++_seekGeneration;
     final target = _boundedPosition(position, _duration);
@@ -1536,6 +1548,7 @@ class _AudioPlaybackController extends ChangeNotifier
   Future<void> _close() async {
     if (_closed) return;
     _closed = true;
+    _cancelAdvanceCountdown(this);
     _unregisterFairMemoryFlush?.call();
     _unregisterFairMemoryFlush = null;
     ++_generation;
