@@ -8,6 +8,7 @@ import 'package:fqapp/models/chapter_media.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/services/audio_preferences.dart';
+import 'package:fqapp/services/desktop_platform.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/platform_channel.dart';
@@ -238,6 +239,40 @@ void main() {
     });
   }
 
+  testWidgets('Linux lock and suspend preserve the pending playback resume', (
+    tester,
+  ) async {
+    final session = DesktopSystemSession.instance;
+    addTearDown(() {
+      session.accept({'type': 'locked', 'value': false});
+      session.accept({'type': 'suspend', 'value': false});
+    });
+    final player = _NativeEndingPlayer();
+    final requests = <String>[];
+    await _mount(
+      tester,
+      player: player,
+      sourceRequests: requests,
+      surfaceSize: const Size(1000, 800),
+    );
+    await AudioPreferences.instance.setBackgroundPlayback(false);
+    expect(player.isPlaying, isTrue);
+    session.accept({'type': 'locked', 'value': true});
+    await _flush(tester);
+    expect(player.isPlaying, isFalse);
+    session.accept({'type': 'suspend', 'value': true});
+    await _flush(tester);
+    expect(player.isPlaying, isFalse);
+    session.accept({'type': 'suspend', 'value': false});
+    await _flush(tester);
+    expect(player.isPlaying, isFalse);
+    session.accept({'type': 'locked', 'value': false});
+    await _flush(tester);
+    expect(player.isPlaying, isTrue);
+    expect(player.disposed, isFalse);
+    expect(requests, ['1']);
+  }, variant: TargetPlatformVariant({TargetPlatform.linux}));
+
   testWidgets('closing during chapter countdown cancels its timer', (
     tester,
   ) async {
@@ -312,8 +347,9 @@ Future<void> _mount(
   bool autoAdvance = true,
   Future<AudioSource>? nextSource,
   List<String>? sourceRequests,
+  Size surfaceSize = const Size(430, 932),
 }) async {
-  await tester.binding.setSurfaceSize(const Size(430, 932));
+  await tester.binding.setSurfaceSize(surfaceSize);
   var created = 0;
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox.shrink());

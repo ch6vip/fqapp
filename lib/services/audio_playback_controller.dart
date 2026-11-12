@@ -519,10 +519,13 @@ class _AudioPlaybackController extends ChangeNotifier
       // 若后台听书开关关闭，切后台自动暂停播放并移除前台通知。
       if (!AudioPreferences.instance.backgroundPlayback.value ||
           (isLinuxDesktop && DesktopSystemSession.instance.suspended)) {
-        final resume = isLinuxDesktop && _wantPlay;
-        _visibilityPause = _pauseForOtherMedia();
-        if (resume) _visibilityResumeGeneration = _generation;
-        unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
+        _cancelAdvanceCountdown(this);
+        if (_wantPlay) {
+          final resume = isLinuxDesktop;
+          _visibilityPause = _pauseForOtherMedia();
+          if (resume) _visibilityResumeGeneration = _generation;
+          unawaited(NativePlayer.stopListenForeground(owner: _mediaOwner));
+        }
       }
     }
     _syncListenClock();
