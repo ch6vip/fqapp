@@ -8,8 +8,9 @@ extension _ReaderPageProgress on _ReaderPageState {
       viewport: constraints.biggest,
       textScaler: MediaQuery.textScalerOf(context),
       preferences: _displayPreferences,
-      fontFamily:
-          _fontFamily ?? Theme.of(context).textTheme.bodyLarge?.fontFamily,
+      fontFamily: _displayPreferences.builtinSerifFont
+          ? 'Home Serif'
+          : _fontFamily ?? Theme.of(context).textTheme.bodyLarge?.fontFamily,
     );
     if (_chapterLayout?.spec == spec &&
         _layoutMode == _preferences.pageMode &&

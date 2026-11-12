@@ -122,7 +122,7 @@ extension _ReaderPageContent on _ReaderPageState {
                             instantSwipeTurn: _preferences.instantSwipeTurn,
                             pageTurnStyle: _preferences.pageTurnStyle,
                           ),
-                          backgroundColor: preset.backgroundColor,
+                          backgroundColor: _effectiveBackgroundColor,
                           endPage: _index == widget.chapters.length - 1
                               ? _buildChapterEndPage(preset)
                               : null,

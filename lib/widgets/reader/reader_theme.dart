@@ -250,3 +250,21 @@ extension ReaderThemeColors on ReaderThemePreset {
     );
   }
 }
+
+extension ReaderPreferencesThemeColors on ReaderPreferences {
+  Color get effectiveBackgroundColor =>
+      customBackgroundColor == null || themePreset.isEink || themePreset.isOled
+      ? themePreset.backgroundColor
+      : Color(customBackgroundColor!);
+
+  Color get effectiveTextColor {
+    if (customBackgroundColor == null ||
+        themePreset.isEink ||
+        themePreset.isOled) {
+      return themePreset.textColor;
+    }
+    return effectiveBackgroundColor.computeLuminance() > 0.179
+        ? Colors.black
+        : Colors.white;
+  }
+}

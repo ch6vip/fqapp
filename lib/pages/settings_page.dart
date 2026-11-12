@@ -53,6 +53,7 @@ import 'settings_category_page.dart';
 import 'system_tts_settings_page.dart';
 import 'text_replacement_page.dart';
 import 'theme_page.dart';
+import 'reader_preferences_page.dart';
 import 'ai_reading/settings/ai_settings_page.dart';
 
 /// Settings home: a list of category entries (PiliPlus multi-level
@@ -100,6 +101,15 @@ class SettingsPage extends StatelessWidget {
         title: '阅读',
         subtitle: '阅读入口、正文替换、AI 阅读优化',
         items: [
+          SettingsItem(
+            icon: LucideIcons.book_open_check,
+            title: '小说阅读器',
+            subtitle: '阅读背景、翻页、字体与版面',
+            onTap: (context, _) => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ReaderPreferencesPage()),
+            ),
+          ),
           _shelfDirectReaderItem(),
           _discoverDirectReaderItem(),
           SettingsItem(

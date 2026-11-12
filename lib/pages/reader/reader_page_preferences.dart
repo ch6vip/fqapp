@@ -31,6 +31,9 @@ extension _ReaderPagePreferences on _ReaderPageState {
     return _preferences.themePreset;
   }
 
+  Color get _effectiveBackgroundColor =>
+      _displayPreferences.effectiveBackgroundColor;
+
   /// 排版用的偏好：墨水屏模式下把预设换成 eink，正文/标题才是 #000000。
   ///
   /// 页面背景早就走 [_effectivePreset]，但 [ReaderLayoutSpec] 的正文、标题
@@ -406,7 +409,12 @@ extension _ReaderPagePreferences on _ReaderPageState {
     final nextPreset = _preferences.themePreset == ReaderThemePreset.dark
         ? _dayTheme
         : ReaderThemePreset.dark;
-    _previewPreferences(_preferences.copyWith(themePreset: nextPreset));
+    _previewPreferences(
+      _preferences.copyWith(
+        themePreset: nextPreset,
+        clearCustomBackground: true,
+      ),
+    );
     unawaited(_savePreferences());
   }
 
