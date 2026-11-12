@@ -18,6 +18,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../models/library_backup.dart';
 import '../services/app_theme_style.dart';
 import '../services/library_backup_service.dart';
+import '../services/linux_platform.dart';
 import '../services/shelf_group_store.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/data_transfer_widgets.dart';
@@ -328,7 +329,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
         key: const ValueKey('backup-fanqie'),
         icon: LucideIcons.book_open,
         title: '导入番茄书架',
-        subtitle: '网页登录、最近采集和旧版历史文件',
+        subtitle: isLinuxDesktop ? '仅支持已保存的番茄历史 JSON 文件' : '网页登录、最近采集和旧版历史文件',
         enabled: enabled,
         onTap: () => Navigator.push(
           context,

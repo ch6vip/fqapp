@@ -6,6 +6,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../services/linux_platform.dart';
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';
 import '../app_ui/app_ui_scope.dart';
@@ -677,11 +678,11 @@ class _ReaderAppearanceSheetState
         CupertinoIcons.headphones,
         '跟随翻页 · 朗读高亮',
       ),
-      const ReaderSettingsCategory(
+      ReaderSettingsCategory(
         'operations',
         '操作',
         CupertinoIcons.hand_draw,
-        '点击区域 · 音量键 · 正文替换',
+        isLinuxDesktop ? '点击区域 · 正文替换' : '点击区域 · 音量键 · 正文替换',
       ),
       if (widget.onMarks != null)
         const ReaderSettingsCategory(

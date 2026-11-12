@@ -22,6 +22,7 @@ import '../services/fanqie_history_import_service.dart';
 import '../services/fanqie_library_capture_service.dart';
 import '../services/app_theme_style.dart';
 import '../services/fanqie_library_import_service.dart';
+import '../services/linux_platform.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/data_transfer_widgets.dart';
 import '../widgets/home/home_design.dart';
@@ -72,7 +73,11 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
   @override
   void initState() {
     super.initState();
-    unawaited(_loadLatest());
+    if (isLinuxDesktop) {
+      _loadingLatest = false;
+    } else {
+      unawaited(_loadLatest());
+    }
   }
 
   @override
@@ -105,10 +110,17 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
         _message = switch (error) {
           FormatException() => error.message,
           BackendRequestAborted() => '读取已取消，未导入本机',
-          MissingPluginException() => '当前环境不支持此操作，请使用 Android 应用',
+          MissingPluginException() =>
+            isLinuxDesktop
+                ? '当前环境无法选择文件，请检查桌面文件选择器后重试'
+                : '当前环境不支持此操作，请使用 Android 应用',
           // Never display raw platform/network exceptions containing account data.
-          PlatformException() => '登录或文件操作未完成，请重试',
-          _ => '操作未完成，请检查网络后重试。若正在合并，部分记录可能已写入，可重复导入。',
+          PlatformException() =>
+            isLinuxDesktop ? '文件操作未完成，请重试' : '登录或文件操作未完成，请重试',
+          _ =>
+            isLinuxDesktop
+                ? '文件读取或导入未完成，请检查文件后重试。若正在合并，部分记录可能已写入，可重复导入。'
+                : '操作未完成，请检查网络后重试。若正在合并，部分记录可能已写入，可重复导入。',
         };
       });
     } finally {
@@ -297,10 +309,12 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
     final content = <Widget>[
       KeyedSubtree(
         key: _anchor.keyFor('heading'),
-        child: const SettingsHeading(
+        child: SettingsHeading(
           icon: LucideIcons.book_open,
           title: '书架和进度，一起带回来',
-          subtitle: '从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。',
+          subtitle: isLinuxDesktop
+              ? 'Linux 仅支持导入已保存的番茄历史 JSON，预览后合并到本机书架与历史。'
+              : '从番茄读取小说，加入本机书架与历史。有章节记录的书，可以接着读。',
         ),
       ),
       const SizedBox(height: 24),
@@ -316,15 +330,16 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       SettingsCard(
         archiveDividers: false,
         children: [
-          SettingsActionRow(
-            key: const ValueKey('fanqie-collect'),
-            icon: CupertinoIcons.globe,
-            classicIcon: LucideIcons.globe,
-            title: '从番茄账号读取',
-            subtitle: '打开官方页面登录，保留本机登录状态',
-            enabled: enabled,
-            onPressed: _collect,
-          ),
+          if (!isLinuxDesktop)
+            SettingsActionRow(
+              key: const ValueKey('fanqie-collect'),
+              icon: CupertinoIcons.globe,
+              classicIcon: LucideIcons.globe,
+              title: '从番茄账号读取',
+              subtitle: '打开官方页面登录，保留本机登录状态',
+              enabled: enabled,
+              onPressed: _collect,
+            ),
           SettingsActionRow(
             key: const ValueKey('fanqie-pick'),
             icon: CupertinoIcons.doc_text,
@@ -482,8 +497,10 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       KeyedSubtree(
         key: _anchor.keyFor('footer'),
         child: Text(
-          '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；'
-          '导出文件不含登录凭证。',
+          isLinuxDesktop
+              ? 'Linux 仅支持历史 JSON 文件导入，不支持账号读取或最近采集。选择文件后先预览，确认后才合并到本机。'
+              : '只读取番茄数据，不向账号写入。网页登录状态保存在本应用中，可在右上角退出；'
+                    '导出文件不含登录凭证。',
           style: subtle,
         ),
       ),
@@ -493,7 +510,7 @@ class _FanqieHistoryImportPageState extends State<FanqieHistoryImportPage> {
       child: SettingsArchivePage(
         title: '导入番茄书架',
         code: 'MIGRATION / FANQIE',
-        actions: [_loginActions(enabled)],
+        actions: [if (!isLinuxDesktop) _loginActions(enabled)],
         // The pre-#291 page owns a fixed bottom action bar (busy progress or
         // the primary merge action); the archive keeps them inside the page.
         classicBottomBar:
