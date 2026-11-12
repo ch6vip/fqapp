@@ -10,6 +10,7 @@ import '../models/webdav_sync_document.dart';
 import '../models/library_backup.dart';
 import 'encrypted_hive.dart';
 import 'library_backup_service.dart';
+import 'ai_reading/ai_backup.dart';
 import 'library_store.dart';
 import 'native_secure_key_storage.dart';
 import 'shelf_store.dart';
@@ -154,11 +155,12 @@ class WebDavSyncService with WidgetsBindingObserver {
         final previous = prior is Map ? prior : const {};
         final localHistory = await LibraryStore.instance.backupSnapshot();
         if (!current()) return;
-        final localSnapshot = await LibraryBackupService().capture(
-          includeAi: false,
+        final localShelf = ShelfStore.instance.records();
+        final localKeys = _storedKeys(
+          localShelf,
+          localHistory.history,
+          localHistory.watched,
         );
-        if (!current()) return;
-        final localKeys = _snapshotKeys(localSnapshot);
         final pending = <String, Set<String>>{};
         for (final type in localKeys.keys) {
           final baseline = (previous[type] as List? ?? const []).cast<String>();
@@ -191,12 +193,30 @@ class WebDavSyncService with WidgetsBindingObserver {
           if (current()) status.value = '已建立云端备份 · 书架 ${local.shelf.length} 本';
           return;
         }
-        final document = WebDavSyncDocument.decode(remote.bytes!);
+        final WebDavSyncDocument document;
+        try {
+          document = WebDavSyncDocument.decode(remote.bytes!);
+        } on FormatException catch (error) {
+          throw WebDavException('云端同步文件无法读取：${error.message}；未覆盖本机记录');
+        }
         var incoming = document.backup;
         try {
           LibraryStore.validateSyncedHistory(incoming.history);
         } on FormatException catch (error) {
           throw WebDavException(error.message);
+        }
+        if (incoming.aiData case final ai?) {
+          try {
+            AiBackupPayload.fromJson(
+              jsonDecode(
+                utf8.decode(GZipDecoder().decodeBytes(base64Decode(ai))),
+              ),
+            );
+          } catch (_) {
+            throw const WebDavException(
+              '云端 AI 备份分段损坏或格式不兼容（DAV_AI），未覆盖本机书架；请用原设备重新导出有效备份',
+            );
+          }
         }
         if (pending.values.any((keys) => keys.isNotEmpty)) {
           final deletedHistory = pending['history']!;
@@ -231,8 +251,11 @@ class WebDavSyncService with WidgetsBindingObserver {
         }
         // A delete while the request was in flight needs another pass, before
         // the cloud snapshot can restore that row on screen.
-        final latestKeys = _snapshotKeys(
-          await LibraryBackupService().capture(includeAi: false),
+        final latestHistory = await LibraryStore.instance.backupSnapshot();
+        final latestKeys = _storedKeys(
+          ShelfStore.instance.records(),
+          latestHistory.history,
+          latestHistory.watched,
         );
         if (!current()) return;
         if (localKeys.keys.any(
@@ -253,13 +276,19 @@ class WebDavSyncService with WidgetsBindingObserver {
         }
         final aiHash = _aiFingerprint(incoming.aiData);
         if (incoming.aiData != null && aiHash != previous['aiHash']) {
-          await LibraryBackupService().restoreAi(incoming);
+          try {
+            await LibraryBackupService().restoreAi(incoming);
+          } on FormatException {
+            throw const WebDavException(
+              '云端 AI 备份分段无效（DAV_AI），未覆盖本机书架；请用原设备重新导出有效备份',
+            );
+          }
           if (!current()) return;
         }
         _applying = true;
         try {
           await ShelfStore.instance.applySyncedShelf(
-            before: localSnapshot.shelf,
+            before: localShelf,
             incoming: incoming.shelf,
           );
           if (!current()) return;
@@ -301,7 +330,7 @@ class WebDavSyncService with WidgetsBindingObserver {
       if (current()) {
         status.value = switch (error) {
           WebDavException() => error.message,
-          FormatException() => '云端同步文件无效，未导入本机',
+          FormatException() => '备份字段校验失败（DAV_DATA）：${error.message}',
           _ => '同步失败，请检查网络、WebDAV 设置和安全存储后重试',
         };
       }
@@ -314,6 +343,23 @@ class WebDavSyncService with WidgetsBindingObserver {
 
   static String _historyKey(Map<String, dynamic> record) =>
       '${record['kind']}:${record['id']}';
+
+  // Reading cloud data must not first serialize/validate unrelated local fields.
+  // Only identities are needed to detect deletes and protect concurrent edits.
+  static Map<String, List<String>> _storedKeys(
+    List<ShelfRecord> shelf,
+    List<Map<String, dynamic>> history,
+    Map<String, Map<String, int>> watched,
+  ) => {
+    'shelf': shelf.map((record) => ShelfStore.keyOf(record.item)).toList(),
+    'history': history
+        .map(
+          (record) =>
+              '${record['kind']}:${record['contentId'] ?? record['id']}',
+        )
+        .toList(),
+    'watched': watched.keys.toList(),
+  };
 
   static Map<String, List<String>> _snapshotKeys(LibraryBackup backup) => {
     'shelf': backup.shelf

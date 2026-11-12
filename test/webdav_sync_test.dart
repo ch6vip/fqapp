@@ -172,6 +172,36 @@ void main() {
     client.close();
   });
 
+  test('reads BOM, legacy empty tombstones and portable backup files', () {
+    final original = WebDavSyncDocument(
+      backup(
+        history: [
+          {'id': 'legacy', 'kind': 'book', 'time': 1},
+        ],
+      ),
+    );
+    final raw = jsonDecode(utf8.decode(original.encode())) as Map;
+    raw.remove('removedShelf');
+    final decoded = WebDavSyncDocument.decode(
+      Uint8List.fromList(utf8.encode('\uFEFF${jsonEncode(raw)}')),
+    );
+    expect(decoded.backup.history.single['id'], 'legacy');
+    expect(decoded.removedShelf, isEmpty);
+    expect(
+      WebDavSyncDocument.decode(
+        original.backup.encode(),
+      ).backup.history.single['id'],
+      'legacy',
+    );
+    raw['removedShelf'] = [];
+    expect(
+      () => WebDavSyncDocument.decode(
+        Uint8List.fromList(utf8.encode(jsonEncode(raw))),
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('rejects unsupported documents and malformed tombstones', () {
     expect(
       () => WebDavSyncDocument.decode(Uint8List.fromList(utf8.encode('{}'))),
@@ -618,11 +648,110 @@ void main() {
     );
 
     test(
+      'corrupt cloud AI reports the stage and leaves the local shelf intact',
+      () async {
+        await ShelfStore.instance.add(item('keep'));
+        remote = WebDavSyncDocument(
+          LibraryBackup.capture(
+            shelf: [],
+            history: [],
+            watched: {},
+            aiData: base64Encode(utf8.encode('broken gzip')),
+          ),
+        ).encode();
+        version++;
+        final before = remote!.toList();
+        await expectLater(
+          service.sync(),
+          throwsA(
+            isA<WebDavException>().having(
+              (e) => e.message,
+              'message',
+              contains('DAV_AI'),
+            ),
+          ),
+        );
+        expect(ShelfStore.instance.contains('book', 'keep'), isTrue);
+        expect(remote, orderedEquals(before));
+        expect(service.status.value, contains('DAV_AI'));
+      },
+    );
+
+    test(
+      'invalid AI is rejected before a pending deletion changes the cloud',
+      () async {
+        final shelf = [
+          ShelfRecord(item: item('keep'), addedAt: DateTime(2025)),
+        ];
+        remote = WebDavSyncDocument(backup(shelf: shelf)).encode();
+        version++;
+        await service.sync();
+        await ShelfStore.instance.removeKeys([ShelfStore.keyOf(item('keep'))]);
+        remote = WebDavSyncDocument(
+          LibraryBackup.capture(
+            shelf: shelf,
+            history: [],
+            watched: {},
+            aiData: 'invalid-base64',
+          ),
+        ).encode();
+        version++;
+        final before = remote!.toList();
+        await expectLater(
+          service.sync(),
+          throwsA(
+            isA<WebDavException>().having(
+              (e) => e.message,
+              'message',
+              contains('DAV_AI'),
+            ),
+          ),
+        );
+        expect(remote, orderedEquals(before));
+      },
+    );
+
+    test(
+      'invalid local export metadata does not block a valid cloud restore',
+      () async {
+        await ShelfStore.instance.add(
+          MediaItem(
+            id: 'old',
+            kind: 'book',
+            title: '旧书',
+            cover: '',
+            author: '',
+            badge: '',
+            ep: '',
+            wordNumber: 2147483648,
+          ),
+        );
+        remote = WebDavSyncDocument(
+          backup(
+            shelf: [ShelfRecord(item: item('cloud'), addedAt: DateTime(2025))],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        expect(ShelfStore.instance.records().single.item.id, 'cloud');
+      },
+    );
+
+    test(
       'invalid remote never replaces the cloud file or local shelf',
       () async {
         await ShelfStore.instance.add(item('keep'));
         remote = Uint8List.fromList(utf8.encode('not json'));
-        await expectLater(service.sync(), throwsFormatException);
+        await expectLater(
+          service.sync(),
+          throwsA(
+            isA<WebDavException>().having(
+              (e) => e.message,
+              'message',
+              contains('DAV_JSON'),
+            ),
+          ),
+        );
         expect(ShelfStore.instance.contains('book', 'keep'), isTrue);
         expect(utf8.decode(remote!), 'not json');
         expect(service.busy.value, isFalse);
