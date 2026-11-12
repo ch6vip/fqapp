@@ -70,12 +70,19 @@ void main() {
     expect(shelfCoverDecodeWidth(4000, 3), 1536);
   });
 
-  test('远程封面使用 PosterCache 与同一 maxWidth', () {
+  test('远程封面预热与显示共用 PosterCache 和同一个磁盘键', () {
     final provider = shelfCoverImageProvider('https://img/cover.jpg', 120, 2);
-    expect(provider, isA<CachedNetworkImageProvider>());
-    final cached = provider as CachedNetworkImageProvider;
+    expect(provider, isA<ResizeImage>());
+    final resize = provider as ResizeImage;
+    // 解码宽度只影响内存缓存；磁盘键必须和显示侧的 CachedNetworkImage 一致，
+    // 否则预热写进去的文件在显示时会被当成另一条记录再下一遍。
+    expect(resize.width, 240);
+    expect(resize.height, isNull);
+    final inner = resize.imageProvider;
+    expect(inner, isA<CachedNetworkImageProvider>());
+    final cached = inner as CachedNetworkImageProvider;
     expect(cached.url, 'https://img/cover.jpg');
-    expect(cached.maxWidth, 240);
+    expect(cached.maxWidth, isNull);
     expect(identical(cached.cacheManager, PosterCache.instance), isTrue);
   });
 

@@ -184,6 +184,9 @@ class _HomeRankCellState extends State<HomeRankCell> {
           code: '01 / RANKING',
           title: title,
           action: HomeBlockMore(onTap: widget.onMore),
+          // 首页分类条下面的第一段：顶部留白与标签条的下缘一起构成
+          // 「标签 → 排行榜」的间距，用默认 16 会空出近 38dp。
+          topPadding: 8,
         ),
         if (names.length > 1)
           _BoardNames(names: names, selectedIndex: _index, onSelect: _select),

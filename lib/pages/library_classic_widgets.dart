@@ -21,16 +21,27 @@ enum _ClassicMenuAction {
 
 class _ClassicTabButton extends StatelessWidget {
   const _ClassicTabButton({
+    super.key,
     required this.label,
     required this.selected,
     required this.palette,
     required this.onTap,
+    required this.width,
   });
 
   final String label;
   final bool selected;
   final HomePalette palette;
   final VoidCallback onTap;
+
+  /// The reserved width of the tab.
+  ///
+  /// A tab label is 18sp when selected and 15sp otherwise. Without a
+  /// reserved width the tab would change width the moment the selection
+  /// moves, the whole row would shift under the finger, and the tabs would
+  /// visibly jump on every swipe. The label is centred inside the reserved
+  /// width instead.
+  final double width;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -39,35 +50,32 @@ class _ClassicTabButton extends StatelessWidget {
     child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: selected ? 18 : 15,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                letterSpacing: -.3,
-                color: selected ? palette.ink : palette.muted,
+      child: SizedBox(
+        width: width,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // The label is centred in the reserved width, so the text can
+              // change size without moving the tab.
+              Center(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: selected ? 18 : 15,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    letterSpacing: -.3,
+                    color: selected ? palette.ink : palette.muted,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 5),
-            AnimatedContainer(
-              key: ValueKey('classic-tab-underline-$label'),
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              width: selected ? 26 : 0,
-              height: 3,
-              decoration: BoxDecoration(
-                color: selected ? HomePalette.accent : Colors.transparent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ],
+              const SizedBox(height: 5),
+              // The underline is drawn once for the whole row now, so it can
+              // slide between tabs instead of each tab fading its own in.
+              SizedBox(width: 26, height: 3),
+            ],
+          ),
         ),
       ),
     ),

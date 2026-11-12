@@ -13,6 +13,8 @@ import '../services/app_theme_style.dart';
 import '../services/book_open_preferences.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/desktop_platform.dart';
+import '../services/frame_stats.dart';
+import '../services/shell_visibility.dart';
 import '../services/home_continue_preferences.dart';
 import '../services/home_page_affinity.dart';
 import '../services/library_store.dart';
@@ -62,7 +64,11 @@ class HomePage extends ConsumerStatefulWidget {
     this.readerStore,
     this.scrollController,
     this.cueLoader,
+    this.shellIndex = 0,
   });
+
+  /// 本页在壳层里的下标，用来判断 [shellVisibleTab] 是否指向自己。
+  final int shellIndex;
 
   /// Classic search suggestions. Null keeps tests and standalone pages offline.
   /// The application shell supplies ApiClient.searchCue.
@@ -84,13 +90,50 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  late final ScrollController _scroll =
-      widget.scrollController ?? ScrollController();
-  bool get _ownsScroll => widget.scrollController == null;
+  final Map<int, ScrollController> _tabScrolls = {};
+  final Map<int, HomeState> _tabStates = {};
+  ScrollPosition? _externalPosition;
+  ScrollController get _scroll => _scrollFor(ref.read(homeProvider).tabIndex);
+
+  ScrollController _scrollFor(int tab) => _tabScrolls.putIfAbsent(tab, () {
+    return ScrollController()..addListener(() {
+      if (mounted && ref.read(homeProvider).tabIndex == tab) _onScroll();
+    });
+  });
+
+  // 壳层的「再次点击回顶部」仅代理当前页的 position，不把多个保活页接到同一控制器。
+  bool _externalSyncScheduled = false;
+
+  void _scheduleExternalSync() {
+    if (_externalSyncScheduled) return;
+    _externalSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _externalSyncScheduled = false;
+      _syncExternalScroll();
+    });
+  }
+
+  void _syncExternalScroll() {
+    if (!mounted) return;
+    final external = widget.scrollController;
+    final position = _scroll.hasClients ? _scroll.position : null;
+    if (external == null || identical(position, _externalPosition)) return;
+    if (_externalPosition != null) external.detach(_externalPosition!);
+    _externalPosition = position;
+    if (position != null) external.attach(position);
+  }
+
   bool _hadContent = false;
-  final Map<int, List<Widget>> _previewBodies = {};
-  double? _previewGridWidth;
-  double? _previewTextScale;
+  final Map<int, List<Widget>> _tabBodies = {};
+
+  /// 每个分类的 body 是按哪份状态建出来的。
+  ///
+  /// 切回一个已经建过的分类时，只要数据实例和分页标志都没变，就复用同一份
+  /// sliver 列表：保活页里那份子树的 widget 完全 identical，`updateChild`
+  /// 会直接短路，提交那一帧不再重建整页。
+  final Map<int, Object> _tabBodyKeys = {};
+  final Set<int> _markedBuiltTabs = <int>{};
+  int _localRevision = 0;
   Timer? _loadMoreTimer;
   bool _visible = false;
 
@@ -102,6 +145,15 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// children that leave its cache extent, so without this each scroll back up
   /// the feed replays a fade layer for every card it re-mounts.
   final _entered = <String>{};
+
+  /// The live horizontal swipe progress, handed from the swipe area to the
+  /// header so the underline and the selection block follow the finger.
+  ///
+  /// A notifier rather than a plain field: the header is rebuilt on every
+  /// frame of the drag, and rebuilding the whole page for that would throw
+  /// away the cached sliver trees the home feed depends on. Only the header
+  /// listens.
+  final ValueNotifier<double> _tabProgress = ValueNotifier<double>(0);
 
   /// The fallback grid, reused while it still describes the same feed.
   Widget? _gridSliver;
@@ -137,7 +189,6 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(_onScroll);
     final store = LibraryStore.instance;
     if (store.isInitialized) {
       _historyListenable = store.historyListenable
@@ -148,13 +199,17 @@ class _HomePageState extends ConsumerState<HomePage> {
       _onLocalDataChanged,
     );
     unawaited(HomeContinuePreferences.instance.load());
+    shellVisibleTab.addListener(_onShellVisibility);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(homeProvider.notifier).load();
     });
   }
 
   void _onLocalDataChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // 阅读史/开关变了：继续阅读那一行要跟着换，「复用旧 body」的判据也失效。
+    _localRevision++;
+    setState(() {});
   }
 
   @override
@@ -170,9 +225,12 @@ class _HomePageState extends ConsumerState<HomePage> {
       _presentationKey = presentationKey;
       _gridSliver = null;
       _blocksBody = null;
-      _previewBodies.clear();
+      _tabBodies.clear();
+      _tabBodyKeys.clear();
     }
-    final visible = TickerMode.valuesOf(context).enabled;
+    final visible =
+        shellVisibleTab.value == null ||
+        shellVisibleTab.value == widget.shellIndex;
     if (_visible == visible) return;
     _visible = visible;
     // Muting tickers does not stop this page's pagination timer.
@@ -185,15 +243,42 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  /// 壳层切走/切回：只处理定时器与续页，不做任何 `setState`。
+  ///
+  /// 旧写法读 `TickerMode` 这个 InheritedWidget，可见性一变整页就要重建一次
+  /// （真机每次切底部 tab 都跟着一帧 50–280ms 的 UI 耗时）。
+  void _onShellVisibility() {
+    if (!mounted) return;
+    final visible =
+        shellVisibleTab.value == null ||
+        shellVisibleTab.value == widget.shellIndex;
+    if (_visible == visible) return;
+    _visible = visible;
+    if (!_visible) {
+      _loadMoreTimer?.cancel();
+      _loadMoreTimer = null;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onScroll();
+      });
+    }
+  }
+
   @override
   void dispose() {
     _loadMoreTimer?.cancel();
+    shellVisibleTab.removeListener(_onShellVisibility);
     _historyListenable?.removeListener(_onLocalDataChanged);
     HomeContinuePreferences.instance.dismissedId.removeListener(
       _onLocalDataChanged,
     );
-    // 外部传入的控制器归壳层所有，这里不能释放。
-    if (_ownsScroll) _scroll.dispose();
+    if (_externalPosition != null) {
+      widget.scrollController?.detach(_externalPosition!);
+    }
+    for (final controller in _tabScrolls.values) {
+      controller.dispose();
+    }
+    _tabProgress.dispose();
     super.dispose();
   }
 
@@ -222,9 +307,13 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _selectTab(int index) {
     if (index == ref.read(homeProvider).tabIndex) return;
-    // Both headers are outside the viewport, so content starts at zero.
-    if (_scroll.hasClients) _scroll.jumpTo(0);
+    FrameStats.mark('selectTab $index');
+    // 上一个分类的续页轮询不该跟着新分类继续跑。
+    _loadMoreTimer?.cancel();
+    _loadMoreTimer = null;
+    // 每个分类有自己的 ScrollController，不需要在这里回顶。
     ref.read(homeProvider.notifier).selectTab(index);
+    _scheduleExternalSync();
   }
 
   /// 下拉与冷启动错误里的「重试」都走手动刷新：手动刷新会跳过续接快照，
@@ -273,6 +362,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeProvider);
+    _tabStates[state.tabIndex] = state;
+    _scheduleExternalSync();
     final palette = HomePalette.of(context);
     final categories = _categoriesOf(state);
     final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
@@ -308,10 +399,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                     onSearch: _openSearch,
                     onCategory: _openCategory,
                   ),
-                HomeTabBar(
-                  selectedIndex: state.tabIndex,
-                  onSelect: _selectTab,
-                  categories: categories,
+                ValueListenableBuilder<double>(
+                  valueListenable: _tabProgress,
+                  builder: (context, progress, _) => HomeTabBar(
+                    selectedIndex: state.tabIndex,
+                    onSelect: _selectTab,
+                    categories: categories,
+                    progress: progress,
+                  ),
                 ),
                 Expanded(
                   // Headers stay outside both the horizontal transform and
@@ -319,33 +414,26 @@ class _HomePageState extends ConsumerState<HomePage> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final gridWidth = constraints.maxWidth - homeGutter * 2;
-                      final content = _contentSlivers(state, gridWidth);
-                      _rememberPreviewBody(
-                        state.tabIndex,
-                        content,
-                        gridWidth,
-                        textScale,
-                      );
+                      // 短页要能自己续上：没有滚动事件时，也让页面在布局后
+                      // 检查一次是否已经到底。
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _onScroll();
+                      });
                       return ClipRect(
-                        child: TabSwipeArea(
+                        child: TabSwipeArea.pages(
                           index: state.tabIndex,
                           count: categories.length,
                           onSelect: _selectTab,
-                          previewBuilder: (target) =>
-                              _buildTabPreview(target, palette.canvas),
-                          child: RefreshIndicator(
-                            color: HomePalette.accent,
-                            backgroundColor: palette.surface,
-                            onRefresh: _refresh,
-                            child: CustomScrollView(
-                              key: const Key('home_feed'),
-                              controller: _scroll,
-                              physics: const BouncingScrollPhysics(
-                                parent: AlwaysScrollableScrollPhysics(),
-                              ),
-                              slivers: content,
-                            ),
-                          ),
+                          // The header lives outside the swipe area, so it
+                          // cannot see the drag offset; this is how the
+                          // underline learns to follow the finger.
+                          onProgress: (value) {
+                            if (_tabProgress.value != value) {
+                              _tabProgress.value = value;
+                            }
+                          },
+                          pageBuilder: (context, target) =>
+                              _buildTabPage(target, gridWidth, textScale),
                         ),
                       );
                     },
@@ -359,31 +447,64 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  void _rememberPreviewBody(
-    int tabIndex,
-    List<Widget> slivers,
+  /// 每个分类的 body：数据没变就直接复用上一次那份 sliver 列表。
+  ///
+  /// 切回一个建过的分类时，`selectTab` 发布的是同一份 `items` / `cells`
+  /// 实例；复用同一份 widget 列表后，保活页里的子树拿到的是 identical 的
+  /// 配置，Flutter 会跳过重建——提交那一帧不再重排整页。
+  List<Widget> _bodyFor(
+    int tab,
+    HomeState state,
     double gridWidth,
     double textScale,
   ) {
-    if (_previewGridWidth != gridWidth || _previewTextScale != textScale) {
-      _previewBodies.clear();
-      _previewGridWidth = gridWidth;
-      _previewTextScale = textScale;
-    }
-    _previewBodies[tabIndex] = slivers;
+    final key = (
+      state.items,
+      state.cells,
+      state.cellsTabIndex,
+      state.tabIndex,
+      state.isLoading,
+      state.isLoadMore,
+      state.hasMore,
+      state.error,
+      _localRevision,
+      gridWidth,
+      textScale,
+    );
+    final cached = _tabBodies[tab];
+    if (cached != null && _tabBodyKeys[tab] == key) return cached;
+    FrameStats.mark('body build tab=$tab items=${state.items.length}');
+    final body = _contentSlivers(state, gridWidth);
+    _tabBodies[tab] = body;
+    _tabBodyKeys[tab] = key;
+    return body;
   }
 
-  Widget _buildTabPreview(int target, Color canvas) {
-    if (target < 0 || target >= homeCategories.length) {
-      return const SizedBox.shrink();
+  Widget _buildTabPage(int target, double gridWidth, double textScale) {
+    final palette = HomePalette.of(context);
+    final saved = _tabStates[target];
+    // 只记每个分类「第一次被建出来」的时刻：和 stall 行对齐就能看出
+    // 那一下停顿是不是花在建页上。
+    if (_markedBuiltTabs.add(target)) {
+      FrameStats.mark('page first build tab=$target');
     }
-    final body = _previewBodies[target];
+    final body = saved == null
+        ? _tabBodies[target] ??= [SliverToBoxAdapter(child: _skeleton())]
+        : _bodyFor(target, saved, gridWidth, textScale);
     return ColoredBox(
-      color: canvas,
-      child: CustomScrollView(
-        primary: false,
-        physics: const NeverScrollableScrollPhysics(),
-        slivers: body ?? [SliverToBoxAdapter(child: _skeleton())],
+      color: palette.canvas,
+      child: RefreshIndicator(
+        color: HomePalette.accent,
+        backgroundColor: palette.surface,
+        onRefresh: _refresh,
+        child: CustomScrollView(
+          key: const Key('home_feed'),
+          controller: _scrollFor(target),
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          slivers: body,
+        ),
       ),
     );
   }
@@ -428,11 +549,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
     _logShape(state, blockBody != null);
 
-    // 短页要能自己续上：没有滚动事件时，也让页面在布局后检查一次是否
-    // 已经到底（内容不足一屏时 `maxScrollExtent` 为 0）。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _onScroll();
-    });
     if (blockBody != null) {
       return [
         if (now != null) _continueRow(now),
@@ -450,7 +566,8 @@ class _HomePageState extends ConsumerState<HomePage> {
       ];
     }
     if (state.isLoading || state.hasMore) {
-      if (!state.isLoading) {
+      if (!state.isLoading &&
+          state.tabIndex == ref.read(homeProvider).tabIndex) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
       }
       // `alx.xml` points its `SkeletonLayout` at `cmc`, so a cold first load
@@ -582,7 +699,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (entries.isNotEmpty) {
       // 多个卡片流合并成一个网格：首页只保留一个「为你推荐」段落，块与块
       // 之间的边界对读书的人没有意义。
-      slivers.add(SliverToBoxAdapter(child: _gridHeader(state)));
+      //
+      // 只有网格前面还有别的块时才加分区头：短剧/漫剧/漫画/听书这些分类
+      // 没有排行榜，网格就是第一段，再顶着分类名（「短剧」）当标题，等于把
+      // 顶栏已经选中的标签又念了一遍。推荐页（tab 0）保留「为你推荐」。
+      if (slivers.isNotEmpty || state.tabIndex == 0) {
+        slivers.add(SliverToBoxAdapter(child: _gridHeader(state)));
+      } else {
+        // 没有分区头时网格直接顶在标签条下面：选中背景块的底边会和第一行
+        // 封面贴在一起。用一段留白替掉被去掉的分区头位置（与短剧页同一档）。
+        slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 16)));
+      }
       slivers.add(_gridBody(entries, gridWidth));
       rendered = true;
     }
@@ -620,6 +747,9 @@ class _HomePageState extends ConsumerState<HomePage> {
     final scaler = MediaQuery.textScalerOf(context);
     final titleScale = scaler.scale(15);
     final metaScale = scaler.scale(11);
+    // 兜底网格只有在「前面还有继续阅读那一行」或者是推荐页时才带分区头；
+    // 其余分类的网格就在标签条下面，标题会重复已选中的分类名。
+    final withHeader = lead != null || state.tabIndex == 0;
     var sliver = _gridSliver;
     if (sliver == null ||
         !identical(_gridItems, state.items) ||
@@ -634,7 +764,14 @@ class _HomePageState extends ConsumerState<HomePage> {
       _gridMetaScale = metaScale;
       sliver = _gridSliver = _gridBody(entries, gridWidth);
     }
-    return [SliverToBoxAdapter(child: _gridHeader(state)), sliver];
+    return [
+      if (withHeader)
+        SliverToBoxAdapter(child: _gridHeader(state))
+      else
+        // 无分区头时留一段空白，别让选中标签的背景块贴着第一行封面。
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+      sliver,
+    ];
   }
 
   Widget _gridHeader(HomeState state) => AppStyleTokens.of(context).isClassic

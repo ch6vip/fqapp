@@ -170,13 +170,13 @@ void main() {
       );
       expect(style.style.fontSize, 17);
       expect(style.style.fontWeight, FontWeight.w700);
-      final underline = tester
-          .widgetList<AnimatedContainer>(
-            find.descendant(of: tab, matching: find.byType(AnimatedContainer)),
-          )
-          .last;
-      expect(underline.constraints!.maxWidth, 16);
-      expect(underline.constraints!.maxHeight, 2.5);
+      // The underline is drawn once for the whole bar now, so it can slide
+      // between the categories; it keeps the old 16 × 2.5dp shape.
+      final indicator = tester.widget<AnimatedPositioned>(
+        find.byKey(const ValueKey('home_tab_indicator')),
+      );
+      expect(indicator.width, 16);
+      expect(indicator.height, 2.5);
       await tester.tap(find.byKey(const ValueKey('home_category_1')));
       expect(selected, 1);
     },
@@ -384,6 +384,80 @@ void main() {
     },
   );
 
+  for (final initial in [0, 2]) {
+    for (final swipe in [false, true]) {
+      testWidgets('首页${swipe ? '滑动' : '点按'} $initial 到 1 下划线逐帧不越位', (
+        tester,
+      ) async {
+        await tester.binding.setSurfaceSize(const Size(360, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              homeProvider.overrideWith(
+                () => HomeNotifier(
+                  usesLocalTabs: true,
+                  initialTabIndex: initial,
+                  homepageLoader:
+                      ({
+                        int tabType = 2,
+                        int offset = 0,
+                        String? sessionId,
+                      }) async => const HomepagePage(
+                        items: [],
+                        nextOffset: null,
+                        sessionId: null,
+                      ),
+                  searchLoader: (query, {int page = 1}) async => const [],
+                ),
+              ),
+            ],
+            child: _classic(const HomePage()),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final indicator = find.byKey(const ValueKey('home_tab_indicator'));
+        final targetTab = find.byKey(const ValueKey('home_category_1'));
+        final target = tester.getCenter(targetTab).dx;
+        final direction = initial == 0 ? 1 : -1;
+        var previous = tester.getCenter(indicator).dx;
+        if (swipe) {
+          // 真分页的吸附阈值是半页（且起手会吃掉一个 touch slop）：拖够 24 格
+          // 才稳稳越过中点，与 PiliPlus 的 TabBarView 一致。
+          final gesture = await tester.startGesture(const Offset(180, 500));
+          for (var frame = 0; frame < 24; frame++) {
+            await gesture.moveBy(Offset(-10.0 * direction, 0));
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          previous = tester.getCenter(indicator).dx;
+          await gesture.up();
+        } else {
+          await tester.tap(targetTab);
+        }
+        await tester.pump();
+        for (var frame = 0; frame < 45; frame++) {
+          final centre = tester.getCenter(indicator).dx;
+          expect(
+            (centre - target) * direction,
+            lessThanOrEqualTo(0.1),
+            reason: '第 $frame 帧越过目标',
+          );
+          expect(
+            (centre - previous) * direction,
+            greaterThanOrEqualTo(-0.1),
+            reason: '第 $frame 帧反向回弹',
+          );
+          previous = centre;
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(tester.widget<TabSwipeArea>(find.byType(TabSwipeArea)).index, 1);
+        expect(previous, closeTo(target, 0.1));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets(
     'cached neighbouring tabs cannot bring archive slivers into classic home',
     (tester) async {
@@ -446,29 +520,23 @@ void main() {
       );
       final feed = container.read(homeProvider);
       final before = loads;
-      List<Widget> preview(int index) {
-        final swipe = tester.widget<TabSwipeArea>(find.byType(TabSwipeArea));
-        final box = swipe.previewBuilder!(index) as ColoredBox;
-        return (box.child as CustomScrollView).slivers;
-      }
-
-      expect(
-        (preview(0).first as SliverToBoxAdapter).child,
-        isA<HomeSectionLabel>(),
-      );
+      expect(find.byType(HomeSectionLabel, skipOffstage: false), findsWidgets);
       style.value = AppThemeStyle.classic;
       await tester.pumpAndSettle();
       expect(tester.state(find.byType(HomePage)), same(pageState));
       expect(container.read(homeProvider), same(feed));
       expect(container.read(homeProvider).tabIndex, 1);
       expect(loads, before);
-      expect(
-        (preview(0).single as SliverToBoxAdapter).child,
-        isA<ClassicHomeSkeleton>(),
-      );
+      // 回到已经挂载过的分类：页面子树保活，但按新皮肤重建，不能留下
+      // 档案主题的区块组件，也不能重新发请求。
+      await tester.tap(find.byKey(const ValueKey('home_category_0')));
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(HomePage)), same(pageState));
+      expect(loads, before);
       expect(find.byType(HomeMasthead), findsNothing);
       expect(find.byType(HomeHero), findsOneWidget);
       expect(find.byType(HomeSectionLabel), findsNothing);
+      expect(find.byType(ClassicHomeSkeleton), findsNothing);
       final cards = tester.widgetList<HomeMediaCard>(
         find.byType(HomeMediaCard),
       );
@@ -476,7 +544,7 @@ void main() {
       expect(
         cards.every(
           (card) =>
-              card.item.title.startsWith('分类1-') &&
+              card.item.title.startsWith('分类0-') &&
               card.radius == 12 &&
               card.titleSize == 15,
         ),
@@ -485,6 +553,53 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('首页标签条到排行榜标题的留白不超过 24dp，且不放重复的分类名', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              usesLocalTabs: true,
+              homepageLoader:
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [for (var i = 1; i <= 12; i++) _book(i)],
+                    cells: [_rankCell()],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
+              searchLoader: (query, {int page = 1}) async => const [],
+            ),
+          ),
+        ],
+        child: _classic(const HomePage()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 标签文字底部 → 排行榜标题顶部。旧值 37.5，中间一片空白。
+    final tabText = tester.getRect(find.text('推荐').first);
+    final title = tester.getRect(find.text('排行榜').first);
+    final gap = title.top - tabText.bottom;
+    expect(gap, lessThanOrEqualTo(24), reason: '标签到排行榜标题空出了 $gap dp');
+    expect(gap, greaterThan(12), reason: '压得太狠会贴着标签文字');
+
+    // 非「推荐」分类不再用分类名当分区头：网格就是第一段。排行榜区块自己的
+    // 标题（「排行榜」）仍在，但页面里不应再出现第二个「小说」。
+    await tester.tap(find.byKey(const ValueKey('home_category_1')));
+    await tester.pumpAndSettle();
+    expect(find.text('小说'), findsOneWidget);
+    expect(find.text('排行榜'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'classic loading, error and stream footer have no archive vocabulary',

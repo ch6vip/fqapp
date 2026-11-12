@@ -30,11 +30,19 @@ class HomeTabBar extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final List<HomeCategory> categories;
 
+  /// The live horizontal swipe progress: -1 is the previous tab, 0 the current
+  /// one, 1 the next one. See [ClassicHomeTabBar.progress].
+  ///
+  /// **只有经典主题（[ClassicHomeTabBar]）会消费它**：档案风格的标签条是
+  /// 每个标签自己带一条下划线，横滑时不做跟手位移，这里仅透传、不参与布局。
+  final double? progress;
+
   const HomeTabBar({
     super.key,
     required this.selectedIndex,
     required this.onSelect,
     this.categories = homeCategories,
+    this.progress,
   });
 
   @override
@@ -44,6 +52,7 @@ class HomeTabBar extends StatelessWidget {
         selectedIndex: selectedIndex,
         onSelect: onSelect,
         categories: categories,
+        progress: progress,
       );
     }
     final palette = HomePalette.of(context);

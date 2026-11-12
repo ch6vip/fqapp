@@ -112,7 +112,7 @@ Future<void> _pumpHost(
 }
 
 void main() {
-  // 400 宽 ⇒ 切换阈值 0.18*400 = 72px，跟手的 1:1 区间 0.28*400 = 112px。
+  // 400 宽 ⇒ 切换阈值 0.18*400 = 72px；跟手 1:1 直到一屏宽（400px）才封顶。
   testWidgets('拖动时内容跟手位移，越过阈值松手切到下一个标签', (tester) async {
     final requests = <int>[];
     await _pumpHost(tester, requests: requests);
@@ -121,13 +121,13 @@ void main() {
     );
     await gesture.moveBy(const Offset(-60, 0));
     await tester.pump();
-    expect(_offsetX(tester), lessThan(-40));
+    // 1:1 跟手：手势走多少，内容就移多少。
+    expect(_offsetX(tester), moreOrLessEquals(-60, epsilon: 0.5));
 
     await gesture.moveBy(const Offset(-140, 0));
     await tester.pump();
-    // 越过 112px 的 1:1 区间后按 0.35 收缩：200px 的手势只走约 143px。
-    expect(_offsetX(tester), greaterThan(-200));
-    expect(_offsetX(tester), lessThan(-140));
+    // 累计 -200px 仍在 1:1 区间（< 400px 屏宽），内容精确移 -200px，不再阻尼。
+    expect(_offsetX(tester), moreOrLessEquals(-200, epsilon: 0.5));
 
     await gesture.up();
     await tester.pumpAndSettle();

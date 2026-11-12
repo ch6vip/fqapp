@@ -31,6 +31,7 @@ import 'package:fqapp/services/swipe_guide_store.dart';
 
 import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
+import 'package:fqapp/widgets/home/classic_home_tab_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
 import 'package:fqapp/widgets/shell_dock.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
@@ -186,16 +187,27 @@ Future<void> _flush(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 16));
 }
 
-/// 横滑切标签的三段动画：送出 110ms → onSelect → 迎入 190ms。
+/// 横滑切标签的收尾：PageView 用 260ms 吸附到目标页。
 ///
-/// `_flush` 只推进 16ms，动画跑完之前 `onSelect` 还没发出、频道不会换，所以
-/// 凡断言切换结果的地方都要先推过这一整段。逐帧推而不是 `pump` 一次大步长：
-/// 大步长会错过 `endOfFrame` 那一轮的重建。
+/// `_flush` 只推进 16ms，动画跑完之前页面还没落位，所以凡断言切换结果的
+/// 地方都要先推过这一整段。逐帧推而不是 `pump` 一次大步长：大步长会错过
+/// 页面进入视口那一轮的重建。
 Future<void> _settleSwipe(WidgetTester tester) async {
   for (var i = 0; i < 24; i++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
   await _flush(tester);
+}
+
+/// 页面是否真的在屏幕上：保活页留在树里但被推到视口外。
+bool _onScreen(WidgetTester tester, Finder finder) {
+  final candidates = finder.evaluate();
+  if (candidates.isEmpty) return false;
+  final box = candidates.first.renderObject! as RenderBox;
+  if (!box.hasSize) return false;
+  final left = box.localToGlobal(Offset.zero).dx;
+  final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
+  return left > -0.5 && left < width - 0.5;
 }
 
 late Directory _hiveDir;
@@ -612,6 +624,129 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('频道指示条落在频道标签的正中心，且切换时不错位', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+
+    final indicator = find.byKey(const Key('drama_channel_indicator'));
+    expect(indicator, findsOneWidget);
+
+    // The indicator sits on the centre of the selected channel label.
+    final label = tester.getRect(find.text('推荐'));
+    final bar = tester.getRect(indicator);
+    expect(
+      bar.center.dx,
+      moreOrLessEquals(label.center.dx, epsilon: 2),
+      reason: '指示条必须落在频道标签的正中心',
+    );
+
+    // After switching, it follows the new label.
+    await tester.tap(find.text('看剧'));
+    await tester.pumpAndSettle();
+    final nextLabel = tester.getRect(find.text('看剧'));
+    final nextBar = tester.getRect(indicator);
+    expect(
+      nextBar.center.dx,
+      moreOrLessEquals(nextLabel.center.dx, epsilon: 2),
+      reason: '切换后指示条必须落在新频道标签的正中心',
+    );
+  });
+
+  for (final initial in [0, 2]) {
+    for (final swipe in [false, true]) {
+      testWidgets('短剧${swipe ? '滑动' : '点按'} $initial 到 1 下划线逐帧不越位', (
+        tester,
+      ) async {
+        await tester.binding.setSurfaceSize(const Size(360, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+        DramaChannelPreferences.selectedType = initial == 0
+            ? kChannelVideoFeed
+            : kChannelDynamicComic;
+        await tester.pumpWidget(
+          _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+        );
+        await _flush(tester);
+        await tester.pumpAndSettle();
+        final indicator = find.byKey(const Key('drama_channel_indicator'));
+        final target = tester.getCenter(find.text('看剧')).dx;
+        final direction = initial == 0 ? 1 : -1;
+        var previous = tester.getCenter(indicator).dx;
+        if (swipe) {
+          // 真分页的吸附阈值是半页（起手还会吃掉一个 touch slop）：拖够 24 格。
+          final gesture = await tester.startGesture(const Offset(180, 500));
+          for (var frame = 0; frame < 24; frame++) {
+            await gesture.moveBy(Offset(-10.0 * direction, 0));
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          previous = tester.getCenter(indicator).dx;
+          await gesture.up();
+        } else {
+          await tester.tap(find.text('看剧'));
+        }
+        await tester.pump();
+        for (var frame = 0; frame < 45; frame++) {
+          final centre = tester.getCenter(indicator).dx;
+          expect(
+            (centre - target) * direction,
+            lessThanOrEqualTo(0.1),
+            reason: '第 $frame 帧越过目标',
+          );
+          expect(
+            (centre - previous) * direction,
+            greaterThanOrEqualTo(-0.1),
+            reason: '第 $frame 帧反向回弹',
+          );
+          previous = centre;
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(tester.widget<TabSwipeArea>(find.byType(TabSwipeArea)).index, 1);
+        expect(previous, closeTo(target, 0.1));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  testWidgets('手机频道条均分可用宽度，切换和改变屏宽不挤向左侧', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    const labels = ['推荐', '看剧', '漫剧', '最近', '收藏'];
+    for (final width in [360.0, 430.0]) {
+      await tester.binding.setSurfaceSize(Size(width, 800));
+      await tester.pumpAndSettle();
+      final cellWidth =
+          (width - 2 * ClassicHomeTabBar.sidePadding) / labels.length;
+      for (var index = 0; index < labels.length; index++) {
+        expect(
+          tester.getCenter(find.text(labels[index])).dx,
+          closeTo(ClassicHomeTabBar.sidePadding + (index + .5) * cellWidth, .1),
+        );
+      }
+      await tester.tap(find.text('漫剧'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getCenter(find.byKey(const Key('drama_channel_indicator'))).dx,
+        closeTo(tester.getCenter(find.text('漫剧')).dx, .1),
+      );
+      final strip = tester.widget<SingleChildScrollView>(
+        find.byKey(const Key('drama_channel_strip')),
+      );
+      expect(strip.controller!.position.maxScrollExtent, 0);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('频道条按首页留白，标签切换沿用首页放大动画', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -622,7 +757,7 @@ void main() {
     );
     await _flush(tester);
 
-    // 搜索行 51dp（6 + 36 + 9），选中 24sp 标签的顶部与搜索框底边之间
+    // 搜索行 51dp（6 + 36 + 9），选中标签的顶部与搜索框底边之间
     // 至少留出 9dp；旧的 38dp 搜索行只有约 7dp，标签贴着搜索框。
     final search = tester.getRect(find.byKey(const Key('drama_search_button')));
     final selectedTab = tester.getRect(find.text('推荐'));
@@ -635,22 +770,51 @@ void main() {
       return rich.text.style!.fontSize!;
     }
 
-    // 首页的字号档位：选中 24sp、未选中 16sp。
-    expect(fontSizeOf('推荐'), 24);
-    expect(fontSizeOf('看剧'), 16);
+    const selectedSize = ClassicHomeTabBar.selectedSize;
+    const unselectedSize = ClassicHomeTabBar.unselectedSize;
+    expect(fontSizeOf('推荐'), selectedSize);
+    expect(fontSizeOf('看剧'), unselectedSize);
+    for (final label in ['推荐', '看剧']) {
+      final text = tester.widget<RichText>(
+        find.descendant(of: find.text(label), matching: find.byType(RichText)),
+      );
+      expect(text.text.style!.height, 1);
+      expect(
+        text.text.style!.fontWeight,
+        label == '推荐' ? FontWeight.w700 : FontWeight.w500,
+      );
+      final tab = find
+          .ancestor(of: find.text(label), matching: find.byType(InkWell))
+          .first;
+      final padding = tester.widget<Padding>(
+        find.descendant(of: tab, matching: find.byType(Padding)).first,
+      );
+      expect(
+        padding.padding,
+        const EdgeInsets.symmetric(horizontal: ClassicHomeTabBar.labelPadding),
+      );
+      final material = tester.widget<Material>(
+        find.ancestor(of: tab, matching: find.byType(Material)).first,
+      );
+      expect(material.color, Colors.transparent);
+    }
+    expect(
+      find.byKey(const ValueKey('home_tab_selection_block')),
+      findsNothing,
+    );
 
     await tester.tap(find.text('看剧'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 90));
     // 切换不是瞬间跳字号：180ms 动画走到一半时两档都还在中间值。
-    expect(fontSizeOf('推荐'), greaterThan(16));
-    expect(fontSizeOf('推荐'), lessThan(24));
-    expect(fontSizeOf('看剧'), greaterThan(16));
-    expect(fontSizeOf('看剧'), lessThan(24));
+    expect(fontSizeOf('推荐'), greaterThan(unselectedSize));
+    expect(fontSizeOf('推荐'), lessThan(selectedSize));
+    expect(fontSizeOf('看剧'), greaterThan(unselectedSize));
+    expect(fontSizeOf('看剧'), lessThan(selectedSize));
 
     await tester.pump(const Duration(milliseconds: 150));
-    expect(fontSizeOf('推荐'), 16);
-    expect(fontSizeOf('看剧'), 24);
+    expect(fontSizeOf('推荐'), unselectedSize);
+    expect(fontSizeOf('看剧'), selectedSize);
     expect(tester.takeException(), isNull);
   });
 
@@ -679,8 +843,8 @@ void main() {
       find.ancestor(of: find.text('推荐'), matching: find.byType(InkWell)).first,
     );
     final search = tester.getRect(find.byKey(const Key('drama_search_button')));
-    // 24sp 在 2 倍字号下已有 52.8dp 高，锁死 38dp 会溢出；条带要跟着长高。
-    expect(tab.height, greaterThan(38));
+    // 选中字在 2 倍字号下加纵向留白，条带随文字一起长高。
+    expect(tab.height, greaterThan(ClassicHomeTabBar.barHeight));
     expect(tab.top, greaterThan(search.bottom));
     expect(tester.takeException(), isNull);
   });
@@ -733,7 +897,7 @@ void main() {
   });
 
   testWidgets('频道条把选中项滚进视口，切换后写回 SP', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
+    await tester.binding.setSurfaceSize(const Size(240, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
@@ -748,7 +912,7 @@ void main() {
       _scope(
         perTab: 1,
         child: MaterialApp(
-          // 2 倍字号（Android 上限）下五个标签总宽超出 360dp：不滚的话
+          // 2 倍字号、240dp 窄视口下：不滚的话
           // 恢复到的「漫剧」会卡在视口外。
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(
@@ -770,7 +934,7 @@ void main() {
     expect(strip.controller!.offset, greaterThan(0));
     final manju = tester.getRect(find.text('漫剧'));
     expect(manju.left, greaterThanOrEqualTo(0));
-    expect(manju.right, lessThanOrEqualTo(360));
+    expect(manju.right, lessThanOrEqualTo(240));
 
     // 点「看剧」：条带跟着滚回去，选中项始终完整可见。
     final before = strip.controller!.offset;
@@ -779,7 +943,7 @@ void main() {
     expect(strip.controller!.offset, lessThan(before));
     final episode = tester.getRect(find.text('看剧'));
     expect(episode.left, greaterThanOrEqualTo(0));
-    expect(episode.right, lessThanOrEqualTo(360));
+    expect(episode.right, lessThanOrEqualTo(240));
     expect(find.text('8-0 作品'), findsOneWidget);
 
     // 选择写回 SP：下次冷启动落在看剧（8），上一次是漫剧（24）。
@@ -1637,10 +1801,10 @@ void main() {
     );
     await _flush(tester);
     await tester.tap(find.text('漫剧'));
-    await _flush(tester);
+    await _settleSwipe(tester);
     // 漫剧 = 网格（数据来自 tab_type 24 的流），不再挂竖滑 feed。
     expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
-    expect(find.byKey(const Key('drama_feed')), findsNothing);
+    expect(_onScreen(tester, find.byKey(const Key('drama_feed'))), isFalse);
     expect(find.text('24-0 作品'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -1666,9 +1830,9 @@ void main() {
     );
     await _flush(tester);
     await tester.tap(find.text('看剧'));
-    await _flush(tester);
+    await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
-    expect(find.byKey(const Key('drama_feed')), findsNothing);
+    expect(_onScreen(tester, find.byKey(const Key('drama_feed'))), isFalse);
     expect(find.text('8-0 作品'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -1695,7 +1859,7 @@ void main() {
     );
     await _flush(tester);
     await tester.tap(find.text('看剧'));
-    await _flush(tester);
+    await _settleSwipe(tester);
 
     // 海报格页以前恒为白底黑字，深色主题下整页会刺眼——现在跟随色板。
     expect(
@@ -2098,10 +2262,10 @@ void main() {
     // 搜索行不渲染；分区搜索只剩频道条右端的图标一处。
     expect(find.byKey(const Key('drama_search_button')), findsNothing);
     expect(find.byKey(const Key('drama_strip_search_button')), findsOneWidget);
-    // 播放器顶端只让出频道条一行（38），不再是搜索行 + 频道条的 76。
+    // 桌面播放器仅让出频道条一行，与首页标签基础高度一致。
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('desktop-feed-player'))).dy,
-      closeTo(38, 0.5),
+      closeTo(ClassicHomeTabBar.barHeight, 0.5),
     );
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -2140,7 +2304,10 @@ void main() {
     );
     await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
-    expect(find.byKey(const Key('drama_episode_grid')), findsNothing);
+    expect(
+      _onScreen(tester, find.byKey(const Key('drama_episode_grid'))),
+      isFalse,
+    );
 
     // 往右：漫剧 → 看剧。
     await tester.drag(
@@ -2177,19 +2344,29 @@ void main() {
     await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
 
-    // 按住不放，停在跟手位移中间：当前页还是看剧，但漫剧的卡片应该
-    // 已经在让出来的缺口里画出来了。
+    // 按住不放，停在半页之前：当前页还是看剧，但漫剧的真实页面已经跟着
+    // 手指从右侧露出来了（不再是另画的预览副本）。
     final gesture = await tester.startGesture(
       tester.getCenter(find.byKey(const Key('drama_episode_grid'))),
     );
-    for (var step = 0; step < 5; step++) {
+    for (var step = 0; step < 2; step++) {
       await gesture.moveBy(const Offset(-50, 0));
       await tester.pump();
     }
     expect(
+      tester.widget<TabSwipeArea>(find.byType(TabSwipeArea)).index,
+      1,
+      reason: '还没松手、也没过半页，不该已经切到漫剧',
+    );
+    expect(
       find.byKey(const Key('drama_manju_grid')),
-      findsNothing,
-      reason: '还没松手，不该已经切到漫剧',
+      findsOneWidget,
+      reason: '横滑中途邻页要真的建出来',
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('drama_manju_grid'))).dx,
+      greaterThan(0),
+      reason: '邻页应该跟着手指从右侧进入视口',
     );
     expect(
       find.byWidgetPredicate(
@@ -2197,12 +2374,18 @@ void main() {
             widget.key is ValueKey<String> &&
             (widget.key as ValueKey<String>).value.startsWith('preview.'),
       ),
-      findsWidgets,
-      reason: '横滑中途没把邻页画出来，那一侧只剩底色（黑面板）',
+      findsNothing,
+      reason: '真实分页不再另画预览副本',
     );
 
+    // 继续拖过半页再松手：这一次真正切到漫剧。
+    for (var step = 0; step < 3; step++) {
+      await gesture.moveBy(const Offset(-50, 0));
+      await tester.pump();
+    }
     await gesture.up();
     await _settleSwipe(tester);
+    expect(tester.widget<TabSwipeArea>(find.byType(TabSwipeArea)).index, 2);
     expect(find.byKey(const Key('drama_manju_grid')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -2230,7 +2413,7 @@ void main() {
     );
     await _settleSwipe(tester);
     expect(find.byKey(const Key('drama_episode_grid')), findsOneWidget);
-    expect(find.byKey(const Key('drama_feed')), findsNothing);
+    expect(_onScreen(tester, find.byKey(const Key('drama_feed'))), isFalse);
 
     // 往右滑回去：看剧 → 推荐，双向一致。
     await tester.drag(
@@ -2242,5 +2425,54 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await _flush(tester);
+  });
+
+  testWidgets('频道下划线贴着文字，条带到卡片的距离与首页一致', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    SharedPreferences.setMockInitialValues({});
+    DramaChannelPreferences.reset();
+    DramaChannelPreferences.load(await SharedPreferences.getInstance());
+
+    await tester.pumpWidget(
+      _scope(perTab: 1, child: MaterialApp(home: _Seams().page())),
+    );
+    await _flush(tester);
+    await tester.tap(find.text('看剧'));
+    await _settleSwipe(tester);
+
+    // 下划线：选中标签文字底部到指示条顶部的距离，和首页标签条同一个口径
+    // （条带高 40、指示条 3dp、下缘留白 6dp）。
+    final label = tester.getRect(find.text('看剧').first);
+    final indicator = tester.getRect(
+      find.byKey(const Key('drama_channel_indicator')),
+    );
+    final underlineGap = indicator.top - label.bottom;
+    expect(
+      underlineGap,
+      lessThanOrEqualTo(6),
+      reason: '下划线离文字 $underlineGap dp，太大了',
+    );
+    expect(underlineGap, greaterThanOrEqualTo(0), reason: '下划线压到文字上了');
+
+    // 频道条 → 第一张卡：网格的顶部内边距 = 状态栏 + 顶栏高度 + 16。
+    // （直接量 GridView 的 rect 没有意义：它的视口从页面顶部开始，留白在
+    // padding 里。）
+    final gridFinder = find.byKey(const Key('drama_episode_grid'));
+    final grid = tester.widget<GridView>(gridFinder);
+    final padding = grid.padding! as EdgeInsets;
+    final gridContext = tester.element(gridFinder);
+    final expectedTop =
+        MediaQuery.paddingOf(gridContext).top +
+        dramaTopChromeHeight(gridContext) +
+        16;
+    expect(
+      padding.top,
+      moreOrLessEquals(expectedTop, epsilon: .1),
+      reason:
+          '条带到卡片是 ${padding.top - MediaQuery.paddingOf(gridContext).top - dramaTopChromeHeight(gridContext)} dp',
+    );
+    expect(tester.takeException(), isNull);
   });
 }
