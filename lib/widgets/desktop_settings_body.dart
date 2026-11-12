@@ -26,26 +26,7 @@ class _DesktopSettingsBodyState extends State<DesktopSettingsBody> {
             padding: const EdgeInsets.all(12),
             children: [
               for (var i = 0; i < widget.categories.length; i++)
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: _selected == i ? palette.soft : null,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: SettingsRow(
-                    icon: widget.categories[i].icon,
-                    title: widget.categories[i].title,
-                    subtitle: widget.categories[i].subtitle,
-                    showChevron: false,
-                    trailing: _selected == i
-                        ? Icon(
-                            LucideIcons.check,
-                            size: 16,
-                            color: palette.accentText,
-                          )
-                        : null,
-                    onTap: () => setState(() => _selected = i),
-                  ),
-                ),
+                _categoryRow(i, palette),
             ],
           ),
         ),
@@ -67,6 +48,47 @@ class _DesktopSettingsBodyState extends State<DesktopSettingsBody> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Keeps the selected check and the category's current value on the same
+  /// trailing edge, matching the phone rows instead of hiding the value in
+  /// the subtitle on desktop only.
+  Widget _categoryRow(int index, HomePalette palette) {
+    final category = widget.categories[index];
+    final selected = _selected == index;
+    final value = category.value;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: selected ? palette.soft : null,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: SettingsRow(
+        icon: category.icon,
+        title: category.title,
+        subtitle: category.subtitle,
+        showChevron: false,
+        trailing: value == null && !selected
+            ? null
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (value != null)
+                    Text(
+                      value,
+                      style: TextStyle(fontSize: 13, color: palette.muted),
+                    ),
+                  if (value != null && selected) const SizedBox(width: 6),
+                  if (selected)
+                    Icon(
+                      LucideIcons.check,
+                      size: 16,
+                      color: palette.accentText,
+                    ),
+                ],
+              ),
+        onTap: () => setState(() => _selected = index),
+      ),
     );
   }
 }

@@ -44,6 +44,11 @@ class SettingsCategory {
   /// About page).
   final WidgetBuilder? pageBuilder;
 
+  /// Optional current value shown on the trailing side (e.g. the selected
+  /// theme). It sits next to the chevron, leaving [subtitle] free for the
+  /// description on every presentation.
+  final String? value;
+
   const SettingsCategory({
     required this.icon,
     required this.title,
@@ -51,6 +56,7 @@ class SettingsCategory {
     this.items = const [],
     this.itemsBuilder,
     this.pageBuilder,
+    this.value,
   });
 }
 
