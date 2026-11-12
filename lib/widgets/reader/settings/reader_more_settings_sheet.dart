@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
+import '../../../services/linux_platform.dart';
 import '../../../services/reader_preferences.dart';
 import '../../app_ui/app_ui_scope.dart';
 import '../reader_tap_zone_sheet.dart';
@@ -173,11 +174,12 @@ class _ReaderMoreSettingsSheetState
       if (_shows(ReaderBehaviorCategory.operations)) ...[
         const ReaderSettingsSectionHeader(title: '操作'),
         ReaderSettingsNavRow(label: '点击区域', onTap: _editTapZones),
-        ReaderSettingsSwitchRow(
-          label: '音量键翻页',
-          value: value.volumeKeyTurn,
-          onChanged: (on) => _apply((p) => p.copyWith(volumeKeyTurn: on)),
-        ),
+        if (!isLinuxDesktop)
+          ReaderSettingsSwitchRow(
+            label: '音量键翻页',
+            value: value.volumeKeyTurn,
+            onChanged: (on) => _apply((p) => p.copyWith(volumeKeyTurn: on)),
+          ),
       ],
       if (_shows(ReaderBehaviorCategory.turn) ||
           widget.category == ReaderBehaviorCategory.operations) ...[
@@ -231,8 +233,10 @@ class _ReaderMoreSettingsSheetState
         _einkRefreshRow(),
       if (_shows(ReaderBehaviorCategory.listening)) _listeningSection(),
       if (_shows(ReaderBehaviorCategory.operations)) ...[
-        const ReaderSettingsDivider(),
-        ..._videoSettings(),
+        if (!isLinuxDesktop) ...[
+          const ReaderSettingsDivider(),
+          ..._videoSettings(),
+        ],
         const ReaderSettingsDivider(),
         ReaderSettingsNavRow(
           label: '正文替换',

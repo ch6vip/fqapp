@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/reader_device.dart';
 import 'package:fqapp/services/reader_preferences.dart';
+import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
 import 'package:fqapp/widgets/reader/reader_appearance_sheet.dart';
 import 'package:fqapp/widgets/reader/reader_controls.dart';
 import 'package:fqapp/widgets/reader/settings/reader_settings_widgets.dart';
@@ -23,6 +26,93 @@ void main() {
     TestWidgetsFlutterBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
+  });
+
+  tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+  for (final style in AppThemeStyle.values) {
+    testWidgets('Linux ${style.name} 操作设置隐藏音量键且保留已有偏好', (tester) async {
+      final store = AppThemeStyleStore()..value = style;
+      addTearDown(store.dispose);
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      try {
+        final changes = await _openSheet(
+          tester,
+          initial: const ReaderPreferences(
+            volumeKeyTurn: true,
+            showVideoButton: true,
+            videoChapterSync: true,
+          ),
+          store: store,
+          section: style == AppThemeStyle.classic
+              ? ReaderSettingsSection.operations
+              : ReaderSettingsSection.all,
+        );
+        if (style == AppThemeStyle.archive) {
+          await tester.ensureVisible(
+            find.byKey(const ValueKey('reader-settings-category-operations')),
+          );
+          expect(find.text('点击区域 · 正文替换'), findsOneWidget);
+          expect(find.text('点击区域 · 音量键 · 正文替换'), findsNothing);
+          await openReaderSettingsCategory(tester, 'operations');
+        }
+        expect(find.text('音量键翻页'), findsNothing);
+        expect(find.text('改编剧'), findsNothing);
+        expect(find.text('阅读器展示「看」悬浮球'), findsNothing);
+        expect(find.text('按阅读章节播放改编剧'), findsNothing);
+        expect(find.text('点击区域'), findsOneWidget);
+        final row = find.byWidgetPredicate(
+          (widget) =>
+              widget is ReaderSettingsSwitchRow && widget.label == '连续阅读',
+        );
+        tester.widget<ReaderSettingsSwitchRow>(row).onChanged(false);
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(changes, isNotEmpty);
+        expect(changes.last.volumeKeyTurn, isTrue);
+        expect(changes.last.showVideoButton, isTrue);
+        expect(changes.last.videoChapterSync, isTrue);
+        if (style == AppThemeStyle.classic) {
+          await tester.tap(find.byTooltip('关闭排版设置'));
+          await tester.pumpAndSettle();
+        } else {
+          await closeReaderSettingsSheet(tester);
+        }
+        expect(changes.last.volumeKeyTurn, isTrue);
+        expect(changes.last.showVideoButton, isTrue);
+        expect(changes.last.videoChapterSync, isTrue);
+        expect(tester.takeException(), isNull);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
+
+  testWidgets('Android 操作设置保留音量键翻页控制', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      final changes = await _openSheet(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('reader-settings-category-operations')),
+      );
+      expect(find.text('点击区域 · 音量键 · 正文替换'), findsOneWidget);
+      await openReaderSettingsCategory(tester, 'operations');
+      expect(find.text('改编剧'), findsOneWidget);
+      expect(find.text('阅读器展示「看」悬浮球'), findsOneWidget);
+      expect(find.text('按阅读章节播放改编剧'), findsOneWidget);
+      final row = find.byWidgetPredicate(
+        (widget) =>
+            widget is ReaderSettingsSwitchRow && widget.label == '音量键翻页',
+      );
+      tester.widget<ReaderSettingsSwitchRow>(row).onChanged(true);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(changes.last.volumeKeyTurn, isTrue);
+      await closeReaderSettingsSheet(tester);
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   group('opening from the reading menu', () {
@@ -384,6 +474,8 @@ Future<List<ReaderPreferences>> _openSheet(
   double scale = 1,
   bool einkOverride = false,
   bool oledOverride = false,
+  AppThemeStyleStore? store,
+  ReaderSettingsSection section = ReaderSettingsSection.all,
 }) async {
   _sizeView(tester, size);
   final changes = <ReaderPreferences>[];
@@ -393,7 +485,7 @@ Future<List<ReaderPreferences>> _openSheet(
         data: MediaQuery.of(
           context,
         ).copyWith(textScaler: TextScaler.linear(scale)),
-        child: child!,
+        child: store == null ? child! : AppUiScope(store: store, child: child!),
       ),
       home: Builder(
         builder: (context) => Scaffold(
@@ -402,6 +494,7 @@ Future<List<ReaderPreferences>> _openSheet(
               onPressed: () => showReaderSettingsSheet(
                 context: context,
                 initialValue: initial,
+                initialSection: section,
                 onChanged: changes.add,
                 onPickFont: () async => null,
                 deviceAvailable: true,

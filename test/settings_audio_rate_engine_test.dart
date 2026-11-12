@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/pages/settings_page.dart';
@@ -13,7 +14,10 @@ void main() {
     AudioPreferences.instance.resetForTest();
   });
 
-  tearDown(() => AudioPreferences.instance.resetForTest());
+  tearDown(() {
+    AudioPreferences.instance.resetForTest();
+    debugDefaultTargetPlatformOverride = null;
+  });
 
   Finder menuOption(String label) => find.descendant(
     of: find.byType(GlassMenuItem),
@@ -24,23 +28,31 @@ void main() {
   // 但 1.0.133 把默认换成 WSOLA 后部分设备一直「缓冲中」没有任何声音，所以默认
   // 退回内建 Sonic，WSOLA 仍可在设置里手动选择并落盘。
   testWidgets('听书变速引擎默认内建 Sonic，可切到 WSOLA 并持久化', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
-    await tester.tap(find.text('听书'));
-    await tester.pumpAndSettle();
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await tester.pumpWidget(const MaterialApp(home: SettingsPage()));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('听书'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('听书'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('听书变速引擎'), findsOneWidget);
-    expect(find.text(AudioRateEngine.builtIn.label), findsOneWidget);
+      expect(find.text('听书变速引擎'), findsOneWidget);
+      expect(find.text(AudioRateEngine.builtIn.label), findsOneWidget);
 
-    await tester.tap(find.text('听书变速引擎'));
-    await tester.pumpAndSettle();
-    expect(menuOption(AudioRateEngine.wsola.label), findsOneWidget);
-    expect(menuOption(AudioRateEngine.builtIn.label), findsOneWidget);
+      await tester.tap(find.text('听书变速引擎'));
+      await tester.pumpAndSettle();
+      expect(menuOption(AudioRateEngine.wsola.label), findsOneWidget);
+      expect(menuOption(AudioRateEngine.builtIn.label), findsOneWidget);
 
-    await tester.tap(menuOption(AudioRateEngine.wsola.label));
-    await tester.pumpAndSettle();
+      await tester.tap(menuOption(AudioRateEngine.wsola.label));
+      await tester.pumpAndSettle();
 
-    expect(AudioPreferences.instance.rateEngine.value, AudioRateEngine.wsola);
-    final preferences = await SharedPreferences.getInstance();
-    expect(preferences.getString('audio_rate_engine'), 'wsola');
+      expect(AudioPreferences.instance.rateEngine.value, AudioRateEngine.wsola);
+      final preferences = await SharedPreferences.getInstance();
+      expect(preferences.getString('audio_rate_engine'), 'wsola');
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }
