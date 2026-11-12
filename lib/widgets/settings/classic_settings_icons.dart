@@ -36,6 +36,7 @@ IconData classicSettingsIcon(String title, IconData fallback) =>
       '小说离线缓存' => LucideIcons.bookmark,
       '短剧离线缓存' => LucideIcons.clapperboard,
       '书架点书直接进入阅读' => LucideIcons.book_open,
+      '小说阅读器' => LucideIcons.book_open_check,
       '首页与搜索点书直接进入阅读' => LucideIcons.search,
       '后台听书与保活' => LucideIcons.headphones,
       '听书变速引擎' => LucideIcons.gauge,

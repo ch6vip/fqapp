@@ -6,7 +6,7 @@ extension _ReaderPageBuild on _ReaderPageState {
     if (!isWindowsDesktop) return _buildReaderSurface(context);
     return LayoutBuilder(
       builder: (context, bounds) => ColoredBox(
-        color: _effectivePreset.backgroundColor,
+        color: _effectiveBackgroundColor,
         child: Row(
           children: [
             if (bounds.maxWidth >= 1000)
@@ -94,14 +94,14 @@ extension _ReaderPageBuild on _ReaderPageState {
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: overlayStyle.copyWith(
-          statusBarColor: preset.backgroundColor,
-          systemNavigationBarColor: preset.backgroundColor,
+          statusBarColor: _effectiveBackgroundColor,
+          systemNavigationBarColor: _effectiveBackgroundColor,
         ),
         child: Theme(
           data: preset.theme(Theme.of(context)),
           child: Scaffold(
             resizeToAvoidBottomInset: false,
-            backgroundColor: preset.backgroundColor,
+            backgroundColor: _effectiveBackgroundColor,
             body: Stack(
               fit: StackFit.expand,
               children: [
