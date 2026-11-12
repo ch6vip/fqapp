@@ -7,8 +7,13 @@
 # PowerShell is line-ending agnostic; normalize to CRLF for Windows editors.
 *.ps1 text eol=crlf
 
-# Flutter/Dart sources: normalize on checkin, native endings on checkout.
-*.dart text
+# Formatted sources use the same LF endings on every platform.
+*.dart text eol=lf
+*.rs text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+scripts/**/*.js text eol=lf
+# Other source files keep native endings on checkout.
 *.kts text
 *.kt text
 *.java text

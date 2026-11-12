@@ -6,6 +6,7 @@
 
 | 脚本 | 用途 | 依赖与输出 |
 | --- | --- | --- |
+| [format_all.ps1](format_all.ps1) / [.sh](format_all.sh) | 格式化 Dart、手写 Rust 和 `scripts/` 中的 JavaScript；支持只检查与按改动范围执行 | Git、Node.js 22+、Dart、rustfmt、锁定的 Prettier；安装与范围见下文 |
 | [build_rust_backend.ps1](build_rust_backend.ps1) / [.sh](build_rust_backend.sh) | 生成 FRB 绑定并交叉编译 Rust 核心（arm64-v8a + armeabi-v7a） | Rust、NDK、FRB codegen 2.13.0；输出到 `android/app/src/main/jniLibs/<abi>/` |
 | [run_rust_host_tests.ps1](run_rust_host_tests.ps1) / [.sh](run_rust_host_tests.sh) | 构建宿主核心，运行真实 Dart → FRB → Rust 集成测试 | Rust、Flutter；使用本地 Mock 上游和临时运行目录 |
 | [verify_android_apk.py](verify_android_apk.py) | 检查 APK 签名、库、版本、资源及 16 KiB 对齐 | Python 3、Android Build-Tools；报告目录由参数指定 |
@@ -38,14 +39,69 @@ Windows 构建开关为 `-SkipCodegen`、`-HostLib`、`-Profile debug`；Shell �
 
 FRB 绑定发生变化时，还需再次生成并比较内容哈希，确认可复现。生成的文件位置见本地 `docs/project-structure.md`（不入库）。
 
-## 常规验证
+## 统一代码格式
 
-Rust 格式检查逐个文件执行，刻意排除 codegen 产物 `frb_generated.rs`：rustfmt 会沿
-`mod` 声明进入该文件，而生成代码过不了 rustfmt，`cargo fmt --all -- --check` 因此在
-干净树上也会失败。CI 用的是同一套做法。
+首次安装使用 `npm ci --ignore-scripts`（只安装开发工具 Prettier，不影响 App 依赖），
+并运行 `flutter pub get --enforce-lockfile`，使 Dart 格式器读到与包一致的语言版本。
+CI 固定 Flutter 3.47.9 / Dart 3.13.7、Rust 1.99.1 和 Node.js 22；Prettier 3.10.0
+由 `package.json` 与 `package-lock.json` 锁定。Rust 缺格式器时运行
+`rustup component add rustfmt --toolchain 1.99.1`。本地建议使用相同版本，入口会打印
+实际使用的工具版本；可通过进程环境 `RUSTUP_TOOLCHAIN=1.99.1` 选择该 Rust 工具链。
+
+Windows PowerShell：
 
 ```powershell
-git ls-files -- 'rust/**/*.rs' 'rust/*.rs' | grep -v 'frb_generated\.rs$' | ForEach-Object { rustfmt --check --edition 2021 --config skip_children=true $_ }
+.\scripts\format_all.ps1                         # 格式化全部支持的源码
+.\scripts\format_all.ps1 -Check                  # 只检查，不写源码
+.\scripts\format_all.ps1 -Since origin/master    # 仅处理本分支改动涉及的文件
+.\scripts\format_all.ps1 -Check -Language rust
+```
+
+Linux / macOS / Git Bash：
+
+```bash
+bash scripts/format_all.sh
+bash scripts/format_all.sh --check
+bash scripts/format_all.sh --since origin/master
+bash scripts/format_all.sh --check --language rust
+```
+
+两个入口共用 `format_all.cjs`，可从任意工作目录调用；也可使用 `npm run format`、
+`npm run format:check -- --since origin/master`。`-Language` / `--language` 可选
+`all`、`dart`、`rust`、`javascript`。`-Since` / `--since` 以指定引用与 HEAD 的
+merge base 为起点，同时包含暂存、未暂存和未被 Git 忽略的新文件；删除文件不处理，
+引用不存在则报错。文件按 NUL 分隔读取并分批传给工具，支持空格路径与 Windows 命令行长度限制。
+共享入口的工具准备或参数错误退出 2，检查发现格式问题退出 1，格式器自身错误也以非零
+退出；成功（或增量范围内无匹配文件）退出 0。PowerShell 参数绑定错误遵循其退出码。
+全量范围为空时报错，所需工具会在写入前统一检查，脚本不会自行下载依赖。
+
+首阶段范围遵循 [#326 的维护者说明](https://github.com/ch6vip/novel-sound/issues/326#issuecomment-6805536952)：
+
+| 语言 | 文件范围 | 固定规则 |
+| --- | --- | --- |
+| Dart | `lib/`、`test/`、`integration_test/`、`scripts/` 中的 `.dart` | `analysis_options.yaml` 的 `formatter`：80 列、自动尾逗号 |
+| Rust | `rust/` 中的手写 `.rs`，含 `build.rs` 与已有测试 | 根目录 `rustfmt.toml`：edition/style edition 2021、100 列、4 空格 |
+| JavaScript | `scripts/` 中的 `.js`、`.cjs`、`.mjs` | `.prettierrc.json`：80 列、2 空格、单引号、分号、尾逗号 |
+
+`lib/src/rust/`、`frb_generated*.rs`、Dart 的 `.g.dart` / `.freezed.dart`、第三方代码、
+构建目录及 Git 忽略的本地资料不在范围内。Rust 显式枚举各文件并传入
+`--config skip_children=true`，防止沿 `mod` 进入生成绑定；stable rustfmt 会忽略 TOML
+中的该选项，因此必须放在命令行。不要用 `cargo fmt --all` 替代此入口。
+`.editorconfig` 与 `.gitattributes` 保持支持语言的缩进和 LF 换行一致；旧 Windows
+工作区保留的 CRLF 也会被 `--check` 报告，格式化后统一为 LF。
+Dart 原生格式器保留原换行，因此入口会额外检查，并在格式化成功后规范为 LF；
+该步骤同样遵守增量范围和生成文件排除规则。
+C/C++、Kotlin/Java、Python、PowerShell/Shell 的自动格式化留待各自规则确定后扩展。
+
+`.github/workflows/format.yml` 在 PR 与 master push 中检查本次改动的文件，并全量检查
+已有 Rust 和本次建立的 JavaScript 格式基线；手动触发检查这两项全量基线。
+历史 Dart 格式随相关文件后续修改逐步收敛；当前全量 `--check` 可能报告已有差异，
+本次工具接入不批量改写 Dart 或既有测试。CI 始终只检查，不写入、不自动提交格式修改。
+
+## 常规验证
+
+```powershell
+.\scripts\format_all.ps1 -Check -Language rust
 cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --locked
 flutter analyze --no-pub

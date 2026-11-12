@@ -41,17 +41,29 @@ const path = require('node:path');
  */
 function evaluateFreshness({ mtimeMs, newestRustChangeMs, allowMissing }) {
   if (newestRustChangeMs === null) {
-    return { ok: true, reason: 'no rust/ change in the range; the existing core is acceptable' };
+    return {
+      ok: true,
+      reason: 'no rust/ change in the range; the existing core is acceptable',
+    };
   }
   if (mtimeMs === null) {
     return allowMissing
       ? { ok: true, reason: 'library missing but --allow-missing was given' }
-      : { ok: false, reason: 'library missing while rust/ changed; rebuild it' };
+      : {
+          ok: false,
+          reason: 'library missing while rust/ changed; rebuild it',
+        };
   }
   if (mtimeMs < newestRustChangeMs) {
-    return { ok: false, reason: 'library is older than the newest rust/ change; rebuild it' };
+    return {
+      ok: false,
+      reason: 'library is older than the newest rust/ change; rebuild it',
+    };
   }
-  return { ok: true, reason: 'library is at least as new as the newest rust/ change' };
+  return {
+    ok: true,
+    reason: 'library is at least as new as the newest rust/ change',
+  };
 }
 
 /**
@@ -63,15 +75,25 @@ function checkHash({ actualSha256, expectSha256 }) {
     return { ok: true, reason: 'no expected hash given' };
   }
   if (actualSha256 === null) {
-    return { ok: false, reason: 'library missing; cannot compare content hash' };
+    return {
+      ok: false,
+      reason: 'library missing; cannot compare content hash',
+    };
   }
   return actualSha256 === expectSha256
     ? { ok: true, reason: 'library content hash matches the expected hash' }
-    : { ok: false, reason: 'library content hash does not match the expected hash; rebuild it' };
+    : {
+        ok: false,
+        reason:
+          'library content hash does not match the expected hash; rebuild it',
+      };
 }
 
 function sha256File(filePath) {
-  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  return crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(filePath))
+    .digest('hex');
 }
 function newestRustChangeMs(sinceRef, cwd) {
   let out;
@@ -82,11 +104,14 @@ function newestRustChangeMs(sinceRef, cwd) {
       { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
   } catch (error) {
-    throw new Error(`git log failed for range ${sinceRef}..HEAD: ${error.message}`);
+    throw new Error(
+      `git log failed for range ${sinceRef}..HEAD: ${error.message}`,
+    );
   }
   if (out === '') return null;
   const seconds = Number(out);
-  if (!Number.isFinite(seconds)) throw new Error(`unexpected git timestamp: ${out}`);
+  if (!Number.isFinite(seconds))
+    throw new Error(`unexpected git timestamp: ${out}`);
   return seconds * 1000;
 }
 
@@ -107,7 +132,9 @@ function parseArgs(argv) {
       if (!raw) throw new Error('--expect-sha256 needs a SHA-256 hex digest');
       expectSha256 = raw.toLowerCase();
       if (!/^[0-9a-f]{64}$/.test(expectSha256)) {
-        throw new Error('--expect-sha256 must be a 64-digit hex SHA-256 digest');
+        throw new Error(
+          '--expect-sha256 must be a 64-digit hex SHA-256 digest',
+        );
       }
     } else if (arg.startsWith('--')) {
       throw new Error(`unknown option: ${arg}`);
@@ -116,7 +143,9 @@ function parseArgs(argv) {
     }
   }
   if (positional.length !== 1 || !sinceRef) {
-    throw new Error('usage: check_so_freshness.cjs <libfqapi_core.so> --since <git-ref> [--allow-missing] [--expect-sha256 <hex>]');
+    throw new Error(
+      'usage: check_so_freshness.cjs <libfqapi_core.so> --since <git-ref> [--allow-missing] [--expect-sha256 <hex>]',
+    );
   }
   return { soPath: positional[0], sinceRef, allowMissing, expectSha256 };
 }
@@ -149,7 +178,9 @@ function main(argv) {
   const iso = (ms) => (ms === null ? 'n/a' : new Date(ms).toISOString());
   process.stdout.write(`core: ${soPath}\n`);
   process.stdout.write(`core mtime: ${iso(mtimeMs)}\n`);
-  process.stdout.write(`newest rust/ change in ${options.sinceRef}..HEAD: ${iso(newest)}\n`);
+  process.stdout.write(
+    `newest rust/ change in ${options.sinceRef}..HEAD: ${iso(newest)}\n`,
+  );
   process.stdout.write(`${verdict.ok ? 'OK' : 'STALE'}: ${verdict.reason}\n`);
 
   // The hash comparison is independent of the mtime verdict: a matching hash
@@ -157,9 +188,14 @@ function main(argv) {
   // mismatch. Either failure exits non-zero.
   if (options.expectSha256 !== null) {
     const actual = fs.existsSync(soPath) ? sha256File(soPath) : null;
-    const hashVerdict = checkHash({ actualSha256: actual, expectSha256: options.expectSha256 });
+    const hashVerdict = checkHash({
+      actualSha256: actual,
+      expectSha256: options.expectSha256,
+    });
     process.stdout.write(`core sha256: ${actual ?? 'n/a'}\n`);
-    process.stdout.write(`${hashVerdict.ok ? 'OK' : 'MISMATCH'}: ${hashVerdict.reason}\n`);
+    process.stdout.write(
+      `${hashVerdict.ok ? 'OK' : 'MISMATCH'}: ${hashVerdict.reason}\n`,
+    );
     if (!hashVerdict.ok) return 1;
   }
 

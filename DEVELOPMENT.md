@@ -11,6 +11,7 @@
 - [架构总览](#架构总览)
 - [项目结构](#项目结构)
 - [注释与公开依据](#注释与公开依据)
+- [代码格式](#代码格式)
 - [构建环境](#构建环境)
 - [构建 APK](#构建-apk)
 - [测试](#测试)
@@ -146,6 +147,21 @@ novel-sound/
 或历史测试结果当成界面一致性的证据。
 
 ---
+
+## 代码格式
+
+统一入口为 `scripts/format_all.ps1` / `scripts/format_all.sh`，首阶段覆盖 Dart、
+手写 Rust 与已有 JavaScript 脚本。首次运行 `npm ci --ignore-scripts` 安装锁定的
+Prettier；工具版本、排除范围、按改动格式化及 CI 策略见
+[脚本说明](scripts/README.md#统一代码格式)。
+
+```powershell
+.\scripts\format_all.ps1 -Since origin/master
+.\scripts\format_all.ps1 -Check -Since origin/master
+```
+
+Linux/macOS 对应 `bash scripts/format_all.sh --since origin/master`，加 `--check`
+只检查；省略改动范围则处理全部支持的源码。
 
 ## 构建环境
 
