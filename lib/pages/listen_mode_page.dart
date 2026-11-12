@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../services/desktop_platform.dart';
+import '../services/linux_platform.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -54,6 +56,7 @@ class _ListenModePageState extends State<ListenModePage>
     with WidgetsBindingObserver {
   NativePlayer? _player;
   StreamSubscription<bool>? _completedSub;
+  StreamSubscription<bool>? _playingSub;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration>? _durationSub;
   bool _switching = false;
@@ -80,12 +83,33 @@ class _ListenModePageState extends State<ListenModePage>
     AudioFloatingRouteScope.configure(context, hidden: true);
   }
 
+  final String _mediaOwner = NativePlayer.allocateRemoteOwner();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (isLinuxDesktop) {
+      DesktopSystemSession.instance.addListener(_systemSessionChanged);
+    }
     unawaited(AudioPreferences.instance.load());
     NativePlayer.setRemoteCommandHandler(
+      owner: _mediaOwner,
+      onSetting: (property, value) async {
+        final player = _player;
+        if (player == null) throw StateError('No player');
+        if (property == 'Volume') {
+          await player.setVolume(value);
+        } else {
+          await player.setRate(value);
+        }
+        if (!mounted || !identical(player, _player)) {
+          throw StateError('Stale player');
+        }
+        if (property == 'Rate') setState(() => _rate = value);
+        return value;
+      },
+      onSeek: (ms) => unawaited(_remoteSeek(ms)),
       onAction: _handleRemoteAction,
       onBecomingNoisy: _handleBecomingNoisy,
     );
@@ -98,9 +122,17 @@ class _ListenModePageState extends State<ListenModePage>
     });
   }
 
+  int? _systemResumeIndex;
+  Future<void> _systemPause = Future.value();
+
   void _handleRemoteAction(String action) {
+    _systemResumeIndex = null;
     if (!mounted) return;
     switch (action) {
+      case 'play':
+        if (!(_player?.playWhenReady ?? false)) unawaited(_togglePlay());
+      case 'pause':
+        if (_player?.playWhenReady ?? false) unawaited(_togglePlay());
       case 'playPause':
         unawaited(_togglePlay());
       case 'prev':
@@ -115,28 +147,67 @@ class _ListenModePageState extends State<ListenModePage>
   }
 
   void _handleBecomingNoisy() {
+    _systemResumeIndex = null;
     if (!mounted) return;
     unawaited(_player?.pause());
     unawaited(_stopForeground());
     if (mounted) setState(() {});
   }
 
+  void _systemSessionChanged() =>
+      didChangeAppLifecycleState(DesktopSystemSession.instance.lifecycle);
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed &&
-        !AudioPreferences.instance.backgroundPlayback.value) {
-      unawaited(_player?.pause());
-      unawaited(_stopForeground());
-      if (mounted) setState(() {});
+    if (!isLinuxDesktop) {
+      if (state != AppLifecycleState.resumed &&
+          !AudioPreferences.instance.backgroundPlayback.value) {
+        unawaited(_player?.pause());
+        unawaited(_stopForeground());
+        if (mounted) setState(() {});
+      }
+      return;
     }
+
+    if (!desktopInactiveStillVisible(state) &&
+        (!AudioPreferences.instance.backgroundPlayback.value ||
+            DesktopSystemSession.instance.suspended)) {
+      if (_player?.playWhenReady ?? false) {
+        _systemResumeIndex = _index;
+        _systemPause = _player!.pause();
+      }
+      unawaited(_stopForeground());
+    } else if (desktopInactiveStillVisible(state)) {
+      unawaited(_resumeSystemPause());
+    }
+  }
+
+  Future<void> _resumeSystemPause() async {
+    final index = _systemResumeIndex;
+    final player = _player;
+    await _systemPause;
+    if (!mounted ||
+        index == null ||
+        index != _index ||
+        _systemResumeIndex != index ||
+        !NativePlayer.ownsRemoteOwner(_mediaOwner) ||
+        !identical(player, _player) ||
+        !desktopInactiveStillVisible(DesktopSystemSession.instance.lifecycle)) {
+      return;
+    }
+    _systemResumeIndex = null;
+    await player?.play();
+    await _startForeground();
   }
 
   @override
   void dispose() {
     _popped = true;
+    DesktopSystemSession.instance.removeListener(_systemSessionChanged);
     WidgetsBinding.instance.removeObserver(this);
-    NativePlayer.clearRemoteCommandHandler();
+    NativePlayer.clearRemoteCommandHandler(owner: _mediaOwner);
     _completedSub?.cancel();
+    _playingSub?.cancel();
     _positionSub?.cancel();
     _durationSub?.cancel();
     _position.dispose();
@@ -148,6 +219,7 @@ class _ListenModePageState extends State<ListenModePage>
 
   Future<void> _load(int index, {required bool autoplay}) async {
     if (_switching || widget.episodes.isEmpty) return;
+    _systemResumeIndex = null;
     _switching = true;
     // messenger 要等首个 await 之后再取：initState 的同步前缀里
     // dependOnInheritedWidget 会触发框架断言。
@@ -187,6 +259,14 @@ class _ListenModePageState extends State<ListenModePage>
         _completedSub = player.completedStream.listen((completed) {
           if (completed) _onEpisodeEnded();
         });
+        _playingSub?.cancel();
+        if (isLinuxDesktop) {
+          _playingSub = player.playingStream.listen((_) {
+            if (mounted && !_switching && identical(player, _player)) {
+              unawaited(_startForeground());
+            }
+          });
+        }
         _positionSub?.cancel();
         _positionSub = player.positionStream.listen((position) {
           if (mounted && !_switching) _position.value = position;
@@ -228,6 +308,8 @@ class _ListenModePageState extends State<ListenModePage>
   }
 
   Future<void> _togglePlay() async {
+    if (isLinuxDesktop) NativePlayer.claimRemoteOwner(_mediaOwner);
+    _systemResumeIndex = null;
     final player = _player;
     if (player == null) return;
     if (player.playWhenReady) {
@@ -246,17 +328,25 @@ class _ListenModePageState extends State<ListenModePage>
     await _load(target, autoplay: true);
   }
 
-  Future<void> _startForeground() {
-    if (!AudioPreferences.instance.backgroundPlayback.value) {
+  Future<void> _startForeground({bool seeked = false}) {
+    if (!isLinuxDesktop &&
+        !AudioPreferences.instance.backgroundPlayback.value) {
       return _stopForeground();
     }
     final player = _player;
     return NativePlayer.startListenForeground(
+      owner: _mediaOwner,
+      seeked: seeked,
+      linuxPlayerId: player?.playerId,
+      minimumRate: 0.75,
+      maximumRate: 2,
       title: widget.seriesTitle,
       episode: _episodeTitle(_index),
       // 通知左上角与系统媒体卡片显示的就是这张封面（对齐官方）。
       coverUrl: widget.coverUrl,
-      playing: player?.playWhenReady ?? true,
+      playing: isLinuxDesktop
+          ? (player?.playing ?? false) && (player?.playWhenReady ?? false)
+          : player?.playWhenReady ?? true,
       hasPrev: _index > 0,
       hasNext: _index < widget.episodes.length - 1,
       // 位置 + 倍速交给系统外推；总时长决定媒体卡片两侧的时间。
@@ -266,19 +356,37 @@ class _ListenModePageState extends State<ListenModePage>
     );
   }
 
-  Future<void> _stopForeground() => NativePlayer.stopListenForeground();
+  Future<void> _stopForeground() =>
+      NativePlayer.stopListenForeground(owner: _mediaOwner);
+
+  Future<void> _remoteSeek(int ms) async {
+    final player = _player;
+    if (player == null || player.duration.inMilliseconds <= 0) return;
+    await _seekTo(ms / player.duration.inMilliseconds);
+  }
+
+  int _seekGeneration = 0;
 
   Future<void> _seekTo(double value) async {
     final player = _player;
     if (player == null || player.duration.inMilliseconds <= 0) return;
+    final chapter = _index;
+    final generation = ++_seekGeneration;
     final target = Duration(
       milliseconds: (value * player.duration.inMilliseconds).round(),
     );
     // 拖动结束才走到这里：先把滑块钉在目标位置，等位置流回填。
     _position.value = target;
     await player.seek(target);
-    if (!mounted) return;
-    await _startForeground();
+    if (!mounted ||
+        _popped ||
+        !identical(player, _player) ||
+        chapter != _index ||
+        generation != _seekGeneration ||
+        !NativePlayer.ownsRemoteOwner(_mediaOwner)) {
+      return;
+    }
+    await _startForeground(seeked: true);
   }
 
   void _exitWithResult() =>

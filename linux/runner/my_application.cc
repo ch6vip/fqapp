@@ -1,4 +1,5 @@
 #include "my_application.h"
+#include "bridge.h"
 #include <glib/gstdio.h>
 #include <fcntl.h>
 #include <sys/file.h>
@@ -19,6 +20,24 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// Release the bridge before the parent disposes the window and its view.
+struct FqappWindow {
+  GtkApplicationWindow parent_instance;
+  FqappLinuxBridge* bridge;
+};
+struct FqappWindowClass { GtkApplicationWindowClass parent_class; };
+G_DEFINE_TYPE(FqappWindow, fqapp_window, GTK_TYPE_APPLICATION_WINDOW)
+static void fqapp_window_dispose(GObject* object) {
+  auto* self = reinterpret_cast<FqappWindow*>(object);
+  g_clear_pointer(&self->bridge, fqapp_linux_bridge_free);
+  G_OBJECT_CLASS(fqapp_window_parent_class)->dispose(object);
+}
+static void fqapp_window_class_init(FqappWindowClass* klass) {
+  G_OBJECT_CLASS(klass)->dispose = fqapp_window_dispose;
+}
+static void fqapp_window_init(FqappWindow*) {}
+
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
@@ -28,7 +47,7 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
-      GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+      GTK_WINDOW(g_object_new(fqapp_window_get_type(), "application", application, nullptr));
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -64,6 +83,8 @@ static void my_application_activate(GApplication* application) {
       project, self->dart_entrypoint_arguments);
 
   FlView* view = fl_view_new(project);
+  reinterpret_cast<FqappWindow*>(window)->bridge = fqapp_linux_bridge_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)), window);
   GdkRGBA background_color;
   // Background defaults to black, override it here if necessary, e.g. #00000000
   // for transparent.

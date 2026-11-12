@@ -1203,14 +1203,14 @@ WebDAV 配置与诊断由数据同步功能负责。
 ## Linux / Arch x86_64（实验性运行基础）
 
 支持 Linux runner、bundle 内 Rust 核心、阅读/书架及 TXT/EPUB 本地导入。
-听书播放由下方第二批媒体基础提供；短剧、系统朗读、媒体键、常亮、亮度/系统栏、备份文件选择等桌面集成尚未实现。
+听书播放和系统朗读/桌面集成分别见下方第二、三批说明；短剧视频、Android 系统栏、备份文件选择等未实现通道明确报告暂不支持。
 目前没有 Arch 打包或 Linux CI，也不提供正式 Release。
 
 Arch 构建依赖：Flutter stable（本批验证 3.47.9 / Dart 3.13.7）、Rust stable
 及 x86_64-unknown-linux-gnu target、clang、cmake、ninja、pkgconf、gtk3、libsecret。
 运行需要 GTK3、libsecret、glibc（含 iconv）、xdg-user-dirs 和图形会话，
 以及已启动且已解锁的 Secret Service（如 GNOME Keyring）。不要用 sudo 运行应用。
-媒体构建及运行还需要系统 libmpv（Arch 的 mpv 包），详见下方媒体说明。
+媒体构建及运行还需要系统 libmpv（Arch 的 mpv 包），第三批另需 Speech Dispatcher，详见下文。
 
 ```bash
 flutter pub get
@@ -1274,3 +1274,82 @@ media_kit 原生纹理插件和 bundle 内 Rust/C 核心，检查创建、实际
 释放后 CENC listener 撤销，再在活跃 CENC 播放中正常关窗；监督进程须检查退出码 0。
 它是独立测试 target，不由产品 main 引用。此 bundle 不是产品包；交付前重新构建默认 target。
 该测试不证明物理声卡/GPU、完整产品存储关窗链或 Windows/Android 运行通过。
+
+### Linux 系统朗读与桌面集成（第三批）
+
+在前两批上增加 Speech Dispatcher（构建必需 `speech-dispatcher` pkg-config 和 libspeechd 头文件；
+Arch 运行包 `libspeechd`、`speech-dispatcher`、中文音源如 `espeak-ng`）。
+应用只连接现有 daemon，不自动启动、安装或重配置用户服务。设置页列出真实输出
+模块；初始化选择 zh/cmn 语音，无中文语音、连接/设置失败会返回 TTS_ERROR。
+rate 以 log2 映射到 Speech Dispatcher 的 -100..100；这不是实测倍速保证。
+可选 volume 为 0..1，未设置保留 daemon 默认。pause 取消本客户端队列，
+恢复由现有朗读状态机重发当前句；start/done/cancel 按 daemon 消息 ID 映射，
+取消后旧回调不得推进正文。SSIP 操作在专用 worker，Flutter 回复/释放回主线程。
+
+Linux 听书、系统朗读使用 owner 标识更新 MPRIS，旧 owner 的清理不能移除新会话；
+D-Bus 名已被其他实例持有时报告 MPRIS_OWNER_BUSY，不替换它。
+媒体键支持显式 Play/Pause、PlayPause、上下章；有实际 timed seek handler 时才声明
+CanSeek。位置来自播放器/朗读状态，不导出封面或含凭据媒体 URL。
+Linux 视频入口仍关闭。Android 专用登录、系统栏等能力不假报成功；
+Linux reader brightness 尚不可用，返回 unsupported_platform，不伪造硬件亮度。
+
+阅读和播放的常亮需求合并为一个 GTK idle inhibitor；GTK 返回 0 时报告
+INHIBIT_UNAVAILABLE，关闭/停止释放 cookie。GTK 通过当前桌面可用后端实现；
+不保证每个 compositor 提供 portal/inhibitor。logind LockedHint 仅为提示，
+capabilities.lockEvents 恒 false；subscription 不证明锁屏可靠性。
+隐藏按现有后台播放偏好处理，suspend 即使允许后台也暂停；仅自动暂停且 owner
+未替换、用户未手动暂停的会话可恢复。服务消失不伪造 unlock/resume。
+D-Bus 连接关闭后定时重连，logind 名恢复后重订阅；缺服务可诊断。
+关闭仍先等待本地初始化和上游刷盘/后端退出，再停止媒体/TTS/idle/session，
+保留单写者锁。失去响应的第三方 daemon 仍可能延迟 SSIP 操作和关闭，需修复服务。
+
+单元门：`flutter analyze --no-pub`、`flutter test --no-pub --concurrency=1`。
+本批不改 Rust，无需重复 cargo test。native 严格编译示例：
+
+```bash
+cmake -S native/linux -B build/native-strict \
+  -DFLUTTER_LINUX_DIR="$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64" \
+  -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+cmake --build build/native-strict -j2
+flutter build linux --release --no-pub -t test/support/linux_desktop_runtime.dart
+```
+
+独立 runtime target 需私有 HOME/XDG、D-Bus、Xvfb、ALSA null 和 task-owned
+Speech Dispatcher，设置 FQAPP_DESKTOP_TEST_ROOT。监督器按该 target 的文件握手：
+初始持有 org.mpris.MediaPlayer2.fqapp，disconnect 时仅终止测试 daemon，
+reconnect 时重启并写 restarted；release-name 时释放竞争名并写 name-released；
+mpris 时查询 metadata/status/position，依次发送 Pause、Play、PlayPause、Seek
+(1000000us)、SetPosition(track/1,5000000us) 后写 controls-done；
+stale-stop 时确认 Playing 后写 stale-checked；released 时确认无 owner 后写
+released-checked。检查 PASS 标记、活跃朗读关窗退出码 0。它验证真实 channel、
+SSIP 和 D-Bus，但 null 音频/Xvfb 不证明物理音质、GPU、实际锁屏或挂起。
+测试入口不引用产品资料，不是产品包；交付前重新构建默认 target。
+
+仓库内监督器可直接复验真实 D-Bus Rate/Volume 写入、后端确认/失败回复和
+PropertiesChanged（Arch 测试依赖另需 `xorg-server-xvfb`、`dbus`、`speech-dispatcher`、`espeak-ng`）：
+
+```bash
+python test/linux_desktop_runtime_test.py
+# 需 FLUTTER_ROOT 指向同一 SDK；实际 tts.cc 在途回调与析构的 ASan 压力回归：
+python test/linux_tts_lifetime_test.py
+flutter build linux --release --no-pub -t lib/main.dart
+```
+
+GDBusInterfaceVTable 的空 set_property 是 GLib 2.38 起支持的异步属性分发方式，
+Properties.Set 会进入 method_call；不能改为同步等待 Dart 而阻塞 GTK 主线程。
+官方合同：https://docs.gtk.org/gio/struct.DBusInterfaceVTable.html 。
+TTS 回调取 active 指针并入队与析构撤销指针使用同一锁；关闭 libspeechd 前释放此锁，
+避免 spd_close 等待其回调线程时死锁。ASan 回归仅在外置编译副本插入调度钩子，
+不增加产品测试开关；它不模拟真实 daemon，须与上面的真实协议复验分别报告。
+
+第三批审查修复补充：SSIP 拒绝 CANCEL 时 pause/stop/initialize 报 TTS_ERROR 并关闭连接，
+无连接 stop 保持幂等。常亮请求串行提交，失败回滚 reader/player 意图。
+MPRIS Volume/Rate 经当前 owner 的实际播放器或 SpeechDispatcher 确认后回复 Set 并发布
+PropertiesChanged；读取来自后端设置，不使用独立音量模型。TTS 速率范围 .25..4，
+听书页 .75..2，完整音频 controller .5..3，均包含 1；SSIP 整数速率会量化。
+Rate=0 复用 Pause 路由，不向后端提交零速率，也不把 Rate 属性写成 0。
+非零速率修改先按旧速率结算位置并刷新时间锚点，避免 Position 与相对 Seek 基准跳变。
+Seek 越尾按 Next（受 CanGoNext 控制），SetPosition 越尾忽略；旧章节 seek 完成不发新章 Seeked。
+runner 在窗口子类 dispose 调用父类前释放 bridge，保留 worker join，不关闭退出诊断。
+真实协议回归目标仍为 test/support/linux_desktop_runtime.dart；拒绝 CANCEL 注入由
+私有 SSIP 代理执行，ALSA null/Xvfb 的结果不代表物理声音、compositor、锁屏或挂起验收。
