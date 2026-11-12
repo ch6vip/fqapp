@@ -1,0 +1,70 @@
+name: Source formatting
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: format-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: '1.99.1'
+          components: rustfmt
+
+      - name: Resolve formatter and Dart language settings
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          flutter pub get --enforce-lockfile
+
+      # Historical Dart formatting is migrated only when a file is edited.
+      # Compare the complete PR/push range, including multi-commit pushes.
+      - name: Check changed sources
+        env:
+          FORMAT_EVENT: ${{ github.event_name }}
+          FORMAT_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          FORMAT_PUSH_BASE: ${{ github.event.before }}
+        run: |
+          case "$FORMAT_EVENT" in
+            pull_request) base="$FORMAT_PR_BASE" ;;
+            push) base="$FORMAT_PUSH_BASE" ;;
+            workflow_dispatch) base=HEAD ;;
+          esac
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            echo 'No previous commit is available; checking all supported sources.'
+            bash scripts/format_all.sh --check
+          else
+            bash scripts/format_all.sh --check --since "$base"
+          fi
+
+      - name: Check the established Rust and JavaScript baselines
+        run: |
+          bash scripts/format_all.sh --check --language rust
+          bash scripts/format_all.sh --check --language javascript

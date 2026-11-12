@@ -19,6 +19,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'analysis_options.yaml'
+      - 'rustfmt.toml'
       - 'test/**'
       - 'flutter_rust_bridge.yaml'
       - 'scripts/build_rust_backend.sh'
@@ -28,6 +29,8 @@ on:
       - 'scripts/check_native_alignment.cjs'
       - 'scripts/check_so_freshness.cjs'
       - 'scripts/check_line_budget.sh'
+      - 'scripts/format_all.cjs'
+      - 'scripts/format_all.sh'
       - 'scripts/generate_app_icons.py'
       - 'scripts/make_test_media.py'
       - 'scripts/verify_android_apk.py'
@@ -267,42 +270,11 @@ jobs:
           test/check_so_freshness_test.cjs
           test/make_test_media_test.cjs
 
-      # rustfmt follows `mod` declarations, so a plain `cargo fmt --all` also
-      # checks rust/src/frb_generated.rs -- codegen output that no human edits.
-      # That file does not round-trip through rustfmt, so `--all` fails on a
-      # clean tree and blocks every build, including a contributor's first one.
-      # `--config skip_children` on the crate root is NOT a fix: it stops at the
-      # root file and silently passes even when a hand-written module is
-      # misformatted. So instead we enumerate the tracked hand-written sources
-      # and check each on its own, which keeps the gate real while leaving the
-      # generated bindings to the reproducibility check further down.
       - name: Resolve Dart package dependencies
         run: flutter pub get --enforce-lockfile
 
       - name: Rust formatting
-        run: |
-          mapfile -t sources < <(
-            git ls-files -- 'rust/**/*.rs' 'rust/*.rs' | grep -v 'frb_generated\.rs$'
-          )
-          if [ "${#sources[@]}" -eq 0 ]; then
-            echo 'No hand-written Rust sources found; refusing to pass an empty gate.' >&2
-            exit 1
-          fi
-          printf 'Checking %d hand-written Rust sources (generated bindings excluded).\n' \
-            "${#sources[@]}"
-          failed=0
-          for source in "${sources[@]}"; do
-            # One file per invocation, with child traversal off: a bare
-            # `rustfmt lib.rs` follows `mod frb_generated;` and would re-check the
-            # bindings, while `skip_children` on the crate root would skip every
-            # other module too. Per-file, each hand-written source is checked
-            # exactly once and each child is covered by its own loop iteration.
-            if ! rustfmt --check --edition 2021 --config skip_children=true "$source"; then
-              printf 'Misformatted: %s\n' "$source" >&2
-              failed=1
-            fi
-          done
-          exit "$failed"
+        run: bash scripts/format_all.sh --check --language rust
 
       - name: Rust lints
         run: cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D warnings

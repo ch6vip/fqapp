@@ -1,0 +1,14 @@
+{
+  "name": "novel-sound-dev-tools",
+  "private": true,
+  "scripts": {
+    "format": "node scripts/format_all.cjs",
+    "format:check": "node scripts/format_all.cjs --check"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "prettier": "3.10.0"
+  }
+}
