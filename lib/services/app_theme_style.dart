@@ -19,6 +19,8 @@ enum AppThemeStyle {
 
   static AppThemeStyle fromStorage(Object? value) => switch (value) {
     'classic' => classic,
+    'archive' => archive,
+    null => classic,
     _ => archive,
   };
 }
@@ -28,7 +30,7 @@ enum AppThemeStyle {
 class AppThemeStyleStore extends ValueNotifier<AppThemeStyle> {
   AppThemeStyleStore({Future<SharedPreferences> Function()? preferences})
     : _preferences = preferences ?? SharedPreferences.getInstance,
-      super(AppThemeStyle.archive);
+      super(AppThemeStyle.classic);
 
   static final instance = AppThemeStyleStore();
   static const storageKey = 'app_theme_style';
