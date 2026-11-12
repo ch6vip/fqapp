@@ -1,21 +1,132 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/models/media_item.dart';
+import 'package:fqapp/models/series_detail.dart';
 import 'package:fqapp/pages/audio_page.dart';
 import 'package:fqapp/pages/comic_reader_page.dart';
 import 'package:fqapp/pages/detail_page.dart';
 import 'package:fqapp/pages/player_page.dart';
 import 'package:fqapp/pages/reader_page.dart';
+import 'package:fqapp/services/app_style_tokens.dart';
+import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 
 import 'support/fakes.dart';
 
 void main() {
+  for (final platform in [
+    TargetPlatform.linux,
+    TargetPlatform.android,
+    TargetPlatform.windows,
+  ]) {
+    final blocked = platform == TargetPlatform.linux;
+    for (final style
+        in blocked ? AppThemeStyle.values : [AppThemeStyle.archive]) {
+      for (final kind in ['video', 'manju']) {
+        for (final action in ['primary', 'episode']) {
+          // Controls sample both actions/kinds without repeating the Linux matrix.
+          if (!blocked && (kind == 'video') != (action == 'primary')) continue;
+          testWidgets(
+            'D4 Detail ${platform.name} ${style.name} $kind $action',
+            (tester) async {
+              final previousPlatform = debugDefaultTargetPlatformOverride;
+              try {
+                debugDefaultTargetPlatformOverride = platform;
+                SharedPreferences.setMockInitialValues({});
+                tester.view.physicalSize = const Size(390, 844);
+                tester.view.devicePixelRatio = 1;
+                await tester.binding.setSurfaceSize(const Size(390, 844));
+                final observer = _RouteObserver();
+                await tester.pumpWidget(
+                  MaterialApp(
+                    theme: ThemeData(
+                      extensions: [AppStyleTokens.forStyle(style)],
+                    ),
+                    navigatorObservers: [observer],
+                    home: DetailPage(
+                      item: _item(kind),
+                      readerStore: MemoryReaderStore(),
+                      chapterCache: MemoryChapterCache(),
+                      detailLoader: (id, {String tab = '小说'}) async => {},
+                      directoryLoader: (id, {String tab = '小说'}) async => [
+                        _chapters,
+                      ],
+                      seriesLoader: (_) async => SeriesDetail.empty,
+                      extrasLoader: (_) async => const DetailExtras(),
+                    ),
+                  ),
+                );
+                await tester.pumpAndSettle();
+                expect(tester.takeException(), isNull);
+                expect(observer.pushes, 1);
+                final context = tester.element(find.byType(DetailPage));
+                expect(MediaQuery.sizeOf(context).width, 390);
+                var target = find.byKey(const Key('detail_read_button'));
+                if (action == 'episode') {
+                  if (style == AppThemeStyle.classic) {
+                    target = find.byKey(
+                      const ValueKey('detail_preview_chapter_second'),
+                    );
+                    await tester.ensureVisible(target);
+                    await tester.pumpAndSettle();
+                  } else {
+                    await _revealSecondChapter(tester);
+                    target = find.byKey(
+                      const ValueKey('detail-directory-entry-1'),
+                    );
+                  }
+                }
+                expect(target.hitTestable(), findsOneWidget);
+                await tester.tap(target);
+                await tester.idle();
+                expect(tester.takeException(), isNull);
+                if (blocked) {
+                  // Inspect intent before a pump could mount the native player.
+                  expect(
+                    observer.pushes,
+                    1,
+                    reason: 'D4 Linux must reject playback before navigation',
+                  );
+                  await tester.pump(const Duration(milliseconds: 200));
+                  expect(find.byType(DetailPage), findsOneWidget);
+                  expect(
+                    find.descendant(
+                      of: find.byType(SnackBar),
+                      matching: find.text('当前平台暂不支持视频播放'),
+                    ),
+                    findsOneWidget,
+                  );
+                  expect(tester.takeException(), isNull);
+                } else {
+                  expect(observer.pushes, 2);
+                  final page =
+                      (observer.lastRoute! as MaterialPageRoute).builder(
+                            context,
+                          )
+                          as PlayerPage;
+                  expect(page.kind, kind);
+                  expect(page.startIndex, action == 'episode' ? 1 : 0);
+                }
+              } finally {
+                await tester.pumpWidget(const SizedBox.shrink());
+                debugDefaultTargetPlatformOverride = previousPlatform;
+                tester.view.resetPhysicalSize();
+                tester.view.resetDevicePixelRatio();
+                await tester.binding.setSurfaceSize(null);
+              }
+            },
+          );
+        }
+      }
+    }
+  }
+
   for (final savedKind in ['video', 'manju']) {
     testWidgets(
       'manju detail resumes $savedKind history through the video API',
