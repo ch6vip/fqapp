@@ -1,5 +1,4 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
 
 /// 当前网络形态的折叠视图：是否在线、是否计费链路（非 WiFi/以太网）。
 /// 官方 `showWifiCheckDialog` 的启动门与 `onNetChangeCheck` 的运行中
@@ -35,11 +34,5 @@ Future<ConnectivityView?> probeConnectivity() async {
 }
 
 Future<ConnectivityView> currentConnectivity() async {
-  // Windows' Network List Manager can briefly or persistently report no
-  // Internet while the configured upstream, VPN or proxy is still reachable.
-  // Do not let that advisory check prevent the request that can prove it.
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
-    return (online: true, metered: false);
-  }
   return await probeConnectivity() ?? (online: true, metered: false);
 }
