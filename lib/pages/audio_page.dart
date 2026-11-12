@@ -869,7 +869,7 @@ class _AudioPageState extends State<AudioPage> {
                     duration: c._duration,
                     preview: c._seekPreview.value,
                     enabled: c._ready,
-                    onChanged: (value) => c._seekPreview.value = value,
+                    onChanged: c._previewSeek,
                     onChangeEnd: (value) =>
                         c._seekTo(Duration(milliseconds: value.round())),
                     onBack15: c._ready
