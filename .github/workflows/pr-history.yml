@@ -66,8 +66,8 @@ jobs:
           HEAD_SHA: ${{ steps.revisions.outputs.head }}
           PR_NUMBER: ${{ steps.revisions.outputs.number }}
         run: |
-          git fetch --no-tags --filter=blob:none origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head"
-          if [ "$(git rev-parse FETCH_HEAD)" != "$HEAD_SHA" ]; then
+          git fetch --no-tags --filter=blob:none origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head:refs/pr-history/head"
+          if [ "$(git rev-parse refs/pr-history/head)" != "$HEAD_SHA" ]; then
             echo 'PR head changed during this run; please rerun the check.' >&2
             exit 1
           fi
