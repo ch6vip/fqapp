@@ -12,6 +12,9 @@
 .swiftpm/
 migrate_working_dir/
 
+# Local Node tooling dependencies
+/node_modules/
+
 # IntelliJ related
 *.iml
 *.ipr
