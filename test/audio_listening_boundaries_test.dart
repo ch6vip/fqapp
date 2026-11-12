@@ -11,6 +11,7 @@ import 'package:fqapp/services/audio_preferences.dart';
 import 'package:fqapp/services/listening_session.dart';
 import 'package:fqapp/services/native_player.dart';
 import 'package:fqapp/services/platform_channel.dart';
+import 'package:fqapp/widgets/audio/audio_control_rows.dart';
 
 import 'support/controlled_player.dart';
 
@@ -162,6 +163,93 @@ void main() {
       expect(ListeningSession.instance.playing, action == 'replay');
     });
   }
+
+  for (final action in ['seek', 'back15', 'forward15']) {
+    testWidgets('$action cancels a pending chapter advance', (tester) async {
+      final player = _NativeEndingPlayer();
+      final requests = <String>[];
+      await _mount(tester, player: player, sourceRequests: requests);
+      player.emitDuration(const Duration(minutes: 1));
+      player.endPlayback();
+      await _flush(tester);
+      expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
+      final row = tester.widget<AudioTimeSeekRow>(
+        find.byType(AudioTimeSeekRow),
+      );
+      switch (action) {
+        case 'seek':
+          row.onChangeEnd!(30000);
+        case 'back15':
+          row.onBack15!();
+        case 'forward15':
+          row.onForward15!();
+      }
+      await _flush(tester);
+      expect(find.byKey(const Key('audio_advance_banner')), findsNothing);
+      await tester.pump(const Duration(seconds: 5));
+      await _flush(tester);
+      expect(player.disposed, isFalse);
+      expect(requests, ['1']);
+      expect(ListeningSession.instance.chapterId, '1');
+    });
+  }
+
+  testWidgets('seek preview cancels chapter advance before release', (
+    tester,
+  ) async {
+    final player = _NativeEndingPlayer();
+    final requests = <String>[];
+    await _mount(tester, player: player, sourceRequests: requests);
+    player.emitDuration(const Duration(minutes: 1));
+    player.endPlayback();
+    await _flush(tester);
+    final row = tester.widget<AudioTimeSeekRow>(find.byType(AudioTimeSeekRow));
+    row.onChanged!(30000);
+    await _flush(tester);
+    expect(find.byKey(const Key('audio_advance_banner')), findsNothing);
+    await tester.pump(const Duration(seconds: 5));
+    await _flush(tester);
+    row.onChangeEnd!(30000);
+    await _flush(tester);
+    expect(player.disposed, isFalse);
+    expect(requests, ['1']);
+    expect(ListeningSession.instance.chapterId, '1');
+  });
+
+  for (final background in [false, true]) {
+    testWidgets('chapter countdown respects background playback=$background', (
+      tester,
+    ) async {
+      await AudioPreferences.instance.setBackgroundPlayback(background);
+      final player = _NativeEndingPlayer();
+      final requests = <String>[];
+      await _mount(tester, player: player, sourceRequests: requests);
+      player.endPlayback();
+      await _flush(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await _flush(tester);
+      await tester.pump(const Duration(seconds: 5));
+      await _flush(tester);
+      expect(requests, background ? ['1', '2'] : ['1']);
+      expect(ListeningSession.instance.chapterId, background ? '2' : '1');
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _flush(tester);
+      expect(find.byKey(const Key('audio_advance_banner')), findsNothing);
+    });
+  }
+
+  testWidgets('closing during chapter countdown cancels its timer', (
+    tester,
+  ) async {
+    final player = _NativeEndingPlayer();
+    await _mount(tester, player: player);
+    player.endPlayback();
+    await _flush(tester);
+    expect(find.byKey(const Key('audio_advance_banner')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _flush(tester);
+    expect(player.disposed, isTrue);
+  });
 
   testWidgets('next source failure stays on the failed next chapter', (
     tester,

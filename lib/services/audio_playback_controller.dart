@@ -517,9 +517,8 @@ class _AudioPlaybackController extends ChangeNotifier
       // 切换到后台或锁屏时立即持久化当前进度，防止后续被系统杀后台导致进度丢失。
       unawaited(_persistProgress());
       // 若后台听书开关关闭，切后台自动暂停播放并移除前台通知。
-      if ((!AudioPreferences.instance.backgroundPlayback.value ||
-              (isLinuxDesktop && DesktopSystemSession.instance.suspended)) &&
-          _wantPlay) {
+      if (!AudioPreferences.instance.backgroundPlayback.value ||
+          (isLinuxDesktop && DesktopSystemSession.instance.suspended)) {
         final resume = isLinuxDesktop && _wantPlay;
         _visibilityPause = _pauseForOtherMedia();
         if (resume) _visibilityResumeGeneration = _generation;
@@ -1243,9 +1242,15 @@ class _AudioPlaybackController extends ChangeNotifier
     }
   }
 
+  void _previewSeek(double position) {
+    _cancelAdvanceCountdown(this);
+    _seekPreview.value = position;
+  }
+
   Future<void> _seekTo(Duration position) async {
     final player = _player;
     if (!_ready || player == null) return;
+    _cancelAdvanceCountdown(this);
     final generation = _generation;
     final seekGeneration = ++_seekGeneration;
     final target = _boundedPosition(position, _duration);
@@ -1540,6 +1545,7 @@ class _AudioPlaybackController extends ChangeNotifier
   Future<void> _close() async {
     if (_closed) return;
     _closed = true;
+    _cancelAdvanceCountdown(this);
     _unregisterFairMemoryFlush?.call();
     _unregisterFairMemoryFlush = null;
     ++_generation;

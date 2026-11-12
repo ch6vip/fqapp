@@ -256,7 +256,7 @@ extension _AudioListeningLayout on _AudioPageState {
           duration: c._duration,
           preview: seekPreview,
           enabled: c._ready,
-          onChanged: (value) => c._seekPreview.value = value,
+          onChanged: c._previewSeek,
           onChangeEnd: (value) =>
               c._seekTo(Duration(milliseconds: value.round())),
           onBack15: c._ready
