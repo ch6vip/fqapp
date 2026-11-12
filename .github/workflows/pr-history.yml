@@ -1,0 +1,89 @@
+name: PR history guard
+
+on:
+  # Always use the base repository's trusted workflow and script. Never check
+  # out or execute files from the proposed branch in pull_request_target.
+  pull_request_target:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to inspect
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-history-${{ github.event.pull_request.number || inputs.pull_request }}
+  cancel-in-progress: true
+
+jobs:
+  history:
+    name: PR history limit (500 commits)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Resolve pull request revisions
+        id: revisions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          number = os.environ['PR_NUMBER']
+          if not re.fullmatch(r'[1-9][0-9]*', number):
+              raise SystemExit('A positive pull request number is required')
+          result = subprocess.run(
+              ['gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/pulls/' + number],
+              check=True, capture_output=True, text=True,
+          )
+          pr = json.loads(result.stdout)
+          if pr['base']['ref'] != 'master':
+              raise SystemExit('This guard checks pull requests targeting master')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key in ('base', 'head'):
+                  sha = pr[key]['sha']
+                  if not re.fullmatch(r'[0-9a-f]{40,64}', sha):
+                      raise SystemExit('Unexpected commit SHA')
+                  output.write(key + '=' + sha + '\n')
+              output.write('number=' + number + '\n')
+          PY
+      - name: Check incoming commit count
+        env:
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+          PR_NUMBER: ${{ steps.revisions.outputs.number }}
+        run: |
+          git fetch --no-tags --filter=blob:none origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$HEAD_SHA" ]; then
+            echo 'PR head changed during this run; please rerun the check.' >&2
+            exit 1
+          fi
+          python3 scripts/check_pr_history.py "$BASE_SHA" "$HEAD_SHA" > history-result.json
+      - name: Publish result
+        if: always()
+        run: |
+          if [ -f history-result.json ] && [ -s history-result.json ]; then
+            python3 - <<'PY'
+          import json, os
+          with open('history-result.json') as source:
+              result = json.load(source)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## PR history guard\n\n')
+              summary.write(f"New commits: **{result['new_commits']}**; limit: **{result['max_commits']}**.\n\n")
+              if not result['passed']:
+                  summary.write('Please branch from the latest upstream master and cherry-pick the intended changes. Merging master into an old branch does not remove old history.\n')
+          PY
+          fi
