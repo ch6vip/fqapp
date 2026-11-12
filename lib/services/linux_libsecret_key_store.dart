@@ -83,6 +83,12 @@ class LinuxLibsecretKeyStore implements SecureKeyStorage {
   static int get debugSecretSchemaAttributeSize =>
       sizeOf<_SecretSchemaAttribute>();
 
+  /// Resolve the production FFI bindings without contacting a keyring.
+  @visibleForTesting
+  static void debugValidateNativeBindings() {
+    _Libsecret.instance;
+  }
+
   static Map<String, String> _readAll(_Libsecret api, _SchemaRef schema) {
     final error = calloc<Pointer<_GError>>();
     final attributes = _attributes(api, schema);
@@ -388,8 +394,11 @@ typedef _PasswordFreeNative = Void Function(Pointer<Utf8> password);
 typedef _PasswordFreeDart = void Function(Pointer<Utf8> password);
 
 class _Libsecret {
-  _Libsecret._(DynamicLibrary secret, DynamicLibrary glib)
-    : storev = secret.lookupFunction<_StorevNative, _StorevDart>(
+  _Libsecret._(
+    DynamicLibrary secret,
+    DynamicLibrary glib,
+    DynamicLibrary gobject,
+  ) : storev = secret.lookupFunction<_StorevNative, _StorevDart>(
         'secret_password_storev_sync',
       ),
       lookupv = secret.lookupFunction<_LookupvNative, _LookupvDart>(
@@ -422,9 +431,10 @@ class _Libsecret {
       gErrorFree = glib.lookupFunction<_GErrorFreeNative, _GErrorFreeDart>(
         'g_error_free',
       ),
-      objectUnref = glib.lookupFunction<_ObjectUnrefNative, _ObjectUnrefDart>(
-        'g_object_unref',
-      ),
+      objectUnref = gobject
+          .lookupFunction<_ObjectUnrefNative, _ObjectUnrefDart>(
+            'g_object_unref',
+          ),
       gFree = glib.lookup<NativeFunction<Void Function(Pointer<Void>)>>(
         'g_free',
       ),
@@ -439,6 +449,7 @@ class _Libsecret {
   static final instance = _Libsecret._(
     DynamicLibrary.open('libsecret-1.so.0'),
     DynamicLibrary.open('libglib-2.0.so.0'),
+    DynamicLibrary.open('libgobject-2.0.so.0'),
   );
 
   final _StorevDart storev;

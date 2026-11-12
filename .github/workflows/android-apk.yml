@@ -652,7 +652,8 @@ jobs:
           persist-credentials: false
 
       # No Rust toolchain, no NDK, no Gradle, no Node: this job only needs the
-      # SDK. test/rust_host_integration_test.dart drives a real Dart -> FRB ->
+      # SDK and Linux key-store runtime. test/rust_host_integration_test.dart
+      # drives a real Dart -> FRB ->
       # Rust call, and it is built to SKIP (never fail, never silently pass)
       # when the host cdylib is absent, which is exactly this case. The job
       # that builds that library, `apk`, runs that test for real through
@@ -665,6 +666,11 @@ jobs:
 
       - name: Resolve Dart package dependencies
         run: flutter pub get --enforce-lockfile
+
+      - name: Install Linux key-store runtime for FFI tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsecret-1-0
 
       - name: Analyze
         run: flutter analyze --no-pub
