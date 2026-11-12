@@ -106,11 +106,6 @@ impl HttpTransport {
         Self::build(timeout_secs, false)
     }
 
-    /// Account cookies must never follow a redirect to a different origin.
-    pub fn without_redirects(timeout_secs: u64) -> Result<Self, String> {
-        Self::build(timeout_secs, true)
-    }
-
     fn build(timeout_secs: u64, no_redirects: bool) -> Result<Self, String> {
         Self::build_with_policy(timeout_secs, no_redirects, &crate::network::policy())
     }
