@@ -389,6 +389,17 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _feedControllers.putIfAbsent(tab, PageController.new);
   PageController get _pages => _pagesFor(_current.tabIndex);
   bool _channelScrolling = false;
+
+  /// 横滑切频道的看门狗：正常时 [_channelScrolling] 由 pager 的 ScrollEnd
+  /// （走 [_onChannelScroll]）复位；但频道表回包换 key、整个 pager 重建时那
+  /// 一次 ScrollEnd 会丢，闩就永远挡住起播与释放（真机表现为切回推荐不再起播）。
+  /// 兜一道：切频道置闩后排一个「动画时长 + 余量」的定时器，到点若闩还在就当作
+  /// ScrollEnd 丢了、手动放行——与 pager dispose 里补发 onScrollStateChanged(false)
+  /// 同一思路，只不过补的是 DramaPage 这一侧的闩。
+  Timer? _channelScrollingWatchdog;
+  static const Duration _channelScrollingWatchdogDelay =
+      Duration(milliseconds: 500);
+
   int _channel = 0;
 
   /// The live horizontal swipe progress, handed from the swipe area to the
@@ -618,6 +629,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _guideFadeIn?.cancel();
     _guideTick?.cancel();
     _guideFadeOut?.cancel();
+    _channelScrollingWatchdog?.cancel();
     _pullDistance.dispose();
     for (final controller in _feedControllers.values) {
       controller.dispose();
@@ -865,6 +877,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   void _onChannelScroll(bool scrolling) {
     if (!mounted) return;
+    // 真正的 ScrollEnd 到了，看门狗不再需要。
+    if (!scrolling) _channelScrollingWatchdog?.cancel();
     if (_channelScrolling != scrolling) {
       setState(() => _channelScrolling = scrolling);
     }
@@ -890,6 +904,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _paging = false;
       _channelScrolling = !MediaQuery.disableAnimationsOf(context);
     });
+    _armChannelScrollingWatchdog();
     // 记住这次选择（官方把 `tab_type` 写回 SP）：下次冷启动直接落在这里。
     final type = channel.serverType;
     if (type != null) unawaited(DramaChannelPreferences.save(type));
@@ -915,6 +930,25 @@ class _DramaPageState extends ConsumerState<DramaPage>
         unawaited(_inline.releaseAll());
       }
     });
+  }
+
+  /// 排横滑切频道看门狗：只在闩确实置起时排。收到 ScrollEnd（[_onChannelScroll]
+  /// false）会取消；若被别的路径（如帧后「pager 没挂上」兜底）先清了闩，定时器
+  /// 到点看到闩已落就自灭，不会重复放行。
+  void _armChannelScrollingWatchdog() {
+    _channelScrollingWatchdog?.cancel();
+    if (!_channelScrolling) return;
+    _channelScrollingWatchdog = Timer(
+      _channelScrollingWatchdogDelay,
+      _onChannelScrollingWatchdog,
+    );
+  }
+
+  void _onChannelScrollingWatchdog() {
+    _channelScrollingWatchdog = null;
+    if (!mounted || !_channelScrolling) return;
+    // 到点还锁着 = 那一次 ScrollEnd 丢了，手动放行，别让闩永久挡住起播。
+    _onChannelScroll(false);
   }
 
   /// A vertical drag pauses first: the new card may only start after the feed

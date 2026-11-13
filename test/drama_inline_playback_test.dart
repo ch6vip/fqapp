@@ -200,6 +200,9 @@ void main() {
   // has to exist before the first build.
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    // shellVisibleTab 是进程级单例：别的用例 pump 过壳层会残留一个下标，
+    // 本页再直接 pump 单个页面时会被判成「隐藏」而不自动起播。每个用例开头复位。
+    resetShellVisibility();
     // 频道选择是进程级静态态：别的用例切过频道会带进本页的冷启动恢复。
     DramaChannelPreferences.reset();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -627,12 +630,13 @@ void main() {
   });
 
   testWidgets('隐藏的底部 tab 只暂停，不重建播放器', (tester) async {
-    addTearDown(resetShellVisibility);
     final session = _Session();
     await _mount(tester, session);
     final player = session.players.single;
 
-    // 本页是壳层的第 2 页；切到第 1 页即模拟底部 tab 隐藏。
+    // 可见性由壳层的 shellVisibleTab 广播（DramaPage 默认 shellIndex=1），
+    // 不再靠 TickerMode 翻转——后者会让整页 didChangeDependencies → 重建。
+    // 广播一个别的下标 = 本页被壳层切走。
     shellVisibleTab.value = 0;
     await _flush(tester);
 
@@ -641,7 +645,8 @@ void main() {
     expect(player.disposed, isFalse);
     expect(session.players, hasLength(1));
 
-    resetShellVisibility();
+    // 切回本页下标：恢复播放，同样不重建播放器。
+    shellVisibleTab.value = 1;
     await _flush(tester);
     expect(player.isPlaying, isTrue);
     expect(session.players, hasLength(1));
@@ -674,11 +679,16 @@ void main() {
     historyWrite.complete();
     await _flush(tester);
     await tester.tap(find.text('推荐'));
-    await _flush(tester);
+    // 切回推荐会触发横向 pager 的 260ms 到位动画，_channelScrolling 要等动画
+    // 结束的 ScrollEnd 才放行起播；单帧 _flush 只推进 ~16ms 等不到。把这段动画
+    // 时间逐帧泵过去（与真机「点选频道后最多 260ms 才恢复内联播放」一致），
+    // 并 flush 让新剧内容异步落地；到位并新建播放器即停。
+    await tester.pump();
+    for (var i = 0; i < 8 && session.players.length < 2; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      await _flush(tester);
+    }
     expect(dramaLightPageNotifier.value, isFalse);
-    // 点选频道走 260ms 的 pager 动画，ScrollEnd 之后才恢复内联播放。
-    await tester.pump(const Duration(milliseconds: 400));
-    await _flush(tester);
     expect(session.players, hasLength(2));
     expect(session.players.last.isPlaying, isTrue);
     expect(tester.takeException(), isNull);
