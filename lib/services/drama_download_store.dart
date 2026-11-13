@@ -102,15 +102,22 @@ class CachedEpisode {
 
   /// 离线回放的取流结果：主 url 是 `file://` 标记（原生播放器据此走
   /// 本地文件桥 + 同一把 key 解密），variants 只带下载时选定的那一档。
-  EpisodeSource toSource() => EpisodeSource('file://$filePath', keyHex, [
-    if (variantName.isNotEmpty)
-      EpisodeVariant(
-        name: variantName,
-        url: 'file://$filePath',
-        keyHex: keyHex,
-        height: height,
-      ),
-  ]);
+  EpisodeSource toSource() {
+    // Windows drive letters and separators must be encoded as a file URI;
+    // Android's local-file bridge expects the original, unescaped path.
+    final url = Platform.isWindows
+        ? Uri.file(filePath).toString()
+        : 'file://$filePath';
+    return EpisodeSource(url, keyHex, [
+      if (variantName.isNotEmpty)
+        EpisodeVariant(
+          name: variantName,
+          url: url,
+          keyHex: keyHex,
+          height: height,
+        ),
+    ]);
+  }
 }
 
 /// 一部剧的目录（剧名/封面/全集列表），下载启动时落库，管理页靠它自举，

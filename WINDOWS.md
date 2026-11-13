@@ -36,6 +36,18 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 核对视频和音频逐帧哈希、在线/离线随机 Range、访问限制和会话关闭。
 这些离线测试不代表上游在线内容或用户账号导入已通过真实验收。
 
+缓存路径的原生回归在生成上述夹具后运行：
+
+```powershell
+$env:FQAPP_TEST_ENCRYPTED_MEDIA = (Resolve-Path build/validation/windows-media/encrypted.mp4).Path
+$env:FQAPP_TEST_DECRYPTED_MEDIA = (Resolve-Path build/validation/windows-media/decoded.mp4).Path
+flutter test --no-pub test/desktop_cached_media_test.dart
+```
+
+该测试从 `CachedEpisode.toSource()` 进入真实 Rust/C 解密链路，核对 6 集缓存的
+乱序打开、重开和 Range 拖动，并覆盖含中文、空格、`#`、`%` 的 Windows 路径。
+Windows 缓存取流必须使用标准文件 URI，不能直接把盘符路径拼在 `file://` 后。
+
 `dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe`
 后运行 `build/verify_windows_player.exe`，使用与产品一致的 AOT 模式和随包 libmpv，核对加密媒体的 H264 解码尺寸、
 播放/暂停/拖动/续播、倍速和静音；该测试不显示视频窗口，窗口及 GPU 呈现需另行实机验收。

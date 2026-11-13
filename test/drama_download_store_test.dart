@@ -80,13 +80,43 @@ void main() {
 
   test('toSource 生成 file:// 取流结果并保留画质档', () async {
     await store.saveEpisode(episode());
-    final source = (await store.episode('ep1'))!.toSource();
+    final cached = (await store.episode('ep1'))!;
+    final source = cached.toSource();
     expect(source.url.startsWith('file://'), isTrue);
+    expect(Uri.parse(source.url).toFilePath(), cached.filePath);
+    expect(source.variants.single.url, source.url);
     expect(source.keyHex, '0102');
     expect(source.variants, hasLength(1));
     expect(source.variants.first.name, '1080P');
     expect(source.variants.first.height, 1080);
   });
+
+  test('Windows 自动缓存多集后每集及画质档均能读取原文件', () async {
+    final special = Directory('${videoDir.path}/缓存 #100%')..createSync();
+    for (var index = 0; index < 6; index++) {
+      final file = File('${special.path}/第 ${index + 1} 集.mp4');
+      final bytes = List<int>.filled(32, index + 1);
+      await file.writeAsBytes(bytes);
+      await store.saveEpisode(
+        episode(
+          itemId: 'ep$index',
+          index: index,
+          filePath: file.path,
+          bytes: bytes.length,
+          auto: true,
+        ),
+      );
+    }
+    for (final index in [1, 4, 0, 5, 2, 3, 1]) {
+      final cached = (await store.episode('ep$index'))!;
+      expect(cached.auto, isTrue);
+      final source = cached.toSource();
+      for (final url in [source.url, source.variants.single.url]) {
+        final file = File.fromUri(Uri.parse(url));
+        expect(await file.readAsBytes(), List<int>.filled(32, index + 1));
+      }
+    }
+  }, skip: !Platform.isWindows);
 
   test('损坏记录按未缓存处理，不给出不可回放的取流结果', () async {
     // Seed the corrupt record into the encrypted box the store actually
