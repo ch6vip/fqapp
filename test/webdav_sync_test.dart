@@ -13,6 +13,9 @@ import 'package:fqapp/models/library_backup.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/webdav_sync_document.dart';
 import 'package:fqapp/services/library_store.dart';
+import 'package:fqapp/services/library_backup_service.dart';
+import 'package:fqapp/services/shelf_group_store.dart';
+import 'package:fqapp/services/ai_reading/ai_backup.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/webdav_client.dart';
@@ -353,6 +356,110 @@ void main() {
       await service.dispose();
       await Hive.close();
       await directory.delete(recursive: true);
+    });
+
+    test(
+      'cloud categories restore idempotently without overwriting local assignments',
+      () async {
+        final groups = ShelfGroupStore.instance;
+        await groups.init();
+        final local = await groups.addGroup('本机分类');
+        await groups.assignMany([item('local')], local);
+        remote = WebDavSyncDocument(
+          LibraryBackup.capture(
+            shelf: [ShelfRecord(item: item('cloud'), addedAt: DateTime(2025))],
+            history: [],
+            watched: {},
+            groups: {
+              'version': 1,
+              'groups': {
+                'gcloud-1': {'name': '云端分类', 'at': 1, 'deleted': false},
+              },
+              'assignments': {
+                'book:cloud': {'group': 'gcloud-1', 'at': 1},
+              },
+            },
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await service.sync();
+        expect(groups.groups['gcloud-1'], '云端分类');
+        expect(groups.groupOf(item('cloud')), 'gcloud-1');
+        expect(groups.groupOf(item('local')), local);
+        expect(groups.groups.length, 2);
+      },
+    );
+
+    test(
+      'an incomplete AI export never creates a misleading cloud backup',
+      () async {
+        await service.dispose();
+        final exporter = _IncompleteAiBackup();
+        service = WebDavSyncService(
+          backupService: exporter,
+          createClient: (settings) => WebDavClient(
+            settings,
+            client: MockClient((request) async {
+              expect(request.method, 'GET');
+              return http.Response('', 404);
+            }),
+          ),
+        );
+        await service.configure(config);
+        await expectLater(
+          service.sync(),
+          throwsA(
+            isA<WebDavException>().having(
+              (e) => e.message,
+              'message',
+              contains('无法建立完整云端备份'),
+            ),
+          ),
+        );
+        expect(service.status.value, contains('AI'));
+        expect(remote, isNull);
+      },
+    );
+
+    test('unchanged cloud AI is decoded and restored only once', () async {
+      await service.dispose();
+      final importer = _CountingAiBackup();
+      remote = WebDavSyncDocument(
+        LibraryBackup.capture(
+          shelf: [],
+          history: [],
+          watched: {},
+          aiData: base64Encode(
+            gzip.encode(
+              utf8.encode(
+                jsonEncode({
+                  'format': 'fqapp.ai-backup',
+                  'version': 1,
+                  'createdAt': 1,
+                  'feedback': [],
+                  'prompts': [],
+                  'candidates': [],
+                }),
+              ),
+            ),
+          ),
+        ),
+      ).encode();
+      service = WebDavSyncService(
+        backupService: importer,
+        createClient: (settings) => WebDavClient(
+          settings,
+          client: MockClient((request) async {
+            expect(request.method, 'GET');
+            return http.Response.bytes(remote!, 200, headers: {'etag': '"1"'});
+          }),
+        ),
+      );
+      await service.configure(config);
+      await service.sync();
+      await service.sync();
+      expect(importer.restores, 1);
     });
 
     test('a fresh device imports the online shelf from the server', () async {
@@ -758,4 +865,36 @@ void main() {
       },
     );
   });
+}
+
+class _IncompleteAiBackup extends LibraryBackupService {
+  @override
+  Future<LibraryBackup> capture({
+    bool includeAi = true,
+    String? aiBookId,
+    bool compactAi = false,
+  }) async {
+    lastAiExportNote = 'AI 数据暂不可用';
+    return backup();
+  }
+}
+
+class _CountingAiBackup extends LibraryBackupService {
+  int restores = 0;
+  @override
+  Future<AiBackupRestoreResult> restoreAiPayload(
+    AiBackupPayload payload,
+  ) async {
+    restores++;
+    return const AiBackupRestoreResult(
+      feedback: 0,
+      prompts: 0,
+      candidates: 0,
+      trials: 0,
+      trialResults: 0,
+      usage: 0,
+      pending: 0,
+      conflicts: 0,
+    );
+  }
 }

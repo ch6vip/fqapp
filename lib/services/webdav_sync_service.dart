@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hive_ce/hive.dart';
@@ -10,15 +9,22 @@ import '../models/webdav_sync_document.dart';
 import '../models/library_backup.dart';
 import 'encrypted_hive.dart';
 import 'library_backup_service.dart';
-import 'ai_reading/ai_backup.dart';
+import 'webdav_ai_payload.dart';
+import 'shelf_group_store.dart';
 import 'library_store.dart';
 import 'native_secure_key_storage.dart';
 import 'shelf_store.dart';
 import 'webdav_client.dart';
 
 class WebDavSyncService with WidgetsBindingObserver {
-  WebDavSyncService({WebDavClient Function(WebDavConfig)? createClient})
-    : _createClient = createClient ?? WebDavClient.new;
+  WebDavSyncService({
+    WebDavClient Function(WebDavConfig)? createClient,
+    LibraryBackupService? backupService,
+  }) : _createClient = createClient ?? WebDavClient.new,
+       _backupService = backupService ?? LibraryBackupService();
+  final LibraryBackupService _backupService;
+  String? _cachedAi;
+  WebDavAiPayload? _cachedAiPayload;
   static final instance = WebDavSyncService();
   final WebDavClient Function(WebDavConfig) _createClient;
   static final _storage = defaultSecureKeyStorage();
@@ -183,7 +189,10 @@ class WebDavSyncService with WidgetsBindingObserver {
           if (previous.containsKey('history')) {
             throw const WebDavException('云端同步文件已消失，已停止自动重建，避免恢复已删除的数据');
           }
-          final local = await LibraryBackupService().capture();
+          final local = await _backupService.capture();
+          if (_backupService.lastAiExportNote case final note?) {
+            throw WebDavException('无法建立完整云端备份：$note；请修复 AI 存储后重试');
+          }
           if (!current()) return;
           if (!await client.write(WebDavSyncDocument(local).encode(), null)) {
             continue;
@@ -205,18 +214,27 @@ class WebDavSyncService with WidgetsBindingObserver {
         } on FormatException catch (error) {
           throw WebDavException(error.message);
         }
+        WebDavAiPayload? decodedAi;
         if (incoming.aiData case final ai?) {
           try {
-            AiBackupPayload.fromJson(
-              jsonDecode(
-                utf8.decode(GZipDecoder().decodeBytes(base64Decode(ai))),
-              ),
-            );
+            if (_cachedAi != ai || _cachedAiPayload == null) {
+              final decoded = await decodeWebDavAi(ai);
+              if (!current()) return;
+              _cachedAi = ai;
+              _cachedAiPayload = decoded;
+            }
+            decodedAi = _cachedAiPayload;
           } catch (_) {
             throw const WebDavException(
-              '云端 AI 备份分段损坏或格式不兼容（DAV_AI），未覆盖本机书架；请用原设备重新导出有效备份',
+              '云端 AI 备份分段损坏、超出大小限制或格式不兼容（DAV_AI），未覆盖本机书架；请用原设备重新导出有效备份',
             );
           }
+        } else {
+          _cachedAi = null;
+          _cachedAiPayload = null;
+        }
+        if (incoming.groups.isNotEmpty && !ShelfGroupStore.instance.isReady) {
+          throw const WebDavException('本地分类尚未初始化，未覆盖本机书架，请稍后重试');
         }
         if (pending.values.any((keys) => keys.isNotEmpty)) {
           final deletedHistory = pending['history']!;
@@ -274,10 +292,10 @@ class WebDavSyncService with WidgetsBindingObserver {
           });
           continue;
         }
-        final aiHash = _aiFingerprint(incoming.aiData);
+        final aiHash = decodedAi?.fingerprint;
         if (incoming.aiData != null && aiHash != previous['aiHash']) {
           try {
-            await LibraryBackupService().restoreAi(incoming);
+            await _backupService.restoreAiPayload(decodedAi!.payload);
           } on FormatException {
             throw const WebDavException(
               '云端 AI 备份分段无效（DAV_AI），未覆盖本机书架；请用原设备重新导出有效备份',
@@ -287,6 +305,10 @@ class WebDavSyncService with WidgetsBindingObserver {
         }
         _applying = true;
         try {
+          if (incoming.groups.isNotEmpty) {
+            await ShelfGroupStore.instance.mergeBackup(incoming.groups);
+            if (!current()) return;
+          }
           await ShelfStore.instance.applySyncedShelf(
             before: localShelf,
             incoming: incoming.shelf,
@@ -311,8 +333,11 @@ class WebDavSyncService with WidgetsBindingObserver {
         // Local deletions during application were preserved by the stores.
         // Compare against the new baseline instead of dropping their events.
         final appliedKeys = _snapshotKeys(incoming);
-        final afterKeys = _snapshotKeys(
-          await LibraryBackupService().capture(includeAi: false),
+        final afterHistory = await LibraryStore.instance.backupSnapshot();
+        final afterKeys = _storedKeys(
+          ShelfStore.instance.records(),
+          afterHistory.history,
+          afterHistory.watched,
         );
         if (!current()) return;
         if (appliedKeys.keys.any(
@@ -369,24 +394,11 @@ class WebDavSyncService with WidgetsBindingObserver {
     'watched': backup.watched.keys.toList(),
   };
 
-  static String? _aiFingerprint(String? encoded) {
-    if (encoded == null) return null;
-    try {
-      final payload =
-          jsonDecode(
-                utf8.decode(GZipDecoder().decodeBytes(base64Decode(encoded))),
-              )
-              as Map;
-      payload.remove('createdAt');
-      return sha256.convert(utf8.encode(jsonEncode(payload))).toString();
-    } catch (_) {
-      return sha256.convert(utf8.encode(encoded)).toString();
-    }
-  }
-
   Future<void> dispose() async {
     _generation++;
     _detach();
+    _cachedAi = null;
+    _cachedAiPayload = null;
     try {
       await _running;
     } catch (_) {
