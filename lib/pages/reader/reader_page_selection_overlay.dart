@@ -244,7 +244,7 @@ extension _ReaderPageSelectionOverlay on _ReaderPageState {
     final endBucket = _chapterEndParagraph();
     final commentCount = _ideas.total;
     return ColoredBox(
-      color: preset.backgroundColor,
+      color: _effectiveBackgroundColor,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,

@@ -255,7 +255,13 @@ class _ReaderAppearanceSheetState
       onPickFont: widget.onPickFont,
     );
     if (!_alive || selection == null) return;
-    _apply(value.copyWith(fontPath: selection.path, fontName: selection.name));
+    _apply(
+      value.copyWith(
+        fontPath: selection.path,
+        fontName: selection.name,
+        builtinSerifFont: false,
+      ),
+    );
   }
 
   @override
@@ -463,7 +469,9 @@ class _ReaderAppearanceSheetState
     ReaderThemePreset choice,
     double diameter,
   ) {
-    final selected = choice == _displayPreset;
+    final selected =
+        choice == _displayPreset &&
+        (_backgroundLocked || value.customBackgroundColor == null);
     return Semantics(
       selected: selected,
       button: true,
@@ -472,7 +480,12 @@ class _ReaderAppearanceSheetState
         key: ValueKey('reader-theme-${choice.name}'),
         onTap: _backgroundLocked
             ? null
-            : () => _apply(value.copyWith(themePreset: choice)),
+            : () => _apply(
+                value.copyWith(
+                  themePreset: choice,
+                  clearCustomBackground: true,
+                ),
+              ),
         borderRadius: BorderRadius.circular(diameter / 2),
         child: Container(
           width: diameter,
@@ -741,7 +754,11 @@ class _ReaderAppearanceSheetState
       _adjustment(
         ReaderSettingsNavRow(
           key: const ValueKey('reader-font-picker'),
-          label: value.fontName.isEmpty ? '字体' : '字体 · ${value.fontName}',
+          label: value.builtinSerifFont
+              ? '字体 · 宋体'
+              : value.fontName.isEmpty
+              ? '字体'
+              : '字体 · ${value.fontName}',
           onTap: _openFontPicker,
         ),
       ),
@@ -1076,15 +1093,24 @@ class _ReaderAppearanceSheetState
       children: [
         for (final choice in ReaderThemePreset.values)
           Semantics(
-            selected: choice == _displayPreset,
+            selected:
+                choice == _displayPreset &&
+                (_backgroundLocked || value.customBackgroundColor == null),
             button: true,
             label: '${choice.label}阅读背景',
             child: GlassTextButton(
               key: ValueKey('reader-theme-${choice.name}'),
-              selected: choice == _displayPreset,
+              selected:
+                  choice == _displayPreset &&
+                  (_backgroundLocked || value.customBackgroundColor == null),
               onPressed: _backgroundLocked
                   ? null
-                  : () => _apply(value.copyWith(themePreset: choice)),
+                  : () => _apply(
+                      value.copyWith(
+                        themePreset: choice,
+                        clearCustomBackground: true,
+                      ),
+                    ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
