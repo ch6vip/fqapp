@@ -251,9 +251,6 @@ extension _PlayerPagePreload on _PlayerPageState {
       trace?.source = 'offline';
       return (offline, null);
     }
-    if (widget.contentLoader == null && !(await currentConnectivity()).online) {
-      throw const OfflineEpisodeUnavailable();
-    }
     final request = _sources.request(episode, refresh: refresh);
     trace?.source = request.origin.name;
     var online = await request.future;

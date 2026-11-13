@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../../services/ai_reading/ai_models.dart';
 import '../../../widgets/ai_reading/ai_ui.dart';

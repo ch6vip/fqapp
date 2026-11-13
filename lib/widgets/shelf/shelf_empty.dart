@@ -10,7 +10,7 @@
 // - `ShelfFilteredEmptyState` is new: a filtered-to-nothing state with a
 //   `shelf-clear-filters` action.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../wenku/src/app_text.dart';

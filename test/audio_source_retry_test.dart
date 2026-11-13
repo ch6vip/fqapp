@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -83,11 +83,10 @@ void main() {
     await _mount(tester);
     await _pumpUntil(tester, () => tester.any(find.text('播放出错，请稍后重试')));
 
-    expect(
-      _sourceRequests.map((url) => url.queryParameters['tone_id']),
-      ['0', '1'],
-      reason: '回退音色的 404 也只请求一次',
-    );
+    expect(_sourceRequests.map((url) => url.queryParameters['tone_id']), [
+      '0',
+      '1',
+    ], reason: '回退音色的 404 也只请求一次');
   });
 
   testWidgets('a 5xx audio source is retried and then plays', (tester) async {

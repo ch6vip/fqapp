@@ -76,7 +76,10 @@ final _contentMarkers = <RegExp>[
 /// The `PGC_` signature is required — the same one the 段评 previews match on —
 /// so a stray `{!--` inside a novel's prose is left alone rather than eating the
 /// rest of its line.
-final _truncatedMarker = RegExp(r'\{!--\s*PGC_[A-Z_]+:[^\n]*$', multiLine: true);
+final _truncatedMarker = RegExp(
+  r'\{!--\s*PGC_[A-Z_]+:[^\n]*$',
+  multiLine: true,
+);
 
 String _stripContentMarkers(String text) {
   // Closed markers first: a stray unterminated `{!--` must not be allowed to
@@ -251,7 +254,6 @@ class ChapterContent {
                 block is ChapterParagraph && _holdsContentMarker(block.text),
           ) ||
       needsImageRefresh(now: now);
-
 
   ChapterContent withoutLeadingTitle(String title) {
     final wanted = title.replaceAll(_titleSpaces, '');

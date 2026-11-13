@@ -1,5 +1,7 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -31,8 +33,14 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await storage.write(SecureKeyProvider.hiveBoxKeyName, 'malformed');
-    await expectLater(EncryptedHive.openBox(Hive, 'no_key', keys: keys), throwsStateError);
-    await expectLater(EncryptedHive.openLazyBox(Hive, 'no_key_lazy', keys: keys), throwsStateError);
+    await expectLater(
+      EncryptedHive.openBox(Hive, 'no_key', keys: keys),
+      throwsStateError,
+    );
+    await expectLater(
+      EncryptedHive.openLazyBox(Hive, 'no_key_lazy', keys: keys),
+      throwsStateError,
+    );
     expect(dir.listSync().whereType<File>(), isEmpty);
   });
 
@@ -77,15 +85,8 @@ void main() {
     await box.put('k1', {'text': sentinel});
     await box.close();
 
-    final files = dir
-        .listSync()
-        .whereType<File>()
-        .map((f) => f.path)
-        .toList();
-    expect(
-      files.any((p) => p.endsWith('chapter_cache_v1_enc.hive')),
-      isTrue,
-    );
+    final files = dir.listSync().whereType<File>().map((f) => f.path).toList();
+    expect(files.any((p) => p.endsWith('chapter_cache_v1_enc.hive')), isTrue);
     for (final path in files) {
       final bytes = File(path).readAsBytesSync();
       expect(
@@ -110,11 +111,7 @@ void main() {
     await legacy.put('b', {'title': 'Book B'});
     await legacy.close();
 
-    final box = await EncryptedHive.openBox<dynamic>(
-      Hive,
-      'shelf',
-      keys: keys,
-    );
+    final box = await EncryptedHive.openBox<dynamic>(Hive, 'shelf', keys: keys);
     expect((box.get('a') as Map)['title'], 'Book A');
     expect((box.get('b') as Map)['title'], 'Book B');
     expect(await Hive.boxExists('shelf'), isFalse);
@@ -136,29 +133,19 @@ void main() {
     await partial.put('a', {'title': 'Book A'});
     await partial.close();
 
-    final box = await EncryptedHive.openBox<dynamic>(
-      Hive,
-      'shelf',
-      keys: keys,
-    );
+    final box = await EncryptedHive.openBox<dynamic>(Hive, 'shelf', keys: keys);
     expect((box.get('a') as Map)['title'], 'Book A');
     expect((box.get('b') as Map)['title'], 'Book B');
     expect(await Hive.boxExists('shelf'), isFalse);
   });
 
   test('lost key treats the encrypted box as empty', () async {
-    final box = await EncryptedHive.openBox<dynamic>(
-      Hive,
-      'shelf',
-      keys: keys,
-    );
+    final box = await EncryptedHive.openBox<dynamic>(Hive, 'shelf', keys: keys);
     await box.put('a', {'title': 'Book A'});
     await box.close();
 
     // Fresh secure storage => fresh key that cannot open the old box.
-    final lostKeys = SecureKeyProvider(
-      storage: InMemorySecureKeyStorage(),
-    );
+    final lostKeys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
     final reopened = await EncryptedHive.openBox<dynamic>(
       Hive,
       'shelf',
@@ -169,11 +156,7 @@ void main() {
   });
 
   test('lost key keeps the unreadable box and opens a fresh one', () async {
-    final box = await EncryptedHive.openBox<dynamic>(
-      Hive,
-      'shelf',
-      keys: keys,
-    );
+    final box = await EncryptedHive.openBox<dynamic>(Hive, 'shelf', keys: keys);
     await box.put('a', {'title': 'Book A'});
     await box.close();
     final original = File('${dir.path}/shelf_enc.hive');
@@ -183,9 +166,7 @@ void main() {
     // A transient Keystore hiccup hands back a key that cannot open the box.
     // Its ciphertext must survive: renamed out of Hive's lookup names, never
     // deleted, with a fresh empty box taking its place.
-    final lostKeys = SecureKeyProvider(
-      storage: InMemorySecureKeyStorage(),
-    );
+    final lostKeys = SecureKeyProvider(storage: InMemorySecureKeyStorage());
     final reopened = await EncryptedHive.openBox<dynamic>(
       Hive,
       'shelf',

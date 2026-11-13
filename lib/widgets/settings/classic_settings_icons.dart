@@ -1,4 +1,4 @@
-import 'package:flutter/cupertino.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 /// Original settings glyphs from the UI referenced by issue #288. This maps

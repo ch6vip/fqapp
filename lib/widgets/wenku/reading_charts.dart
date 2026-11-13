@@ -18,7 +18,7 @@
 //   `ReadingActivityRing`); the integration pass dropped the temporary
 //   `Misc` prefix and the `misc_reading_charts.dart` filename.
 import 'dart:math' as math;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'src/app_text.dart';
 import 'wenku_archive.dart';

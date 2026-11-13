@@ -23,8 +23,8 @@
 //   absent (upstream account/write surfaces are outside fqapp's product
 //   boundary); fqapp's own 书评 and 下载 sheet stay.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../models/book_detail.dart';
 import '../../models/media_item.dart';

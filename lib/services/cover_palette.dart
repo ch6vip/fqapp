@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Cover hue for the official audio capsule, the colour
 /// `PaletteUtils.getColorHByPalette` picks (`com/dragon/read/base/ui/util`).

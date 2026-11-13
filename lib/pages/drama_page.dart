@@ -1,11 +1,13 @@
 import '../widgets/video_player_chrome.dart';
 import '../services/desktop_platform.dart';
+
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../widgets/sliding_tab_indicator.dart';
+
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:hive_ce/hive_ce.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -389,6 +391,22 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _feedControllers.putIfAbsent(tab, PageController.new);
   PageController get _pages => _pagesFor(_current.tabIndex);
   bool _channelScrolling = false;
+
+  /// 横滑切频道的看门狗：正常时 [_channelScrolling] 由 pager 的 ScrollEnd
+  /// （走 [_onChannelScroll]）复位；但频道表回包换 key、整个 pager 重建时那
+  /// 一次 ScrollEnd 会丢，闩就永远挡住起播与释放（真机表现为切回推荐不再起播）。
+  /// 兜一道：切频道置闩后排一个「动画时长 + 余量」的定时器，到点若闩还在就当作
+  /// ScrollEnd 丢了、手动放行——与 pager dispose 里补发 onScrollStateChanged(false)
+  /// 同一思路，只不过补的是 DramaPage 这一侧的闩。
+  Timer? _channelScrollingWatchdog;
+  static const Duration _channelScrollingWatchdogDelay = Duration(
+    milliseconds: 500,
+  );
+
+  /// 当前落在频道 pager 上的指针。慢拖超过一次看门狗周期时还不能放闩；
+  /// 指针抬起后若 ScrollEnd 确实丢失，下一次计时才会兜底。
+  final Set<int> _channelPointers = <int>{};
+
   int _channel = 0;
 
   /// The live horizontal swipe progress, handed from the swipe area to the
@@ -618,6 +636,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
     _guideFadeIn?.cancel();
     _guideTick?.cancel();
     _guideFadeOut?.cancel();
+    _channelScrollingWatchdog?.cancel();
     _pullDistance.dispose();
     for (final controller in _feedControllers.values) {
       controller.dispose();
@@ -865,6 +884,8 @@ class _DramaPageState extends ConsumerState<DramaPage>
 
   void _onChannelScroll(bool scrolling) {
     if (!mounted) return;
+    // 真正的 ScrollEnd 到了，看门狗不再需要。
+    if (!scrolling) _channelScrollingWatchdog?.cancel();
     if (_channelScrolling != scrolling) {
       setState(() => _channelScrolling = scrolling);
     }
@@ -890,6 +911,7 @@ class _DramaPageState extends ConsumerState<DramaPage>
       _paging = false;
       _channelScrolling = !MediaQuery.disableAnimationsOf(context);
     });
+    _armChannelScrollingWatchdog();
     // 记住这次选择（官方把 `tab_type` 写回 SP）：下次冷启动直接落在这里。
     final type = channel.serverType;
     if (type != null) unawaited(DramaChannelPreferences.save(type));
@@ -915,6 +937,30 @@ class _DramaPageState extends ConsumerState<DramaPage>
         unawaited(_inline.releaseAll());
       }
     });
+  }
+
+  /// 排横滑切频道看门狗：从最近一次频道 pager 活动重新计时。收到 ScrollEnd
+  /// （[_onChannelScroll] false）会取消；若被别的路径（如帧后「pager 没挂上」
+  /// 兜底）先清了闩，定时器到点看到闩已落就自灭，不会重复放行。
+  void _armChannelScrollingWatchdog() {
+    _channelScrollingWatchdog?.cancel();
+    if (!_channelScrolling) return;
+    _channelScrollingWatchdog = Timer(
+      _channelScrollingWatchdogDelay,
+      _onChannelScrollingWatchdog,
+    );
+  }
+
+  void _onChannelScrollingWatchdog() {
+    _channelScrollingWatchdog = null;
+    if (!mounted || !_channelScrolling) return;
+    // 仍在慢拖：继续等用户松手，不能在滚动尚未结束时提前起播。
+    if (_channelPointers.isNotEmpty) {
+      _armChannelScrollingWatchdog();
+      return;
+    }
+    // 到点还锁着 = 那一次 ScrollEnd 丢了，手动放行，别让闩永久挡住起播。
+    _onChannelScroll(false);
   }
 
   /// A vertical drag pauses first: the new card may only start after the feed
@@ -1538,50 +1584,65 @@ class _DramaPageState extends ConsumerState<DramaPage>
               // from the account, so neither is a video feed here either.
               // 看剧/漫剧是浅色海报瀑布格（官方 StaggeredFeedTab，
               // `client_template` 12/13），只有推荐走全屏竖滑播放流。
-              child: TabSwipeArea.pages(
-                key: ValueKey(
-                  _channels.map((c) => '${c.serverType}:${c.source}').join(','),
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (event) {
+                  _channelPointers.add(event.pointer);
+                },
+                onPointerUp: (event) {
+                  _channelPointers.remove(event.pointer);
+                },
+                onPointerCancel: (event) {
+                  _channelPointers.remove(event.pointer);
+                },
+                child: TabSwipeArea.pages(
+                  key: ValueKey(
+                    _channels
+                        .map((c) => '${c.serverType}:${c.source}')
+                        .join(','),
+                  ),
+                  index: _channel,
+                  count: _channels.length,
+                  onSelect: _selectChannel,
+                  onProgress: (value) {
+                    if (_channelScrolling) _armChannelScrollingWatchdog();
+                    if (_channelProgress.value != value) {
+                      _channelProgress.value = value;
+                    }
+                  },
+                  // 拖动时把邻页真的画出来。短剧的顶栏本来就在滑动区外面（不会被
+                  // 遮），但内容移开后那一侧原本只剩页面底色——深色视频频道下就是一
+                  // 块黑面板，和首页修掉的是同一个观感问题。
+                  onScrollStateChanged: _onChannelScroll,
+                  // 播放器打开、弹窗、最近频道编辑时都不该被横滑打断。
+                  enabled: !_modalOpen && _openingId == null && !_recentEditing,
+                  // 整片横滑都切频道，播放流也一样。唯一的例外是底部进度条：
+                  // 它自己带横向拖动、又比这里内层，所以只有那 24dp 归调进度，
+                  // 其余区域一律切频道（见 TabSwipeArea 的类文档）。
+                  // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
+                  // 选中项，不被动画拖着走。
+                  pageBuilder: (context, target) {
+                    final targetChannel = _channels[target];
+                    final targetState = target == _channel
+                        ? state
+                        : _channelStates[targetChannel.tabIndex] ??
+                              HomeState(tabIndex: targetChannel.tabIndex);
+                    return ColoredBox(
+                      color: targetChannel.playsInline
+                          ? Colors.black
+                          : HomePalette.of(context).canvas,
+                      child: _channelBody(
+                        target,
+                        targetChannel,
+                        targetState,
+                        targetState.items
+                            .where((item) => item.kind == targetChannel.kind)
+                            .toList(growable: false),
+                        active: target == _channel,
+                      ),
+                    );
+                  },
                 ),
-                index: _channel,
-                count: _channels.length,
-                onSelect: _selectChannel,
-                onProgress: (value) {
-                  if (_channelProgress.value != value) {
-                    _channelProgress.value = value;
-                  }
-                },
-                // 拖动时把邻页真的画出来。短剧的顶栏本来就在滑动区外面（不会被
-                // 遮），但内容移开后那一侧原本只剩页面底色——深色视频频道下就是一
-                // 块黑面板，和首页修掉的是同一个观感问题。
-                onScrollStateChanged: _onChannelScroll,
-                // 播放器打开、弹窗、最近频道编辑时都不该被横滑打断。
-                enabled: !_modalOpen && _openingId == null && !_recentEditing,
-                // 整片横滑都切频道，播放流也一样。唯一的例外是底部进度条：
-                // 它自己带横向拖动、又比这里内层，所以只有那 24dp 归调进度，
-                // 其余区域一律切频道（见 TabSwipeArea 的类文档）。
-                // 只让内容跟手横移：频道条固定在顶部，切换后立刻显示新的
-                // 选中项，不被动画拖着走。
-                pageBuilder: (context, target) {
-                  final targetChannel = _channels[target];
-                  final targetState = target == _channel
-                      ? state
-                      : _channelStates[targetChannel.tabIndex] ??
-                            HomeState(tabIndex: targetChannel.tabIndex);
-                  return ColoredBox(
-                    color: targetChannel.playsInline
-                        ? Colors.black
-                        : HomePalette.of(context).canvas,
-                    child: _channelBody(
-                      target,
-                      targetChannel,
-                      targetState,
-                      targetState.items
-                          .where((item) => item.kind == targetChannel.kind)
-                          .toList(growable: false),
-                      active: target == _channel,
-                    ),
-                  );
-                },
               ),
             ),
             Positioned(

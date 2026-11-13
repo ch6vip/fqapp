@@ -52,9 +52,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # iOS 端需要 Flutter >= 3.47（Xcode 27 适配补丁），pubspec.lock 也已按 3.47 解析，
-  # Android 构建必须用同一版本，否则 --enforce-lockfile 会失败。
-  FLUTTER_VERSION: '3.47.9'
+  # pubspec.lock 与所有构建平台使用同一 Flutter 工具链，避免解析结果漂移。
+  FLUTTER_VERSION: '3.50.0'
   # Pinned flutter_rust_bridge toolchain. The Rust crate, the generated bindings
   # and the codegen binary must all be the same version.
   FRB_VERSION: '2.13.0'

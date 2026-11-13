@@ -18,10 +18,7 @@ void main() {
     });
 
     test('folds path separators and other reserved characters', () {
-      expect(
-        exportFileName(r'a/b\c:d*e?f"g<h>i|j'),
-        'a_b_c_d_e_f_g_h_i_j.txt',
-      );
+      expect(exportFileName(r'a/b\c:d*e?f"g<h>i|j'), 'a_b_c_d_e_f_g_h_i_j.txt');
     });
 
     test('drops control characters and edge dots', () {
@@ -41,35 +38,43 @@ void main() {
   group('PlatformTxtSink', () {
     const channel = MethodChannel('fqapp/downloads');
 
-    test('speaks the fqapp/downloads channel and reports the public path', () async {
-      final calls = <MethodCall>[];
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            calls.add(call);
-            return <String, Object?>{
-              'path': '/storage/emulated/0/Download/书.txt',
-              'public': true,
-            };
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(channel, null),
-      );
+    test(
+      'speaks the fqapp/downloads channel and reports the public path',
+      () async {
+        final calls = <MethodCall>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              calls.add(call);
+              return <String, Object?>{
+                'path': '/storage/emulated/0/Download/书.txt',
+                'public': true,
+              };
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
 
-      final target = await const PlatformTxtSink().saveText(
-        fileName: '书.txt',
-        text: '正文',
-      );
+        final target = await const PlatformTxtSink().saveText(
+          fileName: '书.txt',
+          text: '正文',
+        );
 
-      expect(calls.single.method, 'saveText');
-      expect(calls.single.arguments, {'fileName': '书.txt', 'text': '正文'});
-      expect(target.path, '/storage/emulated/0/Download/书.txt');
-      expect(target.isPublic, isTrue);
-    });
+        expect(calls.single.method, 'saveText');
+        expect(calls.single.arguments, {'fileName': '书.txt', 'text': '正文'});
+        expect(target.path, '/storage/emulated/0/Download/书.txt');
+        expect(target.isPublic, isTrue);
+      },
+    );
 
     test('never reports success without a path from the platform', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async => <String, Object?>{});
+          .setMockMethodCallHandler(
+            channel,
+            (call) async => <String, Object?>{},
+          );
       addTearDown(
         () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, null),
@@ -98,18 +103,12 @@ void main() {
       await export.start(bookId: 'book-1', title: '测试书');
 
       expect(sink.calls.single.fileName, '测试书.txt');
-      expect(
-        sink.calls.single.text,
-        '# 第一章 开端\n第一段\n第二段\n\n# 第二章 继续\n正文二\n\n',
-      );
+      expect(sink.calls.single.text, '# 第一章 开端\n第一段\n第二段\n\n# 第二章 继续\n正文二\n\n');
       expect(export.value.running, isFalse);
       expect(export.value.completed, 2);
       expect(export.value.failed, 0);
       expect(export.value.target?.isPublic, isTrue);
-      expect(
-        export.value.message,
-        contains('/sdcard/Download/测试书.txt'),
-      );
+      expect(export.value.message, contains('/sdcard/Download/测试书.txt'));
     });
 
     test('one dead chapter keeps its heading and is reported', () async {
@@ -243,8 +242,7 @@ void main() {
     });
 
     test('a sink failure is reported and no target is claimed', () async {
-      final sink = _RecordingSink()
-        ..error = const ExportWriteException('磁盘已满');
+      final sink = _RecordingSink()..error = const ExportWriteException('磁盘已满');
       final export = BookTxtExport(
         directoryLoader: (bookId) async => [chapter('1', '一')],
         chapterLoader: (chapter) async => '正文',

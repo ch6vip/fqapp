@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:fqapp/services/chapter_text_formatter.dart';
 import 'package:fqapp/services/ai_reading/ai_chapter_snapshot.dart';
 import 'package:flutter/rendering.dart';

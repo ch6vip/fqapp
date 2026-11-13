@@ -17,9 +17,8 @@
 library;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
-
 
 /// 官方 `ShareType` 里短剧取 `Video`。
 const shareTypeVideo = 7;

@@ -9,7 +9,7 @@
 // - `app_ui.dart`'s AppText -> `src/app_text.dart`.
 // - `app_ui.dart`'s GlassTextButton -> `wenku_glass.dart` (same
 //   compact/selected/onPressed API; the shared control owns the glass face).
-// - `package:flutter/cupertino.dart` -> `package:flutter/material.dart`; these
+// - `package:cupertino_ui/cupertino_ui.dart` -> `package:material_ui/material_ui.dart`; these
 //   widgets only used members both libraries expose.
 // - `liquid_glass_easy` is the vendored third_party path package fqapp already
 //   depends on, so the package API is used unchanged.
@@ -27,7 +27,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 

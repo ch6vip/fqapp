@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -178,10 +178,7 @@ void main() {
             .getRect(find.byKey(const ValueKey('classic-dock-selection')))
             .center
             .dx,
-        moreOrLessEquals(
-          tester.getRect(find.text('书架')).center.dx,
-          epsilon: 1,
-        ),
+        moreOrLessEquals(tester.getRect(find.text('书架')).center.dx, epsilon: 1),
       );
       await tester.tap(find.text('我的'));
       await tester.pumpAndSettle();

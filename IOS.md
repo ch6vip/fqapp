@@ -8,7 +8,7 @@
 |---|---|---|
 | macOS | 27.2+ | |
 | Xcode | 27.2 | `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` |
-| Flutter | **3.47.9** | Xcode 27 的适配补丁在 3.47.0 才进，别用 3.44.x 建 iOS |
+| Flutter | **3.50.0** | 与 `pubspec.lock`、Android / Windows / Linux CI 保持一致 |
 | CocoaPods | 1.17.0 | `brew install cocoapods`（系统 Ruby 太旧，别用 gem 装） |
 | Rust | 1.99.1 | `rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios` |
 | flutter_rust_bridge_codegen | 2.13.0 | 必须与 `rust/Cargo.toml` 里的版本一致 |
@@ -74,7 +74,5 @@ BUNDLE_ID=com.fqapp.fqapp IPA=/tmp/pack/fqapp_ios_unsigned.ipa ./your-sign-scrip
 
 ## 与 Android 构建的关系
 
-iOS 需要 Flutter 3.47+（Xcode 27 适配），因此 `pubspec.lock` 的传递依赖被一并升级到
-3.47.9 能解析的版本，Android / Windows 的 CI 也统一到 3.47.9（见 `chore(deps)` 那个
-commit）。若上游要保留旧 SDK，把那一个 commit 整体回退、再在 3.44.6 上重新生成
-`pubspec.lock` 即可，iOS 侧的改动不受影响。
+iOS 需要 Flutter 3.47+（Xcode 27 适配）；当前仓库统一使用 Flutter 3.50.0 /
+Dart 3.14.0，Android、Windows 和 Linux CI 使用同一工具链。

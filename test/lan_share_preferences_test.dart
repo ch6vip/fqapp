@@ -33,9 +33,7 @@ void main() {
   });
 
   test('load picks up a value written earlier', () async {
-    SharedPreferences.setMockInitialValues({
-      LanSharePreferences.key: true,
-    });
+    SharedPreferences.setMockInitialValues({LanSharePreferences.key: true});
     await LanSharePreferences.instance.load();
     expect(LanSharePreferences.instance.enabled.value, isTrue);
   });

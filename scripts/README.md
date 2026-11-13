@@ -43,7 +43,7 @@ FRB 绑定发生变化时，还需再次生成并比较内容哈希，确认可�
 
 首次安装使用 `npm ci --ignore-scripts`（只安装开发工具 Prettier，不影响 App 依赖），
 并运行 `flutter pub get --enforce-lockfile`，使 Dart 格式器读到与包一致的语言版本。
-CI 固定 Flutter 3.47.9 / Dart 3.13.7、Rust 1.99.1 和 Node.js 22；Prettier 3.10.0
+CI 固定 Flutter 3.50.0 / Dart 3.14.0、Rust 1.99.1 和 Node.js 22；Prettier 3.10.0
 由 `package.json` 与 `package-lock.json` 锁定。Rust 缺格式器时运行
 `rustup component add rustfmt --toolchain 1.99.1`。本地建议使用相同版本，入口会打印
 实际使用的工具版本；可通过进程环境 `RUSTUP_TOOLCHAIN=1.99.1` 选择该 Rust 工具链。

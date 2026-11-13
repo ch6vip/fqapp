@@ -45,16 +45,14 @@ void main() {
       await store.init();
       await store.clearHistory();
       // 真实路径是作用域 store（同一条作品可能有 video/manju 两个作用域）。
-      await scopedHistoryStore(store, 'video').addHistory({
-        'id': 'x',
-        'kind': 'video',
-        'title': 'V',
-      });
-      await scopedHistoryStore(store, 'manju').addHistory({
-        'id': 'x',
-        'kind': 'manju',
-        'title': 'M',
-      });
+      await scopedHistoryStore(
+        store,
+        'video',
+      ).addHistory({'id': 'x', 'kind': 'video', 'title': 'V'});
+      await scopedHistoryStore(
+        store,
+        'manju',
+      ).addHistory({'id': 'x', 'kind': 'manju', 'title': 'M'});
       await store.removeHistoryEntries([(contentId: 'x', kind: 'manju')]);
       final remaining = store.historySnapshot();
       expect(remaining.length, 1);

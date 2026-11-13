@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/app_theme.dart';
@@ -72,9 +72,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('档案 dock 动画期间仍可点按切换，staticMaterial 行为不变', (
-    tester,
-  ) async {
+  testWidgets('档案 dock 动画期间仍可点按切换，staticMaterial 行为不变', (tester) async {
     final animating = ValueNotifier<bool>(true);
     addTearDown(animating.dispose);
     var selected = -1;

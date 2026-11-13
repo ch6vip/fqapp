@@ -169,8 +169,9 @@ Linux/macOS 对应 `bash scripts/format_all.sh --since origin/master`，加 `--c
 
 | 工具 | 版本 | 用途 |
 |---|---|---|
-| Flutter | 3.44.6 (stable) | 构建 App |
-| Dart SDK | 3.12+ | 随 Flutter |
+| Flutter | 3.50.0 (stable) | 构建 App |
+| Dart SDK | 3.14.0 | 随 Flutter |
+| Android 构建工具链 | Gradle 9.5.0 / AGP 9.3.3 / Kotlin 2.4.20 | 构建 APK |
 | Rust | stable (cargo/rustc) | 编译原生核心 `fqapi_core` |
 | flutter_rust_bridge | 2.13.0 | 生成 Flutter/Rust 绑定 |
 | Android SDK | 36 (platform) + Build-Tools | 编译 APK |
@@ -178,6 +179,10 @@ Linux/macOS 对应 `bash scripts/format_all.sh --since origin/master`，加 `--c
 | Android NDK | 28.2.13676358 | 交叉编译 Rust ARM64 核心与 C 流式解密库 |
 | CMake | 3.22.1 | Android 构建自动编译 C 库 |
 | Visual Studio | 2022（「使用 C++ 的桌面开发」工作负载） | 仅构建 Windows 桌面端（可选） |
+
+> Flutter 3.50 已把 Material 与 Cupertino 拆到 `material_ui` / `cupertino_ui`。
+> 首方 Dart 源码统一导入这两个包；`package:flutter/material.dart` 和
+> `package:flutter/cupertino.dart` 已弃用，会让静态分析失败。
 
 > Windows 下构建注意：Kotlin 增量编译在部分环境会报 `Could not close incremental caches`，已在 `android/gradle.properties` 中关闭（`kotlin.incremental=false`）。
 
@@ -259,7 +264,7 @@ Rust 核心按 `arm64-v8a` 与 `armeabi-v7a` 两个 ABI 产出（`scripts/build_
 运行成功后，在该次运行的 **Artifacts** 中下载 `fqapp-arm64-运行编号`；其中包含
 `app-release.apk`、SHA-256、签名与 16 KiB 对齐报告、源码版本和工具版本，产物保留 14 天。
 
-[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.44.6`、Rust 工具链与
+[工作流](.github/workflows/android-apk.yml) 固定 Flutter `3.50.0`、Rust 工具链与
 flutter_rust_bridge `2.13.0`、JDK 17、NDK `28.2.13676358` 和 CMake `3.22.1`。
 Rust 核心与 C 解密库都会在 runner 上编译。CI 设置 `FQAPP_USE_MAVEN_MIRRORS=false`
 使用官方 Maven 源；本地构建默认仍使用国内镜像。
@@ -323,14 +328,13 @@ maven { url = uri("https://maven.aliyun.com/repository/public") }
 
 ### Gradle 发行版镜像
 
-若 `services.gradle.org` 下载慢，手动放入 `%USERPROFILE%\.gradle\wrapper\dists\gradle-9.1.0-all\<hash>\gradle-9.1.0-all.zip`（从腾讯云镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-9.1.0-all.zip` 下载）。
+若 `services.gradle.org` 下载慢，手动放入 `%USERPROFILE%\.gradle\wrapper\dists\gradle-9.5.0-all\<hash>\gradle-9.5.0-all.zip`（从腾讯云镜像 `https://mirrors.cloud.tencent.com/gradle/gradle-9.5.0-all.zip` 下载）。
 
 ### 常见构建问题
 
 | 问题 | 解决 |
 |---|---|
 | `Could not close incremental caches` | 已在 `gradle.properties` 关闭 Kotlin 增量编译 |
-| 构建偶发 `IllegalStateException: The settings are not yet available for build` | Gradle 9.1.0 配置缓存推广处理器（`ConfigurationCachePromoHandler`）的偶发 bug，重跑即可恢复，无需修改配置（详见下方「已知问题与调试」） |
 | `Unable to locate Android SDK` | `flutter config --android-sdk C:\android-sdk` |
 | `Flutter requires Android SDK 36` | `sdkmanager "platforms;android-36"` |
 | maven.google.com 超时 | 已配置阿里云镜像 |
@@ -437,13 +441,12 @@ $serial = '127.0.0.1:16384' # 仅为已验证示例，必须按本次 info 输�
 
 官方参考：[ADB 连接说明](https://mumu.163.com/help/20240807/40912_1073151.html)、[MuMuManager 命令行说明](https://mumu.163.com/help/20240726/35047_1170006.html)。
 
-**本地 Flutter 工具链一致性**：`pubspec.lock` 与 CI（`FLUTTER_VERSION: '3.47.9'`）已升到 3.47.9，`.dart_tool/package_config.json` 也指向 `E:\ctf-aaa\.toolchains\flutter-3.47.9`；PATH 上的 `C:\Users\ch6vip\flutter\bin` 仍是 3.44.6 / Dart 3.12.2。混用会让 `flutter test` 报 `petitparser` 语言版本 3.13 过高及 `ui.HitTest*` 类型缺失；切到 3.47.9 后若出现 `Invalid kernel binary format version (expected 138, found 130)`，是 `.dart_tool/hooks_runner` 里旧 SDK 编译的 `hook.dill`，删除该生成目录即可，不必改动源码。
+**本地 Flutter 工具链一致性**：`pubspec.lock` 与 CI 使用 Flutter 3.50.0 / Dart 3.14.0；`pubspec.yaml` 保留 Dart 3.12.2 的兼容下限，使升级工具链不会顺带提高包语言版本。PATH 上的 `C:\Users\ch6vip\flutter\bin` 使用同一 Flutter 版本。切换 SDK 后若出现 kernel 版本冲突，删除 `.dart_tool/hooks_runner` 中旧 SDK 生成的缓存即可，不必修改源码。
 
 会话级临时指定（不修改全局 PATH）：
 
 ```powershell
-$env:PATH = 'E:\ctf-aaa\.toolchains\flutter-3.47.9\flutter\bin;' + $env:PATH
-Remove-Item -Recurse -Force .dart_tool\hooks_runner  # 仅在出现 kernel 版本冲突时
+flutter --version
 flutter analyze --no-pub
 bash scripts/test_quick.sh home
 ```
@@ -1128,26 +1131,7 @@ curl http://127.0.0.1:18080/health
 ### 3. 设备池过期
 若 content/full 解密乱码，删除 `files/backend/config/device_pool.json` 重启 App 即可自动重注册。
 
-### 4. 构建偶发 `The settings are not yet available for build`
-
-**现象**：`flutter build` / `gradlew` 偶发报
-`IllegalStateException: The settings are not yet available for build`，
-但重跑即恢复（daemon 日志显示失败后紧接着的 daemon 几秒内成功）。
-
-**根因**（已定位到 Gradle 9.1.0 字节码）：调用链为
-`ConfigurationCachePromoHandler.beforeComplete()` →
-`runWithoutBuildDefinition()` → `ResolvedBuildLayout.isBuildDefinitionMissing()` →
-`DefaultGradle.getSettings()`。`getSettings()` 在 settings 尚未 attach 时直接抛异常；
-该处理器是 Gradle 9.1.0 新增的「配置缓存推广」功能（构建结束时打印
-`Consider enabling configuration cache`），在复合构建（`settings.gradle.kts` 中
-`includeBuild(flutter_tools)` + 子工程 `:gradle`）首次初始化的时序里偶发踩中此状态。
-
-**结论**：这是 Gradle 9.1.0 自身缺陷，非项目代码问题，且无法稳定复现。
-
-**处理**：无需修改代码/配置；偶发时重跑即可。若想彻底规避，可升级 Gradle
-补丁版本（9.1.x / 9.2，需先确认与 AGP 9.0.1 兼容）。
-
-> 注意：`Daemon compilation failed`（Kotlin 2.3.20，见
+> 注意：`Daemon compilation failed`（Kotlin 2.4.20，见
 > `android/.kotlin/errors/*.log`）是另一独立问题 —— Kotlin 编译守护进程崩溃，
 > 已通过 `gradle.properties` 的 `kotlin.incremental=false` 与
 > `kotlin.compiler.execution.strategy=in-process` 规避，勿因 AGP 9 弃用警告而删除这些配置。
@@ -1235,7 +1219,7 @@ WebDAV 配置与诊断由数据同步功能负责。
 第四批提供实验性 Arch 打包脚本与 Linux CI artifact，不提供正式 Release。
 构建溯源、安装/卸载、升级回退边界与依赖见 [LINUX.md](LINUX.md)。
 
-Arch 构建依赖：Flutter stable（本批验证 3.47.9 / Dart 3.13.7）、Rust stable
+Arch 构建依赖：Flutter stable（目标工具链 3.50.0 / Dart 3.14.0）、Rust stable
 及 x86_64-unknown-linux-gnu target、clang、cmake、ninja、pkgconf、gtk3、libsecret。
 运行需要 GTK3、libsecret、glibc（含 iconv）、xdg-user-dirs 和图形会话，
 以及已启动且已解锁的 Secret Service（如 GNOME Keyring）。不要用 sudo 运行应用。

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -37,6 +37,8 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
   bool _loadFailed = false;
   bool _dirty = false;
   bool _saveFailed = false;
+  String? _fontFamily;
+  int _fontGeneration = 0;
 
   @override
   void initState() {
@@ -48,9 +50,19 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
   Future<void> _load() async {
     try {
       final value = await ReaderPreferences.load();
+      String? fontFamily;
+      if (value.fontPath.isNotEmpty) {
+        try {
+          fontFamily = await ReaderFonts.load(value.fontPath);
+        } catch (_) {
+          // A missing or stale imported font must not block the settings page.
+          // The preview falls back to the app font until another font is picked.
+        }
+      }
       if (!mounted) return;
       setState(() {
         _value = value;
+        _fontFamily = fontFamily;
         _loadFailed = false;
       });
       await _startDevice();
@@ -152,11 +164,23 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
       currentPath: _value.fontPath,
       currentName: _value.fontName,
       onPickFont: _device.pickFont,
+      currentBuiltinSerif: _value.builtinSerifFont,
     );
     if (selection == null || !mounted) return;
+    final generation = ++_fontGeneration;
+    if (selection.builtinSerif) {
+      setState(() => _fontFamily = null);
+      _apply(
+        (value) =>
+            value.copyWith(fontPath: '', fontName: '', builtinSerifFont: true),
+      );
+      return;
+    }
     if (selection.path.isNotEmpty) {
       try {
-        await ReaderFonts.load(selection.path);
+        final family = await ReaderFonts.load(selection.path);
+        if (!mounted || generation != _fontGeneration) return;
+        setState(() => _fontFamily = family);
       } on ReaderFontLimitException {
         _showMessage('已导入字体过多，重启应用后可继续更换字体');
         return;
@@ -164,6 +188,8 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
         _showMessage('字体无法读取，请选择有效的 TTF、OTF 或 TTC 文件');
         return;
       }
+    } else {
+      setState(() => _fontFamily = null);
     }
     _apply(
       (value) => value.copyWith(
@@ -246,6 +272,7 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ++_fontGeneration;
     ++_deviceGeneration;
     _saveTimer?.cancel();
     unawaited(_save());
@@ -298,6 +325,7 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
             _card([
               _heading('阅读外观', '纸色、翻页与字体', icon: LucideIcons.book_open),
               _themeChoices(),
+              _readingPreview(),
               if (_backgroundLocked)
                 const ReaderSettingsSectionHeader(title: '全局显示模式已接管阅读纸色'),
               if (_value.customBackgroundColor != null)
@@ -364,23 +392,6 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
                   ),
                 ),
               _navRow(label: '字体', value: _fontLabel, onTap: _pickFont),
-              _choiceRow(
-                label: '内置字体',
-                choices: [
-                  _Choice(
-                    '系统',
-                    !_value.builtinSerifFont && _value.fontPath.isEmpty,
-                  ),
-                  _Choice('宋体', _value.builtinSerifFont),
-                ],
-                onSelected: (index) => _apply(
-                  (value) => value.copyWith(
-                    builtinSerifFont: index == 1,
-                    fontPath: '',
-                    fontName: '',
-                  ),
-                ),
-              ),
               _switchRow(
                 '段首缩进',
                 _value.firstLineIndent,
@@ -830,6 +841,115 @@ class _ReaderPreferencesPageState extends State<ReaderPreferencesPage>
       },
     ),
   );
+
+  Widget _readingPreview() {
+    final preset = _backgroundLocked ? _settingsPreset : _value.themePreset;
+    final background = _backgroundLocked
+        ? preset.backgroundColor
+        : _value.effectiveBackgroundColor;
+    final text = _backgroundLocked
+        ? preset.textColor
+        : _value.effectiveTextColor;
+    final fontFamily = _value.builtinSerifFont ? 'Home Serif' : _fontFamily;
+    final fontName = _value.builtinSerifFont
+        ? '宋体'
+        : _value.fontName.isNotEmpty
+        ? _value.fontName
+        : '系统字体';
+    final titleAlign = _value.titleAlignment == ReaderTitleAlignment.center
+        ? TextAlign.center
+        : TextAlign.start;
+    final bodyAlign = _value.justifyText ? TextAlign.justify : TextAlign.start;
+    final indent = _value.firstLineIndent ? '\u3000\u3000' : '';
+    final fontWeight = FontWeight.values[_value.fontWeight ~/ 100 - 1];
+    final backgroundName =
+        _value.customBackgroundColor != null &&
+            !_backgroundLocked &&
+            !preset.isEink &&
+            !preset.isOled
+        ? '自定义背景'
+        : '${preset.label}背景';
+    final semantics = [
+      '阅读效果预览',
+      backgroundName,
+      fontName,
+      '${_value.fontSize.round()}号字',
+      _value.firstLineIndent ? '段首缩进' : '无段首缩进',
+      _value.justifyText ? '两端对齐' : '左对齐',
+    ].join('，');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Semantics(
+        container: true,
+        label: semantics,
+        child: ExcludeSemantics(
+          child: Container(
+            key: const ValueKey('reader-preview-paper'),
+            constraints: const BoxConstraints(minHeight: 132),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: text.withValues(alpha: 0.14)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '效果预览',
+                        style: TextStyle(
+                          color: text.withValues(alpha: 0.64),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      LucideIcons.eye,
+                      size: 13,
+                      color: text.withValues(alpha: 0.5),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '第一章 风从纸页间来',
+                  key: const ValueKey('reader-preview-title'),
+                  textAlign: titleAlign,
+                  style: TextStyle(
+                    color: text,
+                    fontFamily: fontFamily,
+                    fontSize: _value.titleSize,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '$indent山雨初歇，窗外的光落在书页上。',
+                  key: const ValueKey('reader-preview-body'),
+                  textAlign: bodyAlign,
+                  style: TextStyle(
+                    color: text,
+                    fontFamily: fontFamily,
+                    fontSize: _value.fontSize,
+                    fontWeight: fontWeight,
+                    height: _value.lineHeight,
+                    letterSpacing: _value.letterSpacing,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _choiceRow({
     required String label,

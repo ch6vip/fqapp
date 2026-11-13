@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 仿真卷页：直折线 + 镜像翻页 + 折线两侧渐变阴影。
 ///
@@ -64,9 +64,7 @@ class ReaderPageCurl extends StatelessWidget {
                     children: [
                       outgoing,
                       const Positioned.fill(
-                        child: ColoredBox(
-                          color: Color.fromRGBO(0, 0, 0, 0.12),
-                        ),
+                        child: ColoredBox(color: Color.fromRGBO(0, 0, 0, 0.12)),
                       ),
                     ],
                   ),
@@ -94,8 +92,7 @@ class ReaderPageCurlGeometry {
     required this.forward,
   }) : progress = progress.clamp(0.0, 1.0);
 
-  double get _tilt =>
-      size.height * 0.18 * math.sin(math.pi * progress);
+  double get _tilt => size.height * 0.18 * math.sin(math.pi * progress);
 
   /// 折线顶端点。
   Offset get foldTop => forward
@@ -181,8 +178,7 @@ class ReaderPageCurlGeometry {
     final sidePoint = forward
         ? Offset(size.width, size.height / 2)
         : Offset(0, size.height / 2);
-    if ((sidePoint - mid).dx * normal.dx +
-            (sidePoint - mid).dy * normal.dy <
+    if ((sidePoint - mid).dx * normal.dx + (sidePoint - mid).dy * normal.dy <
         0) {
       normal = -normal;
     }
@@ -192,23 +188,13 @@ class ReaderPageCurlGeometry {
   /// 来页侧阴影四边形：沿折线向外延伸 30px，折线处最暗。
   List<Offset> get incomingShadowQuad {
     final n = _incomingNormal * 30;
-    return [
-      foldTop,
-      foldBottom,
-      foldBottom + n,
-      foldTop + n,
-    ];
+    return [foldTop, foldBottom, foldBottom + n, foldTop + n];
   }
 
   /// 纸背侧阴影四边形：沿折线向内延伸 30px，折线处最暗。
   List<Offset> get flapShadowQuad {
     final n = _incomingNormal * 30;
-    return [
-      foldTop,
-      foldBottom,
-      foldBottom - n,
-      foldTop - n,
-    ];
+    return [foldTop, foldBottom, foldBottom - n, foldTop - n];
   }
 }
 
@@ -236,12 +222,7 @@ class _CurlShadowPainter extends CustomPainter {
     _paintQuad(canvas, size, geo.flapShadowQuad, 0.28);
   }
 
-  void _paintQuad(
-    Canvas canvas,
-    Size size,
-    List<Offset> quad,
-    double alpha,
-  ) {
+  void _paintQuad(Canvas canvas, Size size, List<Offset> quad, double alpha) {
     final foldMid = (quad[0] + quad[1]) / 2;
     final outerMid = (quad[2] + quad[3]) / 2;
     final gradient = LinearGradient(
@@ -252,15 +233,12 @@ class _CurlShadowPainter extends CustomPainter {
       begin: _align(foldMid, size),
       end: _align(outerMid, size),
     );
-    final paint = Paint()
-      ..shader = gradient.createShader(Offset.zero & size);
+    final paint = Paint()..shader = gradient.createShader(Offset.zero & size);
     canvas.drawPath(Path()..addPolygon(quad, true), paint);
   }
 
-  Alignment _align(Offset point, Size size) => Alignment(
-    2 * point.dx / size.width - 1,
-    2 * point.dy / size.height - 1,
-  );
+  Alignment _align(Offset point, Size size) =>
+      Alignment(2 * point.dx / size.width - 1, 2 * point.dy / size.height - 1);
 
   @override
   bool shouldRepaint(covariant _CurlShadowPainter oldDelegate) => true;

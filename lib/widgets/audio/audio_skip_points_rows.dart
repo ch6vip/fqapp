@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/audio_playback_choice.dart';
@@ -35,7 +35,10 @@ class AudioSkipPointsRows extends StatelessWidget {
           title: '跳过片头',
           seconds: points.introSeconds,
           onPicked: (value) => onChanged(
-            AudioSkipPoints(introSeconds: value, outroSeconds: points.outroSeconds),
+            AudioSkipPoints(
+              introSeconds: value,
+              outroSeconds: points.outroSeconds,
+            ),
           ),
         ),
         _row(
@@ -46,7 +49,10 @@ class AudioSkipPointsRows extends StatelessWidget {
           title: '跳过片尾',
           seconds: points.outroSeconds,
           onPicked: (value) => onChanged(
-            AudioSkipPoints(introSeconds: points.introSeconds, outroSeconds: value),
+            AudioSkipPoints(
+              introSeconds: points.introSeconds,
+              outroSeconds: value,
+            ),
           ),
         ),
       ],

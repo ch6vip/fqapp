@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Upstream comment bodies encode emoji as `[微笑]`-style bracket tokens.
 ///
