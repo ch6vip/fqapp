@@ -15,9 +15,11 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/audio_floating_routes.dart';
+import '../services/linux_platform.dart';
 import '../services/system_tts.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/home/home_design.dart';
@@ -119,6 +121,22 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
       await SystemTts.openSettings();
     } catch (e) {
       if (mounted) {
+        if (isLinuxDesktop && e is PlatformException && e.code == 'TTS_ERROR') {
+          await showDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('语音配置指引'),
+              content: Text(SystemTts.errorMessage(e)),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('知道了'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(SystemTts.errorMessage(e))));
@@ -197,7 +215,7 @@ class _SystemTtsSettingsPageState extends State<SystemTtsSettingsPage>
                     const SizedBox(height: 20),
                     Center(
                       child: SettingsAction(
-                        label: '打开系统语音设置',
+                        label: isLinuxDesktop ? '查看语音配置指引' : '打开系统语音设置',
                         icon: LucideIcons.settings_2,
                         style: SettingsActionStyle.outlined,
                         expand: true,

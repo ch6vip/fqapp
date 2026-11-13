@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fqapp/pages/system_tts_settings_page.dart';
 import 'package:fqapp/services/app_theme.dart';
+import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/widgets/settings/settings_archive_page.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 
@@ -30,17 +31,63 @@ void main() {
 
   Future<void> pumpPage(
     WidgetTester tester,
-    Future<Object?> Function(MethodCall call) handler,
-  ) async {
+    Future<Object?> Function(MethodCall call) handler, {
+    AppThemeStyle style = AppThemeStyle.archive,
+  }) async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, handler);
     await tester.pumpWidget(
       MaterialApp(
-        theme: AppTheme.createTheme(Brightness.light),
+        theme: AppTheme.createTheme(Brightness.light, style: style),
         home: const SystemTtsSettingsPage(),
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  for (final style in AppThemeStyle.values) {
+    for (final platform in [TargetPlatform.linux, TargetPlatform.android]) {
+      testWidgets('$style $platform 语音设置动作符合平台能力', (tester) async {
+        const guidance =
+            '请使用系统 Speech Dispatcher 配置工具配置中文语音（例如 '
+            'espeak-ng），然后重新初始化。';
+        var settingsRequests = 0;
+        await pumpPage(tester, (call) async {
+          if (call.method == 'engines') {
+            return {'engines': <Object?>[], 'defaultEngine': null};
+          }
+          if (call.method == 'settings') {
+            settingsRequests++;
+            expect(call.arguments, isNull);
+            if (platform == TargetPlatform.linux) {
+              throw PlatformException(code: 'TTS_ERROR', message: guidance);
+            }
+          }
+          return null;
+        }, style: style);
+
+        final label = platform == TargetPlatform.linux
+            ? '查看语音配置指引'
+            : '打开系统语音设置';
+        await tester.tap(find.text(label));
+        await tester.pumpAndSettle();
+
+        expect(settingsRequests, 1);
+        expect(find.byType(SnackBar), findsNothing);
+        if (platform == TargetPlatform.linux) {
+          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(find.text('语音配置指引'), findsOneWidget);
+          expect(find.text(guidance), findsOneWidget);
+          expect(find.text('打开系统语音设置'), findsNothing);
+          await tester.tap(find.text('知道了'));
+          await tester.pumpAndSettle();
+          expect(find.byType(AlertDialog), findsNothing);
+        } else {
+          expect(find.byType(AlertDialog), findsNothing);
+        }
+        expect(tester.takeException(), isNull);
+      }, variant: TargetPlatformVariant({platform}));
+    }
   }
 
   testWidgets('没有朗读引擎时展示 ContentNotice 空态', (tester) async {

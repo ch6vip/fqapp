@@ -156,7 +156,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
         _message = saved
             ? '备份文件已保存：${_counts(backup)}。\n'
                   'AI 反馈、保护、提示词和用量已一并导出，API Key 不在文件中。\n'
-                  '将这个文件传到新手机，在本页选择导入即可。'
+                  '将这个文件传到新设备，在本页选择导入即可。'
                   '${_service.lastAiExportNote == null ? '' : '\n${_service.lastAiExportNote}'}'
                   '${backup.excludedLocalRecords > 0 ? '\n已排除 ${backup.excludedLocalRecords} 条本地书籍相关记录。' : ''}'
                   '${groupsReady ? '' : '\n本次备份不含书架分组。'}'
@@ -443,7 +443,7 @@ class _LibraryBackupPageState extends State<LibraryBackupPage> {
                   '包含在线小说、听书、漫画、短剧和漫剧的收藏、已保存进度、'
                   '已看剧集与书架分组。\n\n'
                   '本地 TXT / EPUB 原文件、下载缓存、阅读时长、划线和应用设置需另行保留。\n\n'
-                  '导出前请退出阅读或暂停播放，让当前进度保存；换手机时传输备份文件，再在这里恢复。',
+                  '导出前请退出阅读或暂停播放，让当前进度保存；更换设备时传输备份文件，再在这里恢复。',
                   style: muted.copyWith(fontSize: 13),
                 ),
               ],
