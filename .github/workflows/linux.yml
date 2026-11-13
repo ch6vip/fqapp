@@ -63,7 +63,7 @@ jobs:
           export PATH="$FLUTTER_ROOT/bin:$PATH"
           mkdir -p build/validation/linux
           flutter --version --machine > build/validation/linux/flutter.json
-          python -c 'import json; assert json.load(open("build/validation/linux/flutter.json"))["frameworkRevision"] == "c197ca5199e9ee5661e865596c9c07294dfab51c"'
+          python -c 'import json; assert json.load(open("build/validation/linux/flutter.json"))["frameworkRevision"] == "ab2912035e160d9cad6306df307576da6128ebdb"'
           grep -q 'flutter_rust_bridge = "=2.13.0"' rust/Cargo.toml
           flutter precache --linux
           flutter pub get --enforce-lockfile
