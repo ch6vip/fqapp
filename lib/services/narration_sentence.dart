@@ -33,12 +33,7 @@ const String _sentenceTrailers = '」』”’"\'）)》〉】';
   if (pieceEnd <= pieceStart) return null;
   final piece = (start: pieceStart, end: pieceEnd);
   if (!precise) return piece;
-  return sentenceRangeAt(
-        text,
-        offset,
-        lower: pieceStart,
-        upper: pieceEnd,
-      ) ??
+  return sentenceRangeAt(text, offset, lower: pieceStart, upper: pieceEnd) ??
       piece;
 }
 

@@ -48,7 +48,10 @@ void main() {
       final store = await _pumpShuqi(tester);
       addTearDown(store.dispose);
 
-      expect(find.byKey(const Key('shuqi-detail-classic-page')), findsOneWidget);
+      expect(
+        find.byKey(const Key('shuqi-detail-classic-page')),
+        findsOneWidget,
+      );
       // The archive shell and its glass dock are gone.
       expect(find.byType(WenkuPage), findsNothing);
       expect(find.byType(DetailArchiveDock), findsNothing);
@@ -179,7 +182,10 @@ void main() {
       for (final brightness in [Brightness.light, Brightness.dark]) {
         final store = await _pumpShuqi(tester, brightness: brightness);
         expect(tester.takeException(), isNull);
-        expect(find.byKey(const Key('shuqi-detail-classic-page')), findsOneWidget);
+        expect(
+          find.byKey(const Key('shuqi-detail-classic-page')),
+          findsOneWidget,
+        );
         await tester.pumpWidget(const SizedBox.shrink());
         store.dispose();
       }
@@ -237,7 +243,10 @@ void main() {
       await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
       expect(calls, ['book:34078', 'toc:34078']);
-      expect(find.byKey(const Key('shuqi-detail-classic-page')), findsOneWidget);
+      expect(
+        find.byKey(const Key('shuqi-detail-classic-page')),
+        findsOneWidget,
+      );
     });
   });
 

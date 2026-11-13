@@ -200,11 +200,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('download-ahead-3')));
     await tester.pumpAndSettle();
 
-    expect(
-      engine.value.map((task) => task.itemId).toList(),
-      ['ep3', 'ep4', 'ep5'],
-      reason: '只从当前集往后取 3 集，且都是自动缓存之外的手动任务',
-    );
+    expect(engine.value.map((task) => task.itemId).toList(), [
+      'ep3',
+      'ep4',
+      'ep5',
+    ], reason: '只从当前集往后取 3 集，且都是自动缓存之外的手动任务');
     expect(engine.value.every((task) => !task.auto), isTrue);
   });
 

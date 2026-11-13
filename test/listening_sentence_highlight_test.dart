@@ -23,10 +23,10 @@ void main() {
       );
       // TTS text: '第一句。第二句。\n第三句。' — title stripped.
       // Layout: title block [0,3), separator, body starts at 4.
-      expect(
-        narrationLayoutRange(layout, (start: 0, end: 4)),
-        (start: 4, end: 8),
-      );
+      expect(narrationLayoutRange(layout, (start: 0, end: 4)), (
+        start: 4,
+        end: 8,
+      ));
     });
 
     test('range spanning the paragraph separator covers both blocks', () {
@@ -38,10 +38,10 @@ void main() {
         ],
       );
       // TTS [5, 11): '二句。\n第三' — crosses the '\n' at TTS offset 8.
-      expect(
-        narrationLayoutRange(layout, (start: 5, end: 11)),
-        (start: 9, end: 15),
-      );
+      expect(narrationLayoutRange(layout, (start: 5, end: 11)), (
+        start: 9,
+        end: 15,
+      ));
     });
 
     test('separator-only range maps to nothing', () {
@@ -67,14 +67,14 @@ void main() {
       );
       // Layout: title [0,3), '\n', image placeholder [4,5), '\n', body at 6.
       // TTS: '第一句。第二句。\n第三句。' — the image is invisible to TTS.
-      expect(
-        narrationLayoutRange(layout, (start: 0, end: 4)),
-        (start: 6, end: 10),
-      );
-      expect(
-        narrationLayoutRange(layout, (start: 9, end: 12)),
-        (start: 15, end: 18),
-      );
+      expect(narrationLayoutRange(layout, (start: 0, end: 4)), (
+        start: 6,
+        end: 10,
+      ));
+      expect(narrationLayoutRange(layout, (start: 9, end: 12)), (
+        start: 15,
+        end: 18,
+      ));
     });
 
     test('empty title contributes no offset', () {
@@ -82,10 +82,10 @@ void main() {
         title: '',
         blocks: [const ChapterParagraph('第一句。', paraIndex: 0)],
       );
-      expect(
-        narrationLayoutRange(layout, (start: 0, end: 4)),
-        (start: 0, end: 4),
-      );
+      expect(narrationLayoutRange(layout, (start: 0, end: 4)), (
+        start: 0,
+        end: 4,
+      ));
     });
 
     test('out-of-range TTS range maps to nothing', () {
@@ -103,9 +103,7 @@ void main() {
     ) async {
       final layout = _layout(
         title: '第一章',
-        blocks: [
-          const ChapterParagraph('第一句。第二句。第三句。', paraIndex: 0),
-        ],
+        blocks: [const ChapterParagraph('第一句。第二句。第三句。', paraIndex: 0)],
       );
       final block = layout.blocks[1];
       final scope = ReaderSelectionScope(

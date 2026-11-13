@@ -87,7 +87,11 @@ void main() {
       (tester) async {
         final boundaries = <int>[];
         final taps = <int>[];
-        final state = await pumpPaged(tester, boundaries: boundaries, taps: taps);
+        final state = await pumpPaged(
+          tester,
+          boundaries: boundaries,
+          taps: taps,
+        );
         state.turnPage(1);
         await tester.pump();
         await tester.pump();

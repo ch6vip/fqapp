@@ -202,10 +202,7 @@ class _AudioOfflineSectionState extends State<AudioOfflineSection> {
         const Divider(height: 32),
         Text('离线音频', style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
-        Text(
-          downloadedLabel,
-          key: const Key('audio_offline_summary'),
-        ),
+        Text(downloadedLabel, key: const Key('audio_offline_summary')),
         const SizedBox(height: 6),
         Text(
           '下载当前音色的讲书音频后，断网也能继续听。音频以加密形态保存在本地，'
@@ -236,9 +233,7 @@ class _AudioOfflineSectionState extends State<AudioOfflineSection> {
                     ? null
                     : () => unawaited(_startDownload()),
                 child: Text(
-                  pending.isEmpty
-                      ? '本音色已全部下载'
-                      : '下载剩余 ${pending.length} 章音频',
+                  pending.isEmpty ? '本音色已全部下载' : '下载剩余 ${pending.length} 章音频',
                 ),
               ),
               if (tasks.any(

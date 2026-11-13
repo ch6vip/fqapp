@@ -91,10 +91,22 @@ void main() {
 
     test('输出只有 16 档灰阶，Alpha 原样保留', () {
       final input = Uint8List.fromList([
-        200, 100, 50, 128,
-        10, 20, 30, 0,
-        255, 255, 255, 255,
-        0, 0, 0, 64,
+        200,
+        100,
+        50,
+        128,
+        10,
+        20,
+        30,
+        0,
+        255,
+        255,
+        255,
+        255,
+        0,
+        0,
+        0,
+        64,
       ]);
       final out = einkDitherPixels(input, 2, 2);
       for (var i = 0; i < out.length; i += 4) {

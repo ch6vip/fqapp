@@ -35,7 +35,10 @@ class AudioSkipPointsRows extends StatelessWidget {
           title: '跳过片头',
           seconds: points.introSeconds,
           onPicked: (value) => onChanged(
-            AudioSkipPoints(introSeconds: value, outroSeconds: points.outroSeconds),
+            AudioSkipPoints(
+              introSeconds: value,
+              outroSeconds: points.outroSeconds,
+            ),
           ),
         ),
         _row(
@@ -46,7 +49,10 @@ class AudioSkipPointsRows extends StatelessWidget {
           title: '跳过片尾',
           seconds: points.outroSeconds,
           onPicked: (value) => onChanged(
-            AudioSkipPoints(introSeconds: points.introSeconds, outroSeconds: value),
+            AudioSkipPoints(
+              introSeconds: points.introSeconds,
+              outroSeconds: value,
+            ),
           ),
         ),
       ],

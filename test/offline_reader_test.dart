@@ -349,12 +349,7 @@ void main() {
         'episode': 0,
       });
 
-      await pumpTrigger(
-        tester,
-        cache: cache,
-        store: store,
-        onResult: (_) {},
-      );
+      await pumpTrigger(tester, cache: cache, store: store, onResult: (_) {});
       await tester.tap(find.text('续读'));
       // 阅读器会去取图片：测试环境没有后端，落进错误态而不是抛异常，因此用
       // pump 而不是 pumpAndSettle（加载圈会让后者超时）。

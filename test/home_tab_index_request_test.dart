@@ -42,7 +42,9 @@ void main() {
                   lastTabIndex: lastTabIndex,
                 ));
                 return _page(
-                  items: [_item('t$tabType', kind: tabType == 5 ? 'audio' : 'book')],
+                  items: [
+                    _item('t$tabType', kind: tabType == 5 ? 'audio' : 'book'),
+                  ],
                   cells: [_cell(tabType == 2 ? 384 : 337, 'tab-$tabType')],
                 );
               },
@@ -87,7 +89,9 @@ void main() {
                   lastTabIndex: lastTabIndex,
                 ));
                 return _page(
-                  items: [_item('t$tabType', kind: tabType == 5 ? 'audio' : 'book')],
+                  items: [
+                    _item('t$tabType', kind: tabType == 5 ? 'audio' : 'book'),
+                  ],
                   cells: [_cell(tabType == 2 ? 384 : 337, 'tab-$tabType')],
                 );
               },
@@ -137,7 +141,9 @@ void main() {
                 int? tabIndex,
                 int? lastTabIndex,
               }) async => _page(
-                items: [_item('t$tabType', kind: tabType == 5 ? 'audio' : 'book')],
+                items: [
+                  _item('t$tabType', kind: tabType == 5 ? 'audio' : 'book'),
+                ],
                 cells: [_cell(tabType == 2 ? 384 : 337, 'tab-$tabType')],
               ),
           searchLoader: (query, {int page = 1}) async => [],
@@ -176,13 +182,11 @@ Future<void> _flush() async {
   await Future<void>.delayed(Duration.zero);
 }
 
-HomepagePage _page({required List<MediaItem> items, required List<HomeCell> cells}) =>
-    HomepagePage(
-      items: items,
-      cells: cells,
-      nextOffset: null,
-      sessionId: null,
-    );
+HomepagePage _page({
+  required List<MediaItem> items,
+  required List<HomeCell> cells,
+}) =>
+    HomepagePage(items: items, cells: cells, nextOffset: null, sessionId: null);
 
 HomeCell _cell(int showType, String name) => HomeCell(
   showType: showType,

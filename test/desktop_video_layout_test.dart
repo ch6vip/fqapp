@@ -118,11 +118,7 @@ void main() {
   testWidgets('wide window docks the catalog with synopsis; toggle collapses', (
     tester,
   ) async {
-    await pumpChrome(
-      tester,
-      size: const Size(1366, 768),
-      synopsis: '这是一段作品简介',
-    );
+    await pumpChrome(tester, size: const Size(1366, 768), synopsis: '这是一段作品简介');
     // 停靠面板在场：选集网格、简介、剧名（面板头部）；标题栏的剧名让位。
     expect(find.text('选集'), findsOneWidget);
     expect(find.text('这是一段作品简介'), findsOneWidget);
@@ -182,11 +178,7 @@ void main() {
   ) async {
     DesktopPlatform.fullscreen.value = true;
     addTearDown(() => DesktopPlatform.fullscreen.value = false);
-    await pumpChrome(
-      tester,
-      size: const Size(1366, 768),
-      synopsis: '全屏简介',
-    );
+    await pumpChrome(tester, size: const Size(1366, 768), synopsis: '全屏简介');
     expect(find.text('选集'), findsNothing);
     expect(find.text('全屏简介'), findsNothing);
     expect(find.byTooltip('返回'), findsNothing);
@@ -197,9 +189,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('wheel over the picture forwards ±1 to the host', (
-    tester,
-  ) async {
+  testWidgets('wheel over the picture forwards ±1 to the host', (tester) async {
     final deltas = <int>[];
     await pumpChrome(
       tester,

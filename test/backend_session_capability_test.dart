@@ -117,20 +117,22 @@ void main() {
       );
     });
 
-    test('the HTTP transport presents the capability as a bearer token',
-        () async {
-      String? seen;
-      final transport = HttpBackendTransport(
-        client: MockClient((request) async {
-          seen = request.headers['authorization'];
-          return http.Response('{}', 200);
-        }),
-        baseUrl: 'http://127.0.0.1:18921',
-        capability: 'abc',
-      );
-      await transport.send('GET', Uri.parse('http://127.0.0.1:18921/health'));
-      expect(seen, 'Bearer abc');
-    });
+    test(
+      'the HTTP transport presents the capability as a bearer token',
+      () async {
+        String? seen;
+        final transport = HttpBackendTransport(
+          client: MockClient((request) async {
+            seen = request.headers['authorization'];
+            return http.Response('{}', 200);
+          }),
+          baseUrl: 'http://127.0.0.1:18921',
+          capability: 'abc',
+        );
+        await transport.send('GET', Uri.parse('http://127.0.0.1:18921/health'));
+        expect(seen, 'Bearer abc');
+      },
+    );
 
     test('the HTTP transport sends no token without a capability', () async {
       String? seen;

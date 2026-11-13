@@ -20,10 +20,7 @@ void main() {
     title: '第一章 试读',
     content: ChapterContent(
       blocks: [
-        List.filled(
-          40,
-          '他把电视打开，屏幕上一片雪白的信号在跳动着，像是谁在轻轻敲门。',
-        ).join(),
+        List.filled(40, '他把电视打开，屏幕上一片雪白的信号在跳动着，像是谁在轻轻敲门。').join(),
         '最后一段很短。',
       ].map(ChapterParagraph.new).toList(),
     ),

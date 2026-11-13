@@ -50,24 +50,30 @@ void main() {
     final calls = <String>[];
     await pump(
       tester,
-      replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async {
-        calls.add('$commentId:$cursor');
-        expect(count, 5);
-        return cursor.isEmpty
-            ? const CommentReplyPage(
-                replies: [CommentReply(id: 'r1', text: '第一条回复')],
-                totalCount: 2,
-                cursor: 'next',
-                hasMore: true,
-              )
-            : const CommentReplyPage(
-                replies: [
-                  CommentReply(id: 'r1', text: '第一条回复'),
-                  CommentReply(id: 'r2', text: '第二条回复'),
-                ],
-                totalCount: 2,
-              );
-      },
+      replies:
+          ({
+            required commentId,
+            required count,
+            required cursor,
+            String refReplyId = '',
+          }) async {
+            calls.add('$commentId:$cursor');
+            expect(count, 5);
+            return cursor.isEmpty
+                ? const CommentReplyPage(
+                    replies: [CommentReply(id: 'r1', text: '第一条回复')],
+                    totalCount: 2,
+                    cursor: 'next',
+                    hasMore: true,
+                  )
+                : const CommentReplyPage(
+                    replies: [
+                      CommentReply(id: 'r1', text: '第一条回复'),
+                      CommentReply(id: 'r2', text: '第二条回复'),
+                    ],
+                    totalCount: 2,
+                  );
+          },
     );
     expect(find.byType(TextField), findsNothing);
     // 服务端点赞数是只读内容，点击不会伪造计数或显示登录入口。
@@ -101,21 +107,27 @@ void main() {
       final cursors = <String>[];
       await pump(
         tester,
-        replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async {
-          cursors.add(cursor);
-          if (cursors.length == 1) {
-            return const CommentReplyPage(
-              replies: [CommentReply(id: 'r1', text: '已读回复')],
-              totalCount: 2,
-              cursor: 'next',
-              hasMore: true,
-            );
-          }
-          if (cursors.length == 2) throw Exception('offline');
-          return const CommentReplyPage(
-            replies: [CommentReply(id: 'r2', text: '重试成功')],
-          );
-        },
+        replies:
+            ({
+              required commentId,
+              required count,
+              required cursor,
+              String refReplyId = '',
+            }) async {
+              cursors.add(cursor);
+              if (cursors.length == 1) {
+                return const CommentReplyPage(
+                  replies: [CommentReply(id: 'r1', text: '已读回复')],
+                  totalCount: 2,
+                  cursor: 'next',
+                  hasMore: true,
+                );
+              }
+              if (cursors.length == 2) throw Exception('offline');
+              return const CommentReplyPage(
+                replies: [CommentReply(id: 'r2', text: '重试成功')],
+              );
+            },
       );
       await tester.tap(find.text('2 条回复'));
       await tester.pumpAndSettle();
@@ -136,12 +148,18 @@ void main() {
       await pump(
         tester,
         focusCommentId: 'c1',
-        replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async {
-          requested.add(commentId);
-          return const CommentReplyPage(
-            replies: [CommentReply(id: 'r2', text: '讨论回复')],
-          );
-        },
+        replies:
+            ({
+              required commentId,
+              required count,
+              required cursor,
+              String refReplyId = '',
+            }) async {
+              requested.add(commentId);
+              return const CommentReplyPage(
+                replies: [CommentReply(id: 'r2', text: '讨论回复')],
+              );
+            },
       );
       expect(find.byKey(const ValueKey('playlet-comment-c1')), findsOneWidget);
       await tester.tap(find.text('2 条回复'));
@@ -157,8 +175,13 @@ void main() {
   ) async {
     await pump(
       tester,
-      replies: ({required commentId, required count, required cursor, String refReplyId = ''}) async =>
-          CommentReplyPage.empty,
+      replies:
+          ({
+            required commentId,
+            required count,
+            required cursor,
+            String refReplyId = '',
+          }) async => CommentReplyPage.empty,
     );
     await tester.tap(find.text('2 条回复'));
     await tester.pumpAndSettle();

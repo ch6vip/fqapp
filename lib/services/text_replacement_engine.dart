@@ -80,11 +80,10 @@ class TextOffsetMap {
   TextOffsetMap followedBy(TextOffsetMap next) {
     if (_stages.isEmpty) return next;
     if (next._stages.isEmpty) return this;
-    return TextOffsetMap(
-      sourceLength,
-      next.displayLength,
-      [..._stages, ...next._stages],
-    );
+    return TextOffsetMap(sourceLength, next.displayLength, [
+      ..._stages,
+      ...next._stages,
+    ]);
   }
 
   int toSource(int displayOffset, {required TextBoundaryBias bias}) {

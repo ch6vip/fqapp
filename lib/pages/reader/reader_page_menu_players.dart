@@ -10,7 +10,8 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
       final match = _videoMatch;
       // iOS 首版没有原生播放器（见 platform_capabilities.dart），观影入口点了
       // 只会推出一个起不来的播放页，所以与短剧 tab 一致整体不展示。
-      final video = supportsVideoPlayback &&
+      final video =
+          supportsVideoPlayback &&
           _preferences.showVideoButton &&
           match != null &&
           match.available;
@@ -75,7 +76,8 @@ extension _ReaderPageMenuPlayers on _ReaderPageState {
                             // 播放引擎」）。起点仍是当前页第一段。
                             onTap: _loading || _error != null
                                 ? null
-                                : () => unawaited(_openListening(fromPage: true)),
+                                : () =>
+                                      unawaited(_openListening(fromPage: true)),
                           ),
                         ),
                       ),
