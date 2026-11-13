@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Page-owned bookmark ribbon, also used by the exposed pull-to-bookmark area.
 /// Place directly in a Stack: the page transform then carries the mark with it.

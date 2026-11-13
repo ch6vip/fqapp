@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
@@ -75,9 +75,8 @@ void main() {
               store: store,
               home: Builder(
                 builder: (context) => MediaQuery(
-                  data: MediaQuery.of(
-                    context,
-                  ).copyWith(disableAnimations: true, highContrast: true),
+                  data: MediaQuery.of(context)
+                      .copyWith(disableAnimations: true, highContrast: true),
                   child: PerformanceScope(
                     preferences: const PerformancePreferences(enabled: true),
                     explicitReduceMotion: true,
@@ -247,9 +246,8 @@ void _expectAiSheet(bool enabled) {
 }
 
 Future<void> _closeAiSheet(WidgetTester tester) async {
-  Navigator.of(
-    tester.element(find.widgetWithText(SwitchListTile, '本次看原文')),
-  ).pop();
+  Navigator.of(tester.element(find.widgetWithText(SwitchListTile, '本次看原文')))
+      .pop();
   await tester.pumpAndSettle();
 }
 

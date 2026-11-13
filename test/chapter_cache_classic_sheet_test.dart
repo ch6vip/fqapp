@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/app_style_tokens.dart';
@@ -39,9 +39,8 @@ Widget _app(Widget body, {double scale = 1, bool classic = true}) =>
         ],
       ),
       builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: TextScaler.linear(scale)),
+        data: MediaQuery.of(context)
+            .copyWith(textScaler: TextScaler.linear(scale)),
         child: child!,
       ),
       home: Scaffold(body: body),

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// A short reader notice. It stays out of the gesture arena and sizes to text,
 /// so it never becomes a full-width snackbar or obscures the bottom controls.

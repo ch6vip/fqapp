@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:fqapp/models/media_item.dart';
@@ -223,8 +223,7 @@ void main() {
       expect(
         _callCounts(calls),
         {for (final c in _chapters) c.itemId: 1},
-        reason:
-            'Foreground loading and adjacent prefetch must not duplicate search requests',
+        reason: 'Foreground loading and adjacent prefetch must not duplicate search requests',
       );
       await _search(tester, controller, 'SHUQI-ENCRYPTED-BODY');
       expect(controller.state.matchCount, 8);

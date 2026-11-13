@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/pages/reader_page.dart';
@@ -187,8 +187,7 @@ void main() {
       expect(
         _callCounts(calls),
         {for (final c in _chapters) c.itemId: c.itemId == '0' ? 1 : 2},
-        reason:
-            'Sequential reads reuse the current chapter and reload evicted files',
+        reason: 'Sequential reads reuse the current chapter and reload evicted files',
       );
       expect(calls.length, firstCalls.length + 7);
       expect(cache.catalogs, isEmpty);
