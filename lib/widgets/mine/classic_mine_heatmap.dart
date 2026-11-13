@@ -1,6 +1,7 @@
 // Legacy presentation from issue #288, fqapp-backup@f329399.
 // Reads the current application stores; no legacy data or networking is copied.
 import 'package:flutter/material.dart';
+import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/reading_stats.dart';
 import '../home/home_design.dart';
@@ -29,12 +30,26 @@ class _ClassicMineHeatmapState extends State<ClassicMineHeatmap> {
   static const _weekdayLabels = ['周一', '', '周三', '', '周五', '', ''];
 
   @override
+  void didUpdateWidget(ClassicMineHeatmap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final today = DateUtils.dateOnly(widget.today);
+    final picked = _picked;
+    if (picked == null ||
+        DateUtils.isSameDay(today, DateUtils.dateOnly(oldWidget.today))) {
+      return;
+    }
+    if (picked.isBefore(readingHeatmapDates(today).first) ||
+        picked.isAfter(today)) {
+      _picked = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     final today = DateUtils.dateOnly(widget.today);
     final dates = readingHeatmapDates(today);
     final shown = _picked ?? today;
-    final minutes = widget.stats.minutesOn(shown);
     final labelHeight = MediaQuery.textScalerOf(context).scale(10) * 1.2;
     final rowHeight = labelHeight > 14 ? labelHeight : 14.0;
     final labelStyle = TextStyle(
@@ -64,20 +79,110 @@ class _ClassicMineHeatmapState extends State<ClassicMineHeatmap> {
                 ],
               ),
               const SizedBox(height: 8),
-              _grid(palette, dates, today, shown, rowHeight, labelStyle),
-              const SizedBox(height: 10),
-              Text(
-                '${_dayLabel(shown, today)} · '
-                '${minutes > 0 ? formatReadingDuration(minutes) : '未阅读'}',
-                key: const ValueKey('reading-heatmap-day'),
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.3,
-                  color: palette.muted,
+              Semantics(
+                container: true,
+                label: '最近16周阅读热力图，可用前一天和后一天按钮查看每日阅读时长',
+                child: ExcludeSemantics(
+                  child: _grid(
+                    palette,
+                    dates,
+                    today,
+                    shown,
+                    rowHeight,
+                    labelStyle,
+                  ),
                 ),
               ),
+              const SizedBox(height: 6),
+              _dayInspector(palette, dates, today, shown),
+              if (!DateUtils.isSameDay(shown, today))
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const ValueKey('reading-heatmap-today'),
+                    onPressed: () => setState(() => _picked = null),
+                    icon: const Icon(LucideIcons.calendar_check, size: 16),
+                    label: const Text('回到今天'),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                      foregroundColor: palette.accentText,
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dayInspector(
+    HomePalette palette,
+    List<DateTime> dates,
+    DateTime today,
+    DateTime shown,
+  ) {
+    final previous = DateTime(shown.year, shown.month, shown.day - 1);
+    final next = DateTime(shown.year, shown.month, shown.day + 1);
+    final canGoPrevious = !previous.isBefore(dates.first);
+    final canGoNext = !next.isAfter(today);
+    final minutes = widget.stats.minutesOn(shown);
+    final duration = minutes > 0 ? formatReadingDuration(minutes) : '未阅读';
+    final label =
+        '${shown.year}年${shown.month}月${shown.day}日，'
+        '${_dayLabel(shown, today)}，$duration';
+    return Column(
+      children: [
+        Semantics(
+          container: true,
+          liveRegion: true,
+          label: '阅读日期，$label',
+          excludeSemantics: true,
+          child: Text(
+            '${shown.year}年${shown.month}月${shown.day}日'
+            '${DateUtils.isSameDay(shown, today) ? ' · 今天' : ''}',
+            key: const ValueKey('reading-heatmap-full-day'),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.ink,
+              fontSize: 12,
+              height: 1.3,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Row(
+          children: [
+            IconButton(
+              key: const ValueKey('reading-heatmap-previous-day'),
+              tooltip: '前一天',
+              onPressed: canGoPrevious
+                  ? () => _selectDay(previous, today)
+                  : null,
+              icon: const Icon(LucideIcons.chevron_left, size: 20),
+            ),
+            Expanded(
+              child: ExcludeSemantics(
+                child: Text(
+                  '${_dayLabel(shown, today)} · $duration',
+                  key: const ValueKey('reading-heatmap-day'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.3,
+                    color: palette.muted,
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('reading-heatmap-next-day'),
+              tooltip: '后一天',
+              onPressed: canGoNext ? () => _selectDay(next, today) : null,
+              icon: const Icon(LucideIcons.chevron_right, size: 20),
+            ),
+          ],
         ),
       ],
     );
@@ -165,7 +270,8 @@ class _ClassicMineHeatmapState extends State<ClassicMineHeatmap> {
     return GestureDetector(
       key: ValueKey('reading-heatmap-cell-$index'),
       behavior: HitTestBehavior.opaque,
-      onTap: future ? null : () => setState(() => _picked = date),
+      excludeFromSemantics: true,
+      onTap: future ? null : () => _selectDay(date, today),
       child: SizedBox(
         width: 14,
         child: AspectRatio(
@@ -184,6 +290,12 @@ class _ClassicMineHeatmapState extends State<ClassicMineHeatmap> {
         ),
       ),
     );
+  }
+
+  void _selectDay(DateTime date, DateTime today) {
+    final day = DateUtils.dateOnly(date);
+    if (day.isAfter(today)) return;
+    setState(() => _picked = day);
   }
 }
 

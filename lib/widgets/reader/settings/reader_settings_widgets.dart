@@ -381,33 +381,78 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                label,
-                style: TextStyle(color: preset.textColor, fontSize: 13),
-              ),
+    void update(bool next) {
+      if (next != value) onChanged(next);
+    }
+
+    // The row owns semantics and keyboard focus. The visual toggle keeps its
+    // native tap and drag behavior; the gesture arena prevents one tap from
+    // triggering both targets.
+    return Semantics(
+      container: true,
+      label: label,
+      toggled: value,
+      onTap: () => update(!value),
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: () => update(!value),
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 52),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(color: preset.textColor, fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ExcludeFocus(
+                  child: AppUiScope.isClassic(context)
+                      ? Switch(
+                          value: value,
+                          onChanged: update,
+                          thumbColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.selected)
+                                ? (preset.isDark
+                                      ? preset.backgroundColor
+                                      : Colors.white)
+                                : preset.mutedTextColor,
+                          ),
+                          trackColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.selected)
+                                ? preset.accentColor
+                                : preset.fieldColor,
+                          ),
+                          trackOutlineColor: WidgetStateProperty.resolveWith(
+                            (states) => states.contains(WidgetState.selected)
+                                ? Colors.transparent
+                                : preset.borderColor,
+                          ),
+                          overlayColor: WidgetStatePropertyAll(
+                            preset.accentColor.withValues(alpha: 0.12),
+                          ),
+                        )
+                      : GlassControls.toggle(
+                          context,
+                          value: value,
+                          onChanged: update,
+                          accentColor: preset.accentColor,
+                          trackColor: preset.borderColor,
+                          thumbColor: preset.isDark
+                              ? preset.textColor
+                              : Colors.white,
+                          tint: preset.panelColor,
+                          plainFallback: true,
+                        ),
+                ),
+              ],
             ),
           ),
-          if (AppUiScope.isClassic(context))
-            Switch(value: value, onChanged: onChanged)
-          else
-            GlassControls.toggle(
-              context,
-              value: value,
-              onChanged: onChanged,
-              accentColor: preset.accentColor,
-              trackColor: preset.borderColor,
-              thumbColor: preset.isDark ? preset.textColor : Colors.white,
-              tint: preset.panelColor,
-              plainFallback: true,
-            ),
-        ],
+        ),
       ),
     );
   }

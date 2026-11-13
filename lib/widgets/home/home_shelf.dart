@@ -125,10 +125,14 @@ class HomeSectionHeader extends StatelessWidget {
     this.action,
     this.gutter = homeGutter,
     this.topPadding = homeSectionGap,
+    this.alignActionToTop = false,
   });
 
   /// 与上一段内容的间距。默认 [homeSectionGap]；紧跟分类条的第一段传小值。
   final double topPadding;
+
+  /// 操作区需要更大的点击高度时，让标题和操作内容都从顶部对齐。
+  final bool alignActionToTop;
 
   @override
   Widget build(BuildContext context) {
@@ -136,6 +140,9 @@ class HomeSectionHeader extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, homeHeaderGap),
       child: Row(
+        crossAxisAlignment: alignActionToTop
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.center,
         children: [
           Expanded(
             child: Text(

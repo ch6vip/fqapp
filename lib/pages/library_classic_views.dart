@@ -1,5 +1,12 @@
 part of 'library_page.dart';
 
+// Keep these in sync with ClassicShellDock's 64dp capsule, 8dp bottom gap,
+// and the shared 24dp breathing room. RootShell only uses that dock outside
+// Windows, where the standalone desktop shell has no bottom bar.
+const double _classicRootDockHeight = 64;
+const double _classicRootDockBottomGap = 8;
+const double _classicRootDockBreathingRoom = 24;
+
 /// Old three-layout presentation, sharing the current page's entries, actions
 /// and edit state. No archive mode/density/3D preference participates here.
 mixin _LibraryClassicViews on _LibraryClassicChrome {
@@ -72,15 +79,20 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
   Widget _classicContent(BuildContext context, int tab) {
     final entries = _visibleEntriesForTab(tab);
     if (entries.isEmpty) {
-      // Keep pull-to-refresh working even when a filter hides every entry.
-      return CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: _classicEmptyState(tab),
-          ),
-        ],
+      // Shrink the scroll viewport itself so its clipped content cannot paint
+      // behind the root dock. The inner sliver remains scrollable for large
+      // text and keeps pull-to-refresh working when filters hide every entry.
+      return Padding(
+        padding: EdgeInsets.only(bottom: _classicEmptyBottomClearance),
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _classicEmptyState(tab),
+            ),
+          ],
+        ),
       );
     }
     // All three old-style tabs share this independent three-layout choice.
@@ -172,6 +184,20 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
       onAction: _clearFilters,
       headerHeight: headerHeight,
     );
+  }
+
+  /// The classic root shell has a 64dp dock plus an 8dp gap and safe-area inset.
+  /// Only Windows uses the standalone desktop tabs without [ShellDock]; other
+  /// platforms retain the root dock. Edit mode also has its own bottom bar.
+  double get _classicEmptyBottomClearance {
+    if (_editing) return 0;
+    final hasRootDock =
+        kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
+    if (!hasRootDock) return 0;
+    return _classicRootDockHeight +
+        _classicRootDockBottomGap +
+        MediaQuery.viewPaddingOf(context).bottom +
+        _classicRootDockBreathingRoom;
   }
 
   Widget _classicGrid(List<_ShelfEntry> entries, int tab) => LayoutBuilder(
