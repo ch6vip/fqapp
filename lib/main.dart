@@ -782,7 +782,7 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     ).push(MaterialPageRoute<void>(builder: (_) => const ThemePage()));
   }
 
-  Future<void> _retryWithDirectConnection() async {
+  Future<void> _resetProxyAndRetry() async {
     setState(() => _backendError = null);
     try {
       await NetworkProxyPreferences.instance.save(const NetworkProxyConfig());
@@ -848,7 +848,7 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
                     ),
                     if (isWindowsDesktop || isLinuxDesktop)
                       TextButton(
-                        onPressed: _retryWithDirectConnection,
+                        onPressed: _resetProxyAndRetry,
                         child: Text(
                           isLinuxDesktop ? '重置代理为默认连接并重试' : '重置代理为直连并重试',
                         ),
