@@ -187,7 +187,8 @@ void main() {
       expect(
         _callCounts(calls),
         {for (final c in _chapters) c.itemId: c.itemId == '0' ? 1 : 2},
-        reason: 'Sequential reads reuse the current chapter and reload evicted files',
+        reason:
+            'Sequential reads reuse the current chapter and reload evicted files',
       );
       expect(calls.length, firstCalls.length + 7);
       expect(cache.catalogs, isEmpty);

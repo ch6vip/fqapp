@@ -305,8 +305,9 @@ Future<void> _pumpSheet(
         brightness: preset.isDark ? Brightness.dark : Brightness.light,
       ),
       builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context)
-            .copyWith(textScaler: TextScaler.linear(textScale)),
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
         child: child!,
       ),
       home: Scaffold(

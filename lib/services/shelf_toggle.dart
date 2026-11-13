@@ -22,8 +22,9 @@ Future<void> toggleShelf(
       if (onMessage != null) {
         onMessage('本地书架暂不可用，请重试');
       } else {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
       }
     }
     return;

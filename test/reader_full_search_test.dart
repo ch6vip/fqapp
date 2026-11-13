@@ -179,37 +179,40 @@ void main() {
     expect(controller.state.truncated, isTrue);
   });
 
-  test('only body text is searched, preserving image and removed-title coordinates', () async {
-    final source = ChapterContent(
-      blocks: const [
-        ChapterImage(url: 'https://example.com/needle.png'),
-        ChapterParagraph('needle title'),
-        ChapterParagraph('first needle'),
-        ChapterImage(url: 'https://example.com/b.png'),
-        ChapterParagraph('last needle'),
-      ],
-    );
-    final controller = ReaderFullSearchController(
-      chapters: [_chapter('a', 'needle title')],
-      loadChapter: (_) async => TextReplacementResult(
-        source: source,
-        content: source,
-        snapshotRevision: 0,
-      ),
-    );
-    addTearDown(controller.dispose);
-    await controller.search('needle');
-    expect(controller.state.matchCount, 2);
-    final layout = _layout('needle title', source);
-    for (final hit in controller.state.groups.single.hits) {
-      final block = layout.blockAtOffset(
-        layout.displayOffsetForSource(hit.sourceParagraphStart),
-      )!;
-      final range = hit.displayRange(block.text, block.start)!;
-      expect(layout.textInRange(range.start, range.end), 'needle');
-      expect(layout.sourceOffsetForDisplay(range.start), hit.sourceStart);
-    }
-  });
+  test(
+    'only body text is searched, preserving image and removed-title coordinates',
+    () async {
+      final source = ChapterContent(
+        blocks: const [
+          ChapterImage(url: 'https://example.com/needle.png'),
+          ChapterParagraph('needle title'),
+          ChapterParagraph('first needle'),
+          ChapterImage(url: 'https://example.com/b.png'),
+          ChapterParagraph('last needle'),
+        ],
+      );
+      final controller = ReaderFullSearchController(
+        chapters: [_chapter('a', 'needle title')],
+        loadChapter: (_) async => TextReplacementResult(
+          source: source,
+          content: source,
+          snapshotRevision: 0,
+        ),
+      );
+      addTearDown(controller.dispose);
+      await controller.search('needle');
+      expect(controller.state.matchCount, 2);
+      final layout = _layout('needle title', source);
+      for (final hit in controller.state.groups.single.hits) {
+        final block = layout.blockAtOffset(
+          layout.displayOffsetForSource(hit.sourceParagraphStart),
+        )!;
+        final range = hit.displayRange(block.text, block.start)!;
+        expect(layout.textInRange(range.start, range.end), 'needle');
+        expect(layout.sourceOffsetForDisplay(range.start), hit.sourceStart);
+      }
+    },
+  );
 
   test(
     'exact replacement hit lands deep inside expansion instead of source start',

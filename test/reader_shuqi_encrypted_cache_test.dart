@@ -223,7 +223,8 @@ void main() {
       expect(
         _callCounts(calls),
         {for (final c in _chapters) c.itemId: 1},
-        reason: 'Foreground loading and adjacent prefetch must not duplicate search requests',
+        reason:
+            'Foreground loading and adjacent prefetch must not duplicate search requests',
       );
       await _search(tester, controller, 'SHUQI-ENCRYPTED-BODY');
       expect(controller.state.matchCount, 8);
