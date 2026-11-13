@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 播放页那颗「全屏观看 / 退出全屏」胶囊。
 ///

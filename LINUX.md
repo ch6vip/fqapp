@@ -7,8 +7,8 @@ accounts/WebKit/Java are outside this work.
 
 ## Build one revision
 
-Use an Arch x86_64 environment, official Flutter 3.47.9
-(framework c197ca5199e9ee5661e865596c9c07294dfab51c), Rust 1.99.1,
+Use an Arch x86_64 environment, official Flutter 3.50.0
+(framework ab2912035e160d9cad6306df307576da6128ebdb), Rust 1.99.1,
 base-devel, clang, cmake, ninja, pkgconf, gtk3, libsecret, mpv, libspeechd,
 python, patchelf, desktop-file-utils, zstd and git. See
 [dependency contract](packaging/arch/DEPENDENCIES.md) for runtime consumers.

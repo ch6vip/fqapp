@@ -2,7 +2,7 @@
 // lib/reader_tools.dart:1034-1220 and _CategoryRevealClipper:2152.
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../wenku/wenku_ui.dart';
 

@@ -185,7 +185,7 @@ class _ClassicGroupChip extends StatelessWidget {
       excludeSemantics: true,
       child: Tooltip(
         message: '书架分组：$label',
-        excludeFromSemantics: true,
+        excludeFromSemantics: false,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),

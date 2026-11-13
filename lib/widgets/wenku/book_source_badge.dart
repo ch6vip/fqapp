@@ -9,7 +9,7 @@
 // styling. This keeps the upstream provenance note and the call site, but
 // shares one implementation.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../cover_tag_chip.dart';
 

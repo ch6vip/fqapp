@@ -13,8 +13,8 @@
 //   34 px row height and one-line chord layout are preserved.
 // - The e-ink / high-contrast sheet disables the lens through PerformanceScope.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/reader_preferences.dart';

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/chapter_text_formatter.dart';
@@ -136,31 +136,34 @@ void main() {
       expect(_textAt(layout, range!), '戊己');
     });
 
-    test('a negative element index means the offset is already the paragraph offset', () {
-      final layout = _layout(
-        title: '第一章',
-        blocks: [
-          ChapterParagraph(
-            '甲乙丙丁戊己',
-            paraIndex: 4,
-            blkSpans: const [
-              ChapterBlkSpan(elementIndex: 0, start: 0, length: 3),
-            ],
-          ),
-        ],
-      );
-      // Official `S(-1, x)` returns x unchanged.
-      final range = audioTimePointLayoutRange(
-        layout,
-        4,
-        2,
-        4,
-        6,
-        startElementIndex: -1,
-        startElementOffset: 2,
-      );
-      expect(_textAt(layout, range!), '丙丁戊己');
-    });
+    test(
+      'a negative element index means the offset is already the paragraph offset',
+      () {
+        final layout = _layout(
+          title: '第一章',
+          blocks: [
+            ChapterParagraph(
+              '甲乙丙丁戊己',
+              paraIndex: 4,
+              blkSpans: const [
+                ChapterBlkSpan(elementIndex: 0, start: 0, length: 3),
+              ],
+            ),
+          ],
+        );
+        // Official `S(-1, x)` returns x unchanged.
+        final range = audioTimePointLayoutRange(
+          layout,
+          4,
+          2,
+          4,
+          6,
+          startElementIndex: -1,
+          startElementOffset: 2,
+        );
+        expect(_textAt(layout, range!), '丙丁戊己');
+      },
+    );
 
     test('an unknown element falls back to the paragraph offset', () {
       final layout = _layout(

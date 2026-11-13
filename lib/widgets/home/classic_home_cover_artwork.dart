@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Original geometric fallback cover from f329399, used only by classic UI.
 class ClassicHomeCoverArtwork extends CustomPainter {
