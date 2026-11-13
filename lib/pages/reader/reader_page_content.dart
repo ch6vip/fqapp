@@ -10,10 +10,21 @@ extension _ReaderPageContent on _ReaderPageState {
       return GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: _toggleControls,
-        child: ReaderPageContent(
-          page: chapterTurn.page,
-          spec: chapterTurn.spec,
-          imageProviderFactory: widget.imageProviderFactory,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ReaderPageContent(
+              page: chapterTurn.page,
+              spec: chapterTurn.spec,
+              imageProviderFactory: widget.imageProviderFactory,
+            ),
+            if (chapterTurn.bookmarked)
+              ReaderBookmarkRibbon(
+                key: const ValueKey('reader-bookmark-saved-ribbon'),
+                color: chapterTurn.bookmarkColor ?? preset.selectionAccentColor,
+                textInset: chapterTurn.spec.horizontalPadding,
+              ),
+          ],
         ),
       );
     }
@@ -123,6 +134,10 @@ extension _ReaderPageContent on _ReaderPageState {
                             pageTurnStyle: _preferences.pageTurnStyle,
                           ),
                           backgroundColor: _effectiveBackgroundColor,
+                          bookmarkedPages: AppUiScope.isClassic(context)
+                              ? _bookmarkedPagesFor(layout)
+                              : const {},
+                          bookmarkColor: preset.selectionAccentColor,
                           endPage: _index == widget.chapters.length - 1
                               ? _buildChapterEndPage(preset)
                               : null,
@@ -198,7 +213,8 @@ extension _ReaderPageContent on _ReaderPageState {
             if (_scrollOverscroll > 32) {
               _scrollOverscroll = 0;
               unawaited(_next());
-            } else if (_scrollOverscroll < -32) {
+            } else if (_scrollOverscroll < -32 &&
+                !AppUiScope.isClassic(context)) {
               _scrollOverscroll = 0;
               unawaited(_prev(startAtEnd: true));
             }

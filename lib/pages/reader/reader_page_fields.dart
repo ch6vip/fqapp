@@ -140,6 +140,7 @@ mixin _ReaderPageFields on State<ReaderPage> {
   bool _appActive = true;
   bool _routeCurrent = false;
   bool _changingChapter = false;
+  Completer<void>? _chapterNavigationCompletion;
 
   /// 墨水屏整屏刷新计数器：每翻一页 +1，达到 [_ReaderState._einkRefreshInterval]
   /// 阈值（来自 [_preferences.einkRefreshInterval]）就调用一次海信 EPD 全刷压残影，
@@ -187,6 +188,13 @@ mixin _ReaderPageFields on State<ReaderPage> {
   String? _fontFamily;
   final _viewportKey = GlobalKey();
   final _bottomControlsKey = GlobalKey();
+  final _classicControlsKey = GlobalKey();
+  final _readerCapsuleKey = GlobalKey();
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _readerNotice;
+  String? _readerToastMessage;
+  bool _readerToastImmediateDismiss = false;
+  Timer? _readerToastTimer;
+  bool? _readerNoticeClassic;
   final _pagedKey = GlobalKey<ReaderPagedViewState>();
   ReaderChapterLayout? _chapterLayout;
   int _layoutDisplayRevision = -1;
@@ -249,6 +257,10 @@ mixin _ReaderPageFields on State<ReaderPage> {
   Map<String, dynamic>? _savedPosition;
   bool _needsRestore = true;
   bool _requestedStartAtEnd = false;
+
+  List<ReaderBookmark> _pageBookmarks = const [];
+  int _pageBookmarksGeneration = 0;
+  Future<BookDetail>? _readerBookDetailFuture;
 
   ReaderBookmarkStore get _bookmarkStore =>
       widget.bookmarkStore ?? ReaderBookmarkStore.instance;

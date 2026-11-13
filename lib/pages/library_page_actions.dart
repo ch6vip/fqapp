@@ -219,10 +219,10 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
 
   /// 优先用缓存续读；未命中时保留离线阅读与详情页加载入口。
   ///
-  /// 书旗条目第一行分流到自己的详情页：它的 bookId 是另一套命名空间，
-  /// 番茄的续读 / 缓存 / 更新检测都不能碰它（design D-M5）。
+  /// 书旗离线缓存使用独立命名空间；未命中时仍进书旗详情，不进入番茄续读。
   Future<void> _open(MediaItem item, {bool importedResume = false}) async {
     if (isShuqiItem(item)) {
+      if (await _openCached(item) || !mounted) return;
       await openBookDetail(context, item, entry: BookOpenEntry.shelf);
       return;
     }
@@ -303,9 +303,9 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
     );
   }
 
-  /// 离线直读：只有番茄小说有章节缓存，且必须在无网时才抢在详情页前面。
+  /// 仅无网且来源对应的章节缓存可用时，才抢在联网详情页前面。
   Future<bool> _openCached(MediaItem item) async {
-    if (item.source != ShelfIdentity.fanqie) return false;
+    if (item.source != ShelfIdentity.fanqie && !isShuqiItem(item)) return false;
     final cache = widget.cacheStore ?? ChapterCacheStore.instance;
     final book = await cachedBookForOfflineOpen(
       item,
@@ -318,6 +318,7 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
       book: book,
       cache: cache,
       readerStore: widget.readerStore,
+      shelfItem: item,
     );
   }
 

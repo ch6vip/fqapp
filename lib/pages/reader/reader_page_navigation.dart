@@ -185,6 +185,86 @@ extension _ReaderPageNavigation on _ReaderPageState {
     return bookmark;
   }
 
+  Future<void> _addCurrentBookmark() async {
+    try {
+      final mark = await _addBookmark();
+      if (mounted) _showMessage(mark == null ? '正文尚未就绪，请稍后添加书签' : '已添加书签');
+    } catch (_) {
+      if (mounted) _showMessage('书签保存失败，请重试');
+    }
+  }
+
+  Future<void> _shareBook() async {
+    if (widget.localOnly || _readerBookIsImported) return;
+    final outcome = await SharePlusLite.share(
+      title: widget.title,
+      text:
+          '${widget.title}\nhttps://fanqienovel.com/page/${Uri.encodeComponent(widget.bookId)}',
+    );
+    if (mounted && outcome == ShareLaunchOutcome.unavailable) {
+      _showMessage('暂时无法打开系统分享面板');
+    }
+  }
+
+  Future<void> _showClassicMore() async {
+    _stopAutoTurn();
+    _readerPanelOpen = true;
+    final preset = _effectivePreset;
+    final action = await showModalBottomSheet<Object>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: preset.panelColor,
+      constraints: const BoxConstraints(maxWidth: 560),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      sheetAnimationStyle: _reduceReaderMotion
+          ? AnimationStyle.noAnimation
+          : null,
+      builder: (sheetContext) => _readerOverlay(
+        preset,
+        SafeArea(
+          top: false,
+          child: FutureBuilder<BookDetail>(
+            future: _loadReaderBookDetail(),
+            builder: (context, snapshot) => ReaderClassicMoreSheet(
+              title: widget.title,
+              author: snapshot.data?.author.name.isNotEmpty == true
+                  ? snapshot.data!.author.name
+                  : _shelfEntry.author,
+              onAuthor:
+                  _canOpenReaderAuthor &&
+                      snapshot.data?.author.id.trim().isNotEmpty == true
+                  ? () => Navigator.pop(sheetContext, snapshot.data!.author)
+                  : null,
+              cover: widget.cover,
+              preset: preset,
+              canBookmark:
+                  !_loading && _progressReady && _chapterLayout != null,
+              canSearch: widget.chapters.isNotEmpty,
+              canDetails: _canOpenReaderDetails,
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'details':
+        await _openReaderDetails();
+      case BookAuthor author:
+        await _openReaderAuthor(author);
+      case 'bookmarks':
+        await _showBookmarks();
+      case 'bookmark':
+        await _addCurrentBookmark();
+      case 'search':
+        await _showFullSearch();
+    }
+  }
+
   Future<void> _showBookmarks() async {
     final generation = ++_readerNavigationGeneration;
     _stopAutoTurn();
@@ -279,6 +359,12 @@ extension _ReaderPageNavigation on _ReaderPageState {
     // Reuse the non-layout-affecting selection paint, not its handles/menu.
     _locationHighlightTimer?.cancel();
     _setState(() {
+      // followPage may synchronously report the destination page and replace
+      // _textOffset with its start. Keep the exact hit as the restore anchor:
+      // late paragraph bubbles can push this hit onto a different page.
+      _textOffset = start;
+      _keepChapterEndAnchor = false;
+      if (_paged) _pageIndex = layout.pageForOffset(start);
       final stop = (end ?? start + 1).clamp(start, layout.textLength);
       _locationHighlight = stop > start
           ? ReaderTextSelection(start: start, end: stop)

@@ -451,7 +451,10 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
     }
   }
 
-  Future<_LoadedChapter> _chapterText(Chapter chapter) async {
+  Future<_LoadedChapter> _chapterText(
+    Chapter chapter, {
+    bool readDiskCache = true,
+  }) async {
     final id = chapter.itemId;
     final cached = _chapterCache.remove(id);
     if (cached != null) {
@@ -461,7 +464,7 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
     final pending = _chapterRequests[id];
     if (pending != null) return pending;
 
-    final request = _loadChapterText(chapter);
+    final request = _loadChapterText(chapter, readDiskCache: readDiskCache);
     _chapterRequests[id] = request;
     try {
       return await request;
@@ -472,10 +475,74 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
     }
   }
 
+  bool get _usesChapterDiskCache =>
+      !ImportedBookStore.isLocalBookId(widget.bookId) &&
+      (!widget.localOnly || widget.bookId.startsWith('shuqi:'));
+
+  Future<String?> _readChapterDiskCache(Chapter chapter) async {
+    if (!_usesChapterDiskCache) return null;
+    try {
+      final cached = await _diskCache.read(
+        bookId: widget.bookId,
+        chapterId: chapter.itemId,
+      );
+      if (cached != null &&
+          cached.trim().isNotEmpty &&
+          !ChapterContent.fromCacheText(
+            cached,
+          ).withoutLeadingTitle(chapter.title).isEmpty) {
+        return cached;
+      }
+    } catch (_) {
+      // A storage failure must not prevent online reading.
+    }
+    return null;
+  }
+
+  Future<_LoadedChapter> _chapterTextForSearch(
+    Chapter chapter,
+    ReaderFullSearchCancellation cancellation,
+  ) async {
+    cancellation.throwIfCancelled();
+    if (!mounted) throw StateError('Reader closed');
+    // Imported books use their private files. A shared reader request already
+    // owns its network slot, so neither path should wait for search pacing.
+    if (!_usesChapterDiskCache ||
+        _chapterCache.containsKey(chapter.itemId) ||
+        _chapterRequests.containsKey(chapter.itemId)) {
+      return _chapterText(chapter);
+    }
+    final revision = _chapterCacheRevisions[chapter.itemId] ?? 0;
+    final cached = await _readChapterDiskCache(chapter);
+    cancellation.throwIfCancelled();
+    if (!mounted) throw StateError('Reader closed');
+    if (cached != null &&
+        revision == (_chapterCacheRevisions[chapter.itemId] ?? 0)) {
+      _rememberChapter(chapter.itemId, cached);
+      return (text: cached, fetched: false);
+    }
+    if (_chapterCache.containsKey(chapter.itemId) ||
+        _chapterRequests.containsKey(chapter.itemId)) {
+      return _chapterText(chapter);
+    }
+    // Do not register a cancelable wait in _chapterRequests: the foreground
+    // reader can join that map and must not inherit a search cancellation.
+    await cancellation.beforeNetworkFetch();
+    cancellation.throwIfCancelled();
+    if (!mounted) throw StateError('Reader closed');
+    // Recheck memory/shared work after waiting, but do not put another disk
+    // read between the network slot and the actual request start.
+    return _chapterText(chapter, readDiskCache: false);
+  }
+
   Future<String> _fetchChapter(Chapter chapter) async {
     final loader = widget.chapterLoader;
     final ChapterContent content;
     if (loader == null) {
+      if (widget.bookId.startsWith('shuqi:') ||
+          ImportedBookStore.isLocalBookId(widget.bookId)) {
+        throw const ApiException('此来源的章节未缓存，请从书籍详情重新打开');
+      }
       final request = _chapterRequestHandles.start(chapter.itemId);
       try {
         content = await ApiClient.instance.withCancellation(
@@ -498,7 +565,9 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
   }
 
   Future<void> _refreshCachedChapter(Chapter chapter) async {
-    if (widget.localOnly) return;
+    if (widget.localOnly || ImportedBookStore.isLocalBookId(widget.bookId)) {
+      return;
+    }
     final pending = _chapterRefreshes[chapter.itemId];
     if (pending != null) return pending;
     final request = _upgradeChapter(chapter);
@@ -641,28 +710,14 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
         throw error;
       });
 
-  Future<_LoadedChapter> _loadChapterText(Chapter chapter) async {
+  Future<_LoadedChapter> _loadChapterText(
+    Chapter chapter, {
+    bool readDiskCache = true,
+  }) async {
     final revision = _chapterCacheRevisions[chapter.itemId] ?? 0;
     bool superseded() =>
         revision != (_chapterCacheRevisions[chapter.itemId] ?? 0);
-    String? text;
-    if (!widget.localOnly) {
-      try {
-        final cached = await _diskCache.read(
-          bookId: widget.bookId,
-          chapterId: chapter.itemId,
-        );
-        if (cached != null &&
-            cached.trim().isNotEmpty &&
-            !ChapterContent.fromCacheText(
-              cached,
-            ).withoutLeadingTitle(chapter.title).isEmpty) {
-          text = cached;
-        }
-      } catch (_) {
-        // A storage failure must not prevent online reading.
-      }
-    }
+    String? text = readDiskCache ? await _readChapterDiskCache(chapter) : null;
     if (superseded()) return _latestChapterText(chapter);
     final fetched = text == null;
     if (fetched) {
@@ -674,7 +729,7 @@ extension _ReaderPageChapterLoading on _ReaderPageState {
       }
       if (superseded()) return _latestChapterText(chapter);
       var chapterSuperseded = false;
-      if (mounted && !widget.localOnly) {
+      if (mounted && _usesChapterDiskCache) {
         try {
           await _ensureCatalog();
           if (superseded()) {

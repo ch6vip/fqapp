@@ -6,6 +6,7 @@ import 'package:flutter/physics.dart' show ClampedSimulation;
 
 import '../../services/reader_preferences.dart';
 import '../../services/reader_underline_store.dart';
+import 'reader_bookmark_ribbon.dart';
 import 'reader_chapter_layout.dart';
 import 'reader_page_curl.dart';
 import 'reader_illustration.dart';
@@ -25,11 +26,15 @@ class ReaderChapterTurn {
   /// The page on screen when the turn started.
   final ReaderTextPage page;
   final ReaderLayoutSpec spec;
+  final bool bookmarked;
+  final Color? bookmarkColor;
 
   const ReaderChapterTurn({
     required this.direction,
     required this.page,
     required this.spec,
+    this.bookmarked = false,
+    this.bookmarkColor,
   });
 }
 
@@ -73,6 +78,10 @@ class ReaderPagedView extends StatefulWidget {
 
   final Color backgroundColor;
 
+  /// Saved marks belong to page surfaces, including their animated copies.
+  final Set<int> bookmarkedPages;
+  final Color? bookmarkColor;
+
   /// Optional stop after the final chapter only. Between chapters, turning
   /// past the last/first text page requests the next/previous chapter directly.
   // Note: .agents/notes/implemented/bug-fix/2026-10-15-reader-chapter-turn.md
@@ -97,6 +106,8 @@ class ReaderPagedView extends StatefulWidget {
     required this.turnStyle,
     this.instantSwipe = false,
     required this.backgroundColor,
+    this.bookmarkedPages = const {},
+    this.bookmarkColor,
     this.endPage,
     this.onBookEnd,
     this.chapterTurn,
@@ -138,7 +149,10 @@ class _ReaderPageScrollPhysics extends PageScrollPhysics {
       _ReaderPageScrollPhysics(parent: buildParent(ancestor));
 
   @override
-  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
     final simulation = super.createBallisticSimulation(position, velocity);
     if (simulation == null) return null;
     final width = position.viewportDimension;
@@ -165,6 +179,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   Drag? _pageDrag;
   int _pageDragFrom = 0;
   int? _pageDragDirection;
+
   /// 起手瞬间的手指位置与页面位移。滑动翻页的位移量按「起手以来的手指
   /// 位移」计算，这样下一页总是从屏幕边沿滑进来，而不是在按下的一瞬间
   /// 就把接缝钉到触点位置（触点不在边沿时会凭空跳一大段）。
@@ -487,9 +502,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         notification.dragDetails != null) {
       _overscroll = 0;
       _edgeNotified = false;
-      _dragStartItem = _controller.hasClients
-          ? _attachedPage?.round()
-          : null;
+      _dragStartItem = _controller.hasClients ? _attachedPage?.round() : null;
       widget.onDragStart();
     }
     if (notification is OverscrollNotification &&
@@ -547,8 +560,10 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         // 不了一页以上。
         final width = position.viewportDimension;
         final advance =
-            ((_pageDragAnchorDx - details.globalPosition.dx) * direction)
-                .clamp(0.0, width);
+            ((_pageDragAnchorDx - details.globalPosition.dx) * direction).clamp(
+              0.0,
+              width,
+            );
         final limit = target * width;
         var pixels = direction > 0
             ? _pageDragStartPixels + advance
@@ -641,8 +656,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         if (!_curlDragLocked) {
           if (delta.abs() < 6) return;
           final direction = delta < 0 ? 1 : -1;
-          final current =
-              (_attachedPage ?? widget.pageIndex.toDouble()).round();
+          final current = (_attachedPage ?? widget.pageIndex.toDouble())
+              .round();
           final target = current + direction;
           _curlDragLocked = true;
           if (target < 0 || target >= _itemCount) {
@@ -672,12 +687,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         // when the finger crosses back past the drag start. The 2px
         // deadband absorbs touch jitter.
         final direction = _curlTurn!.direction;
-        final retreated = direction > 0
-            ? dx > prevDx + 2
-            : dx < prevDx - 2;
-        final advanced = direction > 0
-            ? dx < prevDx - 2
-            : dx > prevDx + 2;
+        final retreated = direction > 0 ? dx > prevDx + 2 : dx < prevDx - 2;
+        final advanced = direction > 0 ? dx < prevDx - 2 : dx > prevDx + 2;
         if (retreated) {
           _curlDragCancelled = true;
         } else if (advanced) {
@@ -762,10 +773,36 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     if (index >= pages.length) {
       return widget.endPage ?? const SizedBox.shrink();
     }
-    return ReaderPageContent(
-      page: pages[index],
-      spec: widget.layout.spec,
-      imageProviderFactory: widget.imageProviderFactory,
+    return _withBookmark(
+      ReaderPageContent(
+        page: pages[index],
+        spec: widget.layout.spec,
+        imageProviderFactory: widget.imageProviderFactory,
+      ),
+      bookmarked: widget.bookmarkedPages.contains(index),
+    );
+  }
+
+  Widget _withBookmark(
+    Widget child, {
+    required bool bookmarked,
+    Color? color,
+    double? textInset,
+  }) {
+    if (!bookmarked) return child;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        ReaderBookmarkRibbon(
+          key: const ValueKey('reader-bookmark-saved-ribbon'),
+          textInset: textInset ?? widget.layout.spec.horizontalPadding,
+          color:
+              color ??
+              widget.bookmarkColor ??
+              Theme.of(context).colorScheme.primary,
+        ),
+      ],
     );
   }
 
@@ -824,6 +861,10 @@ class ReaderPagedViewState extends State<ReaderPagedView>
             rangeUnderlines: widget.rangeUnderlines,
             narrationRange: widget.narrationRange,
           );
+          content = _withBookmark(
+            content,
+            bookmarked: widget.bookmarkedPages.contains(page),
+          );
           if (widget.turnStyle == ReaderPageTurnStyle.cover) {
             // 覆盖: the outgoing page stays pinned while the incoming one
             // slides over it. PageView already slides the incoming page in
@@ -864,7 +905,19 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     final layout = widget.layout;
     final pages = layout.pages;
     if (pages.isEmpty) return const SizedBox.shrink();
-    final incoming = pages[widget.pageIndex.clamp(0, pages.length - 1)];
+    final incomingIndex = widget.pageIndex.clamp(0, pages.length - 1);
+    final incoming = pages[incomingIndex];
+    final outgoingPage = _buildTurnPage(
+      turn.page,
+      turn.spec,
+      bookmarked: turn.bookmarked,
+      bookmarkColor: turn.bookmarkColor,
+    );
+    final incomingPage = _buildTurnPage(
+      incoming,
+      layout.spec,
+      bookmarked: widget.bookmarkedPages.contains(incomingIndex),
+    );
     final forward = turn.direction >= 0;
     // 卷页：章节边界也卷过去，与章节内翻页一致（线性，与 Legado
     // 的 Scroller 一样；缓动只用于覆盖/平移两种翻页方式）。
@@ -872,8 +925,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       return AnimatedBuilder(
         animation: _chapterTurnAnimation,
         builder: (context, _) => ReaderPageCurl(
-          outgoing: _buildTurnPage(turn.page, turn.spec),
-          incoming: _buildTurnPage(incoming, layout.spec),
+          outgoing: outgoingPage,
+          incoming: incomingPage,
           progress: _chapterTurnAnimation.value,
           forward: forward,
           backgroundColor: widget.backgroundColor,
@@ -887,8 +940,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       animation: _chapterTurnAnimation,
       builder: (context, _) {
         final t = Curves.easeOutCubic.transform(_chapterTurnAnimation.value);
-        final width =
-            (_attachedPosition?.hasContentDimensions ?? false)
+        final width = (_attachedPosition?.hasContentDimensions ?? false)
             ? _viewportWidth
             : MediaQuery.sizeOf(context).width;
         final outgoingShift = cover ? 0.0 : (forward ? -width * t : width * t);
@@ -899,11 +951,11 @@ class ReaderPagedViewState extends State<ReaderPagedView>
             ColoredBox(color: widget.backgroundColor),
             Transform.translate(
               offset: Offset(outgoingShift, 0),
-              child: _buildTurnPage(turn.page, turn.spec),
+              child: outgoingPage,
             ),
             Transform.translate(
               offset: Offset(incomingShift, 0),
-              child: _buildTurnPage(incoming, layout.spec),
+              child: incomingPage,
             ),
           ],
         );
@@ -911,15 +963,24 @@ class ReaderPagedViewState extends State<ReaderPagedView>
     );
   }
 
-  Widget _buildTurnPage(ReaderTextPage page, ReaderLayoutSpec spec) =>
-      ColoredBox(
-        color: widget.backgroundColor,
-        child: ReaderPageContent(
-          page: page,
-          spec: spec,
-          imageProviderFactory: widget.imageProviderFactory,
-        ),
-      );
+  Widget _buildTurnPage(
+    ReaderTextPage page,
+    ReaderLayoutSpec spec, {
+    required bool bookmarked,
+    Color? bookmarkColor,
+  }) => ColoredBox(
+    color: widget.backgroundColor,
+    child: _withBookmark(
+      ReaderPageContent(
+        page: page,
+        spec: spec,
+        imageProviderFactory: widget.imageProviderFactory,
+      ),
+      bookmarked: bookmarked,
+      color: bookmarkColor,
+      textInset: spec.horizontalPadding,
+    ),
+  );
 }
 
 class ReaderPageContent extends StatelessWidget {
@@ -1034,10 +1095,9 @@ class ReaderPageContent extends StatelessWidget {
                                   ),
                             onLongPressEnd: onParagraphLongPressEnd == null
                                 ? null
-                                : (details) =>
-                                      onParagraphLongPressEnd!(
-                                        details.globalPosition,
-                                      ),
+                                : (details) => onParagraphLongPressEnd!(
+                                    details.globalPosition,
+                                  ),
                             child: body,
                           ),
                         );

@@ -197,7 +197,34 @@ extension _ReaderPageBuild on _ReaderPageState {
                               : null,
                           child: SizedBox.expand(
                             key: _viewportKey,
-                            child: _buildContent(preset, windowPadding),
+                            child: AnimatedBuilder(
+                              animation: _scrollController,
+                              child: _buildContent(preset, windowPadding),
+                              builder: (context, content) => ReaderBookmarkPull(
+                                enabled:
+                                    classic &&
+                                    !_loading &&
+                                    _error == null &&
+                                    _progressReady &&
+                                    _selection == null &&
+                                    !_controlsVisible,
+                                paged: _paged,
+                                preset: preset,
+                                showSavedRibbon: !_paged,
+                                ribbonTextInset:
+                                    _chapterLayout?.spec.horizontalPadding ??
+                                    _preferences.horizontalPadding,
+                                locationKey: (
+                                  widget.bookId,
+                                  _chapter.itemId,
+                                  _paged ? _pageIndex : _textOffset,
+                                ),
+                                isBookmarked: classic && _currentPageBookmarked,
+                                onAdd: _addCurrentBookmark,
+                                onRemove: _removeVisiblePageBookmarks,
+                                child: content!,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -229,6 +256,12 @@ extension _ReaderPageBuild on _ReaderPageState {
                     ),
                   ),
                 ),
+                if (classic)
+                  ReaderToast(
+                    message: _readerToastMessage,
+                    immediateDismiss: _readerToastImmediateDismiss,
+                    reduceMotion: preset.isEink || _reduceReaderMotion,
+                  ),
                 // 墨水屏软件白闪：盖全屏白帧，迫使 EPD 控制器全量刷新。
                 if (_einkFlashVisible)
                   const Positioned.fill(child: ColoredBox(color: Colors.white)),
@@ -345,10 +378,9 @@ extension _ReaderPageBuild on _ReaderPageState {
       valueListenable: ShelfStore.instance.listenable,
       builder: (context, _, _) => ReaderClassicToolbar(
         preset: preset,
-        title: widget.title,
-        chapterNumber: _index + 1,
-        showCache: !widget.localOnly,
+        showCache: !widget.localOnly && !_readerBookIsImported,
         showComments:
+            !_readerBookIsImported &&
             !_loading &&
             _error == null &&
             _ideas.total > 0 &&
@@ -358,19 +390,13 @@ extension _ReaderPageBuild on _ReaderPageState {
         onCache: () => unawaited(_showCache()),
         onComments: () =>
             unawaited(_showIdeas(focusParaIndex: _chapterEndParagraph())),
-        onShelf: () => unawaited(toggleShelf(context, _shelfEntry)),
-        // 顶栏最后一个动作改成“更多”：点开与档案主题同款的二级菜单。
-        // 收起菜单仍可点正文中央或返回键。
-        onMore: (anchor) => unawaited(
-          _showReaderActions(
-            anchor,
-            keyPrefix: 'classic-',
-            preferBelow: true,
-            compactWidth: true,
-            includeBookmarks: true,
-            includeDisplayEntries: false,
-          ),
+        onShelf: () => unawaited(
+          toggleShelf(context, _shelfEntry, onMessage: _showMessage),
         ),
+        onShare: widget.localOnly || _readerBookIsImported
+            ? null
+            : () => unawaited(_shareBook()),
+        onMore: () => unawaited(_showClassicMore()),
       ),
     );
   }
@@ -405,7 +431,7 @@ extension _ReaderPageBuild on _ReaderPageState {
               ? CrossAxisAlignment.stretch
               : CrossAxisAlignment.center,
           children: [
-            if (!widget.localOnly)
+            if (!widget.localOnly && !_readerBookIsImported)
               GlassMenuItem(
                 key: ValueKey('${keyPrefix}reader-cache'),
                 icon: CupertinoIcons.tray_arrow_down,
@@ -515,13 +541,13 @@ extension _ReaderPageBuild on _ReaderPageState {
             // clearance) identical while it slides, and reduce-motion/e-ink
             // already jump `_chrome` straight to its end value.
             ? ReaderChromeLayer(
+                key: _classicControlsKey,
                 animation: _chrome,
                 interactionThreshold: 0,
                 maintainSize: true,
                 slide: const Offset(0, 1),
                 clip: false,
                 child: ReaderClassicControls(
-                  // Two progress meanings live in this sheet; see the widget.
                   key: const ValueKey('reader-classic-controls'),
                   preset: preset,
                   chapterIndex: _index,
@@ -529,20 +555,15 @@ extension _ReaderPageBuild on _ReaderPageState {
                   chapterTitleAt: (index) => widget
                       .chapters[index.clamp(0, widget.chapters.length - 1)]
                       .title,
-                  fraction: _chapterLocalFraction,
                   onPrevious: _index > 0 && !_loading ? _prev : null,
                   onNext: _index < widget.chapters.length - 1 && !_loading
                       ? _next
                       : null,
                   onSeekEnd: (index) => unawaited(_jumpToChapter(index)),
-                  onPreview: _previewChapterFraction,
-                  onCommitted: _commitChapterFraction,
-                  onPreviewChanged: _setChapterPreview,
                   onDirectory: _showDirectory,
-                  onFind: _loading || !_progressReady ? null : _showFind,
                   onNight: _toggleNightTheme,
                   onAppearance: _showAppearanceSettings,
-                  onAi: _currentAiView?.aiEnabled == true ? _showAiPanel : null,
+                  onAi: _currentAiView != null ? _showAiPanel : null,
                   aiLabel: _currentAiView?.hasCache == true
                       ? 'AI 已校对'
                       : 'AI 校对',
