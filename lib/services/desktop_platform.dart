@@ -551,8 +551,104 @@ class DesktopPlatform with WindowListener {
       acceptedTypeGroups: [XTypeGroup(label: '文件', extensions: extensions)],
     );
     if (location == null) return null;
-    await XFile.fromData(bytes, name: name).saveTo(location.path);
+    if (isLinuxDesktop) {
+      if (!await _saveLinux(location.path, bytes)) return null;
+    } else {
+      await XFile.fromData(bytes, name: name).saveTo(location.path);
+    }
     return location.path;
+  }
+
+  Future<bool> _saveLinux(String path, Uint8List bytes) async {
+    final libc = DynamicLibrary.process();
+    final open = libc
+        .lookupFunction<
+          Int32 Function(Pointer<Utf8>, Int32, Uint32),
+          int Function(Pointer<Utf8>, int, int)
+        >('open');
+    final close = libc.lookupFunction<Int32 Function(Int32), int Function(int)>(
+      'close',
+    );
+    final errno = libc
+        .lookupFunction<Pointer<Int32> Function(), Pointer<Int32> Function()>(
+          '__errno_location',
+        );
+    // Linux open flags: write-only, no symlink following, nonblocking, close-on-exec.
+    const flags = 0x1 | 0x20000 | 0x800 | 0x80000;
+    final nativePath = path.toNativeUtf8();
+    int fd;
+    var existing = false;
+    try {
+      fd = open(
+        nativePath,
+        flags | 0x40 | 0x80,
+        0x1b6,
+      ); // O_CREAT | O_EXCL, 0666
+      if (fd < 0 && errno().value == 17) {
+        // EEXIST
+        existing = true;
+        fd = open(nativePath, flags, 0);
+      }
+      if (fd < 0) {
+        throw FileSystemException('无法打开保存文件', path, OSError('', errno().value));
+      }
+    } finally {
+      malloc.free(nativePath);
+    }
+    try {
+      // Pin the opened inode: a replaced path must never redirect this write.
+      final file = File('/proc/self/fd/$fd');
+      final before = await file.stat();
+      if (before.type != FileSystemEntityType.file) {
+        throw FileSystemException('只能保存到普通文件', path);
+      }
+      if (existing) {
+        final context = navigatorKey.currentContext;
+        if (context == null || !context.mounted) {
+          throw PlatformException(code: 'not_ready', message: '窗口尚未就绪');
+        }
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('覆盖已有文件？'),
+            content: Text('文件已存在，覆盖后无法撤销：\n$path'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('覆盖'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return false;
+      }
+      final after = await file.stat();
+      if (await FileSystemEntity.type(path, followLinks: false) !=
+              FileSystemEntityType.file ||
+          await Link(file.path).target() !=
+              await File(path).resolveSymbolicLinks() ||
+          before.size != after.size ||
+          before.modified != after.modified ||
+          before.changed != after.changed ||
+          before.mode != after.mode) {
+        throw PlatformException(
+          code: 'file_changed',
+          message: '目标文件已变化，请重新选择保存位置',
+        );
+      }
+      await file.writeAsBytes(bytes, flush: true);
+      if (await Link(file.path).target() !=
+          await File(path).resolveSymbolicLinks()) {
+        throw PlatformException(code: 'file_changed', message: '保存期间目标文件已被替换');
+      }
+      return true;
+    } finally {
+      close(fd);
+    }
   }
 
   Future<Directory> _captureDirectory() async {

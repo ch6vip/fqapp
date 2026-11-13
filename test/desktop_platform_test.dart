@@ -355,7 +355,10 @@ void main() {
     },
   );
 
+  // These saves exercise Linux libc and /proc, not just the platform override.
   test('Linux backup selection saves bytes, reads and cancels', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     const selector = MethodChannel('plugins.flutter.io/file_selector');
@@ -433,11 +436,13 @@ void main() {
         ),
       ),
     );
-  });
+  }, skip: !Platform.isLinux);
 
   test(
     'Linux TXT sink saves UTF-8 and reports cancellation and failures',
     () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       const selector = MethodChannel('plugins.flutter.io/file_selector');
@@ -517,7 +522,209 @@ void main() {
         ),
       );
     },
+    skip: !Platform.isLinux,
   );
+
+  for (final backup in [true, false]) {
+    testWidgets(
+      'Linux ${backup ? 'backup' : 'text'} requires explicit overwrite confirmation',
+      (tester) async {
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const selector = MethodChannel('plugins.flutter.io/file_selector');
+        const window = MethodChannel('window_manager');
+        final directory = (await tester.runAsync(
+          () => Directory.systemTemp.createTemp('overwrite-'),
+        ))!;
+        final file = File(
+          '${directory.path}/export.${backup ? 'json' : 'txt'}',
+        );
+        await tester.runAsync(() => file.writeAsString('original data'));
+        messenger.setMockMethodCallHandler(window, (_) async => null);
+        messenger.setMockMethodCallHandler(selector, (_) async => file.path);
+        addTearDown(() async {
+          messenger.setMockMethodCallHandler(selector, null);
+          messenger.setMockMethodCallHandler(window, null);
+          await directory.delete(recursive: true);
+        });
+        await tester.runAsync(LinuxPlatform.install);
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorKey: DesktopPlatform.navigatorKey,
+            home: const Scaffold(),
+          ),
+        );
+        Object? result;
+        Object? failure;
+        Future<void>? saving;
+        Future<void> startSave() async {
+          result = null;
+          failure = null;
+          await tester.runAsync(() async {
+            saving =
+                AppMethodChannel(
+                      backup ? 'fqapp/library_backup' : 'fqapp/downloads',
+                    )
+                    .invokeMethod<dynamic>(
+                      backup ? 'saveBackup' : 'saveText',
+                      backup
+                          ? {
+                              'name': 'backup.json',
+                              'bytes': Uint8List.fromList([123, 125]),
+                            }
+                          : {'fileName': 'log.txt', 'text': 'export log 😀'},
+                    )
+                    .then<void>(
+                      (value) => result = value,
+                      onError: (Object error) {
+                        failure = error;
+                      },
+                    );
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          });
+          await tester.pumpAndSettle();
+        }
+
+        for (final dismiss in ['取消', 'barrier']) {
+          await startSave();
+          expect(find.text('覆盖已有文件？'), findsOneWidget);
+          expect(find.textContaining(file.path), findsOneWidget);
+          expect(await tester.runAsync(file.readAsString), 'original data');
+          if (dismiss == '取消') {
+            await tester.tap(find.text('取消'));
+          } else {
+            await tester.tapAt(const Offset(5, 5));
+          }
+          await tester.pumpAndSettle();
+          await tester.runAsync(() => saving!);
+          if (backup) {
+            expect(result, isFalse);
+            expect(failure, isNull);
+          } else {
+            expect(
+              failure,
+              isA<PlatformException>().having(
+                (e) => e.code,
+                'code',
+                'cancelled',
+              ),
+            );
+          }
+          expect(await tester.runAsync(file.readAsString), 'original data');
+        }
+
+        await startSave();
+        await tester.tap(find.text('覆盖'));
+        await tester.pumpAndSettle();
+        await tester.runAsync(() => saving!);
+        expect(failure, isNull);
+        expect(result, backup ? true : {'path': file.path, 'public': true});
+        expect(
+          await tester.runAsync(file.readAsString),
+          backup ? '{}' : 'export log 😀',
+        );
+
+        await startSave();
+        await tester.runAsync(() async {
+          final replacement = File('${directory.path}/replacement');
+          await replacement.writeAsString('replacement must survive');
+          await replacement.rename(file.path);
+        });
+        await tester.tap(find.text('覆盖'));
+        await tester.pumpAndSettle();
+        await tester.runAsync(() => saving!);
+        expect(
+          failure,
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'file_changed',
+          ),
+        );
+        expect(
+          await tester.runAsync(file.readAsString),
+          'replacement must survive',
+        );
+
+        await startSave();
+        await tester.runAsync(
+          () => file.writeAsString('edited during confirmation'),
+        );
+        await tester.tap(find.text('覆盖'));
+        await tester.pumpAndSettle();
+        await tester.runAsync(() => saving!);
+        expect(
+          failure,
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'file_changed',
+          ),
+        );
+        expect(
+          await tester.runAsync(file.readAsString),
+          'edited during confirmation',
+        );
+
+        await tester.runAsync(() async {
+          final target = File('${directory.path}/link-target');
+          await target.writeAsString('symlink target must survive');
+          await file.delete();
+          await Link(file.path).create(target.path);
+        });
+        await startSave();
+        await tester.runAsync(() => saving!);
+        expect(failure, isA<FileSystemException>());
+        expect(find.text('覆盖已有文件？'), findsNothing);
+        expect(
+          await tester.runAsync(file.readAsString),
+          'symlink target must survive',
+        );
+        await tester.runAsync(() async {
+          await file.delete();
+
+          await file.writeAsString('no navigator must preserve this');
+        });
+        await tester.pumpWidget(const SizedBox.shrink());
+        await startSave();
+        await tester.runAsync(() => saving!);
+        expect(
+          failure,
+          isA<PlatformException>().having((e) => e.code, 'code', 'not_ready'),
+        );
+        expect(
+          await tester.runAsync(file.readAsString),
+          'no navigator must preserve this',
+        );
+      },
+      variant: TargetPlatformVariant({TargetPlatform.linux}),
+      skip: !Platform.isLinux,
+    );
+  }
+
+  test('Windows saves existing files using native selector approval', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const selector = MethodChannel('plugins.flutter.io/file_selector');
+    final directory = await Directory.systemTemp.createTemp('windows-save-');
+    final file = File('${directory.path}/log.txt');
+    await file.writeAsString('old log');
+    messenger.setMockMethodCallHandler(selector, (_) async => file.path);
+    addTearDown(() async {
+      messenger.setMockMethodCallHandler(selector, null);
+      await directory.delete(recursive: true);
+    });
+    expect(
+      await DesktopPlatform.instance.invoke('fqapp/downloads', 'saveText', {
+        'fileName': 'log.txt',
+        'text': 'new log',
+      }),
+      {'path': file.path, 'public': true},
+    );
+    expect(await file.readAsString(), 'new log');
+  });
 
   test('platform adapters preserve typed bytes and errors', () async {
     final bytes = Uint8List.fromList([1, 2, 3]);

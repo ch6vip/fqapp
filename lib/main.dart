@@ -295,7 +295,7 @@ class _FqAppState extends State<FqApp> {
   );
   // Desktop fullscreen reparents the content; keep the playback owner alive.
   final _audioScopeKey = GlobalKey();
-  final _navigatorKey = isWindowsDesktop
+  final _navigatorKey = isMediaDesktop
       ? DesktopPlatform.navigatorKey
       : GlobalKey<NavigatorState>();
   final _localDataReady = Completer<void>();
