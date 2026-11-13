@@ -613,11 +613,16 @@ class GlassIconButton extends StatelessWidget {
     );
     final semanticLabel = appText(context, label);
     final action = Semantics(
+      container: true,
+      label: semanticLabel,
       button: true,
       enabled: onPressed != null,
+      onTap: onPressed,
+      excludeSemantics: true,
       child: Tooltip(
         message: semanticLabel,
         triggerMode: TooltipTriggerMode.manual,
+        // Keep RawTooltip discoverable without exposing a second label.
         excludeFromSemantics: false,
         child: _scaleCompactFace(
           compact: compact,
@@ -643,7 +648,7 @@ class GlassIconButton extends StatelessWidget {
         ),
       ),
     );
-    return liveGlass ? action : MergeSemantics(child: action);
+    return action;
   }
 }
 
