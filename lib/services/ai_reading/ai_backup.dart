@@ -216,6 +216,11 @@ class AiBackupService {
     String? bookId,
     bool includeTrialDetails = true,
   }) async {
+    // Unavailable stores return empty lists for browsing. Export must not
+    // mistake that fallback for a successfully read, empty asset collection.
+    if (!_store.isAvailable) {
+      throw StateError(_store.status ?? 'AI 数据箱尚未就绪');
+    }
     final allFeedback = await _store.allAggregates();
     final allPrompts = await _store.prompts();
     final allCandidates = await _store.candidates();

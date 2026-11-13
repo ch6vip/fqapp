@@ -161,7 +161,10 @@ class WebDavSyncService with WidgetsBindingObserver {
         final previous = prior is Map ? prior : const {};
         final localHistory = await LibraryStore.instance.backupSnapshot();
         if (!current()) return;
-        final localShelf = ShelfStore.instance.records();
+        final localShelf = ShelfStore.instance
+            .records()
+            .where(LibraryBackup.isPortableShelfRecord)
+            .toList();
         final localKeys = _storedKeys(
           localShelf,
           localHistory.history,
@@ -190,8 +193,10 @@ class WebDavSyncService with WidgetsBindingObserver {
             throw const WebDavException('云端同步文件已消失，已停止自动重建，避免恢复已删除的数据');
           }
           final local = await _backupService.capture();
-          if (_backupService.lastAiExportNote case final note?) {
-            throw WebDavException('无法建立完整云端备份：$note；请修复 AI 存储后重试');
+          if (_backupService.lastAiExportStatus == AiExportStatus.unavailable) {
+            throw WebDavException(
+              '无法建立完整云端备份：${_backupService.lastAiExportNote ?? 'AI 数据暂不可用'}；请修复 AI 存储后重试',
+            );
           }
           if (!current()) return;
           if (!await client.write(WebDavSyncDocument(local).encode(), null)) {
@@ -199,7 +204,11 @@ class WebDavSyncService with WidgetsBindingObserver {
           }
           if (!current()) return;
           await _state!.put(scope, _snapshotKeys(local));
-          if (current()) status.value = '已建立云端备份 · 书架 ${local.shelf.length} 本';
+          if (current()) {
+            final note = _backupService.lastAiExportNote;
+            status.value =
+                '已建立云端备份 · 书架 ${local.shelf.length} 本${note == null ? '' : ' · $note'}';
+          }
           return;
         }
         final WebDavSyncDocument document;
@@ -367,7 +376,7 @@ class WebDavSyncService with WidgetsBindingObserver {
   }
 
   static String _historyKey(Map<String, dynamic> record) =>
-      '${record['kind']}:${record['id']}';
+      '${record['kind'] ?? 'book'}:${record['contentId'] ?? record['id']}';
 
   // Reading cloud data must not first serialize/validate unrelated local fields.
   // Only identities are needed to detect deletes and protect concurrent edits.
@@ -376,14 +385,19 @@ class WebDavSyncService with WidgetsBindingObserver {
     List<Map<String, dynamic>> history,
     Map<String, Map<String, int>> watched,
   ) => {
-    'shelf': shelf.map((record) => ShelfStore.keyOf(record.item)).toList(),
-    'history': history
-        .map(
-          (record) =>
-              '${record['kind']}:${record['contentId'] ?? record['id']}',
-        )
+    'shelf': shelf
+        .where(LibraryBackup.isPortableShelfRecord)
+        .map((record) => ShelfStore.keyOf(record.item))
         .toList(),
-    'watched': watched.keys.toList(),
+    'history': history
+        .where(
+          (record) => !(record['contentId'] ?? record['id'])
+              .toString()
+              .startsWith('local_'),
+        )
+        .map(_historyKey)
+        .toList(),
+    'watched': watched.keys.where((key) => !key.startsWith('local_')).toList(),
   };
 
   static Map<String, List<String>> _snapshotKeys(LibraryBackup backup) => {

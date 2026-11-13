@@ -16,6 +16,7 @@ import 'package:fqapp/services/library_store.dart';
 import 'package:fqapp/services/library_backup_service.dart';
 import 'package:fqapp/services/shelf_group_store.dart';
 import 'package:fqapp/services/ai_reading/ai_backup.dart';
+import 'package:fqapp/services/ai_reading/ai_store.dart';
 import 'package:fqapp/services/reader_preferences.dart';
 import 'package:fqapp/services/shelf_store.dart';
 import 'package:fqapp/services/webdav_client.dart';
@@ -314,6 +315,7 @@ void main() {
       conflict = false;
       offline = false;
       service = WebDavSyncService(
+        backupService: _CountingAiBackup(aiBackupService: _WorkingAiExporter()),
         createClient: (settings) => WebDavClient(
           settings,
           client: MockClient((request) async {
@@ -395,7 +397,9 @@ void main() {
       'an incomplete AI export never creates a misleading cloud backup',
       () async {
         await service.dispose();
-        final exporter = _IncompleteAiBackup();
+        expect(AiStore.instance.isAvailable, isFalse);
+        await expectLater(AiBackupService.instance.encode(), throwsStateError);
+        final exporter = LibraryBackupService();
         service = WebDavSyncService(
           backupService: exporter,
           createClient: (settings) => WebDavClient(
@@ -417,6 +421,8 @@ void main() {
             ),
           ),
         );
+        expect(exporter.lastAiExportStatus, AiExportStatus.unavailable);
+        expect((await exporter.capture()).aiData, isNull);
         expect(service.status.value, contains('AI'));
         expect(remote, isNull);
       },
@@ -461,6 +467,110 @@ void main() {
       await service.sync();
       expect(importer.restores, 1);
     });
+
+    test(
+      'cloud replacement and deletion never remove imported local books',
+      () async {
+        final imported = item('local_100_abcd');
+        final malformed = item('local_old-import');
+        await ShelfStore.instance.add(imported);
+        await ShelfStore.instance.add(malformed);
+        await ShelfStore.instance.add(item('online-old'));
+        final before = ShelfStore.instance
+            .records()
+            .where((record) => record.item.id.startsWith('local_'))
+            .map((record) => record.addedAt)
+            .toList();
+        remote = WebDavSyncDocument(
+          backup(
+            shelf: [ShelfRecord(item: item('cloud'), addedAt: DateTime(2025))],
+          ),
+        ).encode();
+        version++;
+        await service.sync();
+        await service.sync();
+        expect(ShelfStore.instance.contains('book', imported.id), isTrue);
+        expect(ShelfStore.instance.contains('book', malformed.id), isTrue);
+        expect(ShelfStore.instance.contains('book', 'online-old'), isFalse);
+        await ShelfStore.instance.removeKeys([ShelfStore.keyOf(item('cloud'))]);
+        await service.sync();
+        expect(WebDavSyncDocument.decode(remote!).backup.shelf, isEmpty);
+        expect(
+          ShelfStore.instance
+              .records()
+              .map((record) => record.addedAt)
+              .toList(),
+          before,
+        );
+      },
+    );
+
+    test(
+      'migrated history without kind survives seeding and subsequent syncs',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'hist': jsonEncode([
+            {
+              'id': 'legacy',
+              'title': '旧版进度',
+              'chapterId': 'chapter-3',
+              'position': 42,
+              'time': 100,
+            },
+          ]),
+        });
+        await LibraryStore.instance.init();
+        expect(
+          (await LibraryStore.instance.historyEntry('legacy'))?['kind'],
+          isNull,
+        );
+        await service.sync();
+        await service.sync();
+        await service.sync();
+        final history = WebDavSyncDocument.decode(
+          remote!,
+        ).backup.history.single;
+        expect(history['id'], 'legacy');
+        expect(history['kind'], 'book');
+        expect(history['chapterId'], 'chapter-3');
+        expect(history['position'], 42);
+        expect(
+          (await LibraryStore.instance.historyEntry('legacy'))?['position'],
+          42,
+        );
+        await LibraryStore.instance.removeHistoryEntry('legacy', 'book');
+        await service.sync();
+        expect(WebDavSyncDocument.decode(remote!).backup.history, isEmpty);
+      },
+    );
+
+    test(
+      'successful compact export creates a cloud backup and retains the notice',
+      () async {
+        await service.dispose();
+        final ai = _CompactAiExporter();
+        final exporter = _CountingAiBackup(aiBackupService: ai);
+        service = WebDavSyncService(
+          backupService: exporter,
+          createClient: (settings) => WebDavClient(
+            settings,
+            client: MockClient((request) async {
+              if (request.method == 'GET') return http.Response('', 404);
+              remote = request.bodyBytes;
+              return http.Response('', 201);
+            }),
+          ),
+        );
+        await service.configure(config);
+        await service.sync();
+        expect(ai.details, [true, false]);
+        expect(exporter.lastAiExportStatus, AiExportStatus.compact);
+        expect(exporter.lastAiExportNote, contains('已省略试验明细'));
+        expect(service.status.value, contains('已建立云端备份'));
+        expect(service.status.value, contains('已省略试验明细'));
+        expect(WebDavSyncDocument.decode(remote!).backup.aiData, isNotEmpty);
+      },
+    );
 
     test('a fresh device imports the online shelf from the server', () async {
       remote = WebDavSyncDocument(
@@ -867,19 +977,8 @@ void main() {
   });
 }
 
-class _IncompleteAiBackup extends LibraryBackupService {
-  @override
-  Future<LibraryBackup> capture({
-    bool includeAi = true,
-    String? aiBookId,
-    bool compactAi = false,
-  }) async {
-    lastAiExportNote = 'AI 数据暂不可用';
-    return backup();
-  }
-}
-
 class _CountingAiBackup extends LibraryBackupService {
+  _CountingAiBackup({super.aiBackupService});
   int restores = 0;
   @override
   Future<AiBackupRestoreResult> restoreAiPayload(
@@ -896,5 +995,39 @@ class _CountingAiBackup extends LibraryBackupService {
       pending: 0,
       conflicts: 0,
     );
+  }
+}
+
+class _WorkingAiExporter extends AiBackupService {
+  @override
+  Future<String> encode({
+    String? bookId,
+    bool includeTrialDetails = true,
+  }) async => base64Encode(
+    gzip.encode(
+      utf8.encode(
+        jsonEncode({
+          'format': 'fqapp.ai-backup',
+          'version': 1,
+          'createdAt': 1,
+          'feedback': [],
+          'prompts': [],
+          'candidates': [],
+        }),
+      ),
+    ),
+  );
+}
+
+class _CompactAiExporter extends _WorkingAiExporter {
+  final details = <bool>[];
+  @override
+  Future<String> encode({
+    String? bookId,
+    bool includeTrialDetails = true,
+  }) async {
+    details.add(includeTrialDetails);
+    if (includeTrialDetails) return 'x' * (LibraryBackup.maxBytes + 1);
+    return super.encode(bookId: bookId, includeTrialDetails: false);
   }
 }
