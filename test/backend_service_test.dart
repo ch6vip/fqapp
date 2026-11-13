@@ -255,14 +255,13 @@ void main() {
         const NetworkProxyConfig(enabled: true, url: 'http://127.0.0.1:7890'),
       );
       await backend.restartForConfiguration();
-      if (Platform.isWindows) {
+      if (Platform.isWindows || Platform.isLinux) {
         expect(deployed()['network_proxy'], {
           'enabled': true,
           'url': 'http://127.0.0.1:7890',
         });
       } else {
-        // The proxy setting belongs to the Windows client. Other hosts keep
-        // ignoring even a saved value, rather than activating a mobile feature.
+        // Mobile hosts keep their existing routing behavior.
         expect(deployed()['network_proxy'], {'enabled': false, 'url': ''});
       }
       expect(deployed()['port'], 18921);

@@ -846,10 +846,12 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
                       onPressed: _startBackend,
                       child: const Text('重试'),
                     ),
-                    if (isWindowsDesktop)
+                    if (isWindowsDesktop || isLinuxDesktop)
                       TextButton(
                         onPressed: _retryWithDirectConnection,
-                        child: const Text('重置代理为直连并重试'),
+                        child: Text(
+                          isLinuxDesktop ? '重置代理为默认连接并重试' : '重置代理为直连并重试',
+                        ),
                       ),
                   ],
                 ],

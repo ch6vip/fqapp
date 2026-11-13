@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../../services/backend_service.dart';
 import '../../services/local_proxy_discovery.dart';
+import '../../services/desktop_platform.dart';
+import '../../services/linux_platform.dart';
 import '../../services/network_proxy_preferences.dart';
 import '../wenku/wenku_ui.dart';
 import 'settings_archive_rows.dart';
@@ -105,14 +107,20 @@ class _CoreProxySettingsPanelState extends State<CoreProxySettingsPanel> {
       setState(() {
         _error = false;
         _loadFailed = false;
-        _message = _enabled ? '已应用，核心请求使用指定代理' : '已应用，核心请求直接连接';
+        _message = _enabled
+            ? '已应用，核心请求使用指定代理'
+            : isLinuxDesktop
+            ? '已应用，核心请求使用默认网络连接'
+            : '已应用，核心请求直接连接';
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = true;
         _message = persisted
-            ? '已保存，但核心启动失败。请检查配置后重新应用，或选择直连。'
+            ? (isLinuxDesktop
+                  ? '已保存，但核心启动失败。请检查配置后重新应用，或恢复默认连接。'
+                  : '已保存，但核心启动失败。请检查配置后重新应用，或选择直连。')
             : '代理配置保存失败，请重试。';
       });
     } finally {
@@ -148,6 +156,8 @@ class _CoreProxySettingsPanelState extends State<CoreProxySettingsPanel> {
                 ? '配置读取失败，重新保存后生效'
                 : _enabled
                 ? 'Rust 核心 API、加密媒体分段和视频下载统一走代理'
+                : isLinuxDesktop
+                ? '默认连接保留系统路由与环境代理'
                 : '默认直连，忽略系统代理与代理环境变量',
             value: _enabled,
             optimistic: false,
@@ -159,6 +169,13 @@ class _CoreProxySettingsPanelState extends State<CoreProxySettingsPanel> {
                     _addressError = null;
                   }),
           ),
+          if (isLinuxDesktop) ...[
+            const SizedBox(height: 10),
+            const AppText(
+              '普通网络和 TUN/VPN 无需填写代理端口。默认连接保留环境代理；仅需指定 HTTP/SOCKS 代理时启用。',
+              style: TextStyle(fontSize: 12, height: 1.6),
+            ),
+          ],
           const SizedBox(height: 14),
           TextField(
             key: const ValueKey('core-proxy-address'),
@@ -191,35 +208,37 @@ class _CoreProxySettingsPanelState extends State<CoreProxySettingsPanel> {
             ),
           ),
           const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: GlassTextButton(
-              onPressed: busy ? null : _discover,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_discovering)
-                    const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    const ArchiveIcon(CupertinoIcons.search, size: 16),
-                  const SizedBox(width: 8),
-                  AppText(_discovering ? '正在检测…' : '检测本机代理'),
-                ],
+          if (isWindowsDesktop || widget.discover != null) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: GlassTextButton(
+                onPressed: busy ? null : _discover,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_discovering)
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      const ArchiveIcon(CupertinoIcons.search, size: 16),
+                    const SizedBox(width: 8),
+                    AppText(_discovering ? '正在检测…' : '检测本机代理'),
+                  ],
+                ),
               ),
             ),
-          ),
-          AppText(
-            '检测 Windows 本机监听端口，系统代理关闭时也可发现。检测仅访问本机。',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.6,
-              color: scheme.onSurfaceVariant,
+            AppText(
+              '检测 Windows 本机监听端口，系统代理关闭时也可发现。检测仅访问本机。',
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.6,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
-          ),
+          ],
           if (_discoveryMessage != null) ...[
             const SizedBox(height: 8),
             Semantics(
