@@ -9,9 +9,7 @@ void main() {
     desktopTab.value = 0;
     addTearDown(() => desktopTab.value = 0);
     await tester.pumpWidget(
-      const MaterialApp(
-        home: DesktopAppFrame(child: SizedBox.expand()),
-      ),
+      const MaterialApp(home: DesktopAppFrame(child: SizedBox.expand())),
     );
     await tester.pump();
 

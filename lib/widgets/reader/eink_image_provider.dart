@@ -30,10 +30,7 @@ class EinkImageProvider extends ImageProvider<EinkImageKey> {
     return OneFrameImageStreamCompleter(_load(key, decode));
   }
 
-  Future<ImageInfo> _load(
-    EinkImageKey key,
-    ImageDecoderCallback decode,
-  ) async {
+  Future<ImageInfo> _load(EinkImageKey key, ImageDecoderCallback decode) async {
     final innerKey = await key.inner.obtainKey(key.configuration);
     final completer = key.inner.loadImage(innerKey, decode);
     final info = await _firstImage(completer);

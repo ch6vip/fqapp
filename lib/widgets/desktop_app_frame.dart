@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
+
 import '../pages/search_page.dart';
 import '../pages/settings_page.dart';
 import '../services/desktop_platform.dart';
@@ -151,8 +152,7 @@ class DesktopAppFrame extends StatelessWidget {
                                           textInputAction:
                                               TextInputAction.search,
                                           decoration: InputDecoration(
-                                            hintText:
-                                                '搜索小说、短剧、漫画、听书 / 作品 ID',
+                                            hintText: '搜索小说、短剧、漫画、听书 / 作品 ID',
                                             isDense: true,
                                             prefixIcon: const Icon(
                                               LucideIcons.search,

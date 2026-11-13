@@ -9,15 +9,21 @@ void main() {
     final gate = RequestGate();
     var sends = 0;
     final results = await Future.wait([
-      gate.run<String>('GET /a', send: () async {
-        sends++;
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        return 'a';
-      }),
-      gate.run<String>('GET /a', send: () async {
-        sends++;
-        return 'a-should-not-run';
-      }),
+      gate.run<String>(
+        'GET /a',
+        send: () async {
+          sends++;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          return 'a';
+        },
+      ),
+      gate.run<String>(
+        'GET /a',
+        send: () async {
+          sends++;
+          return 'a-should-not-run';
+        },
+      ),
     ]);
     expect(sends, 1);
     expect(results, ['a', 'a']);
@@ -27,14 +33,20 @@ void main() {
     final gate = RequestGate();
     final sends = <String>[];
     await Future.wait([
-      gate.run<String>('GET /a', send: () async {
-        sends.add('a');
-        return 'a';
-      }),
-      gate.run<String>('GET /b', send: () async {
-        sends.add('b');
-        return 'b';
-      }),
+      gate.run<String>(
+        'GET /a',
+        send: () async {
+          sends.add('a');
+          return 'a';
+        },
+      ),
+      gate.run<String>(
+        'GET /b',
+        send: () async {
+          sends.add('b');
+          return 'b';
+        },
+      ),
     ]);
     expect(sends, unorderedEquals(['a', 'b']));
   });

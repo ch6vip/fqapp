@@ -61,8 +61,7 @@ class RankCache {
     final box = _box;
     if (box != null) return box;
     try {
-      return _box =
-          await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
+      return _box = await (_opening ??= EncryptedHive.openBox(_hive, _boxName));
     } on Object {
       _opening = null;
       rethrow;
@@ -86,10 +85,7 @@ class RankCache {
     final catalog = RankCatalog.fromJson(raw);
     return catalog == null
         ? null
-        : RankCatalogSnapshot(
-            catalog: catalog,
-            savedAt: _savedAt(raw),
-          );
+        : RankCatalogSnapshot(catalog: catalog, savedAt: _savedAt(raw));
   });
 
   RankBoardSnapshot? loadBoard({

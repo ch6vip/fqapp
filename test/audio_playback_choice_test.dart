@@ -8,7 +8,10 @@ import 'package:fqapp/services/audio_playback_choice.dart';
 void main() {
   group('AudioSkipPoints.introSeek', () {
     test('is a no-op when unset', () {
-      expect(AudioSkipPoints.none.introSeek(const Duration(minutes: 10)), isNull);
+      expect(
+        AudioSkipPoints.none.introSeek(const Duration(minutes: 10)),
+        isNull,
+      );
     });
 
     test('returns the configured offset', () {
@@ -32,17 +35,24 @@ void main() {
 
     test('fires only inside the tail window', () {
       const duration = Duration(minutes: 10);
-      expect(points.atOutro(const Duration(minutes: 9, seconds: 30), duration),
-          isFalse);
-      expect(points.atOutro(const Duration(minutes: 9, seconds: 45), duration),
-          isTrue);
+      expect(
+        points.atOutro(const Duration(minutes: 9, seconds: 30), duration),
+        isFalse,
+      );
+      expect(
+        points.atOutro(const Duration(minutes: 9, seconds: 45), duration),
+        isTrue,
+      );
       expect(points.atOutro(duration, duration), isTrue);
     });
 
     test('never fires at position zero or with an unknown duration', () {
       const duration = Duration(minutes: 10);
       expect(points.atOutro(Duration.zero, duration), isFalse);
-      expect(points.atOutro(const Duration(seconds: 5), Duration.zero), isFalse);
+      expect(
+        points.atOutro(const Duration(seconds: 5), Duration.zero),
+        isFalse,
+      );
     });
 
     test('is disabled when the offset is zero', () {
@@ -71,11 +81,18 @@ void main() {
     });
 
     test('compares by value so the sheet can mark the active row', () {
-      expect(const SleepTimerChoice.minutes(15),
-          const SleepTimerChoice.minutes(15));
-      expect(const SleepTimerChoice.minutes(15),
-          isNot(const SleepTimerChoice.minutes(30)));
-      expect(const SleepTimerChoice.off(), isNot(const SleepTimerChoice.endOfChapter()));
+      expect(
+        const SleepTimerChoice.minutes(15),
+        const SleepTimerChoice.minutes(15),
+      );
+      expect(
+        const SleepTimerChoice.minutes(15),
+        isNot(const SleepTimerChoice.minutes(30)),
+      );
+      expect(
+        const SleepTimerChoice.off(),
+        isNot(const SleepTimerChoice.endOfChapter()),
+      );
     });
   });
 }

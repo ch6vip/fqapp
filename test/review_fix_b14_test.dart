@@ -147,9 +147,7 @@ void main() {
     expect(readAlong, 1);
   });
 
-  testWidgets('multi-role voices carry the 多角色 corner ribbon', (
-    tester,
-  ) async {
+  testWidgets('multi-role voices carry the 多角色 corner ribbon', (tester) async {
     // 官方把「多角色」做成音色片右上角的一片丝带（截图 2.jpg）：多角色音色有、
     // 普通音色没有。这是版式的一部分，不该只靠音色名里有没有「多角色」三个字。
     await tester.pumpWidget(
@@ -176,7 +174,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('audio_tone_multi_multi')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('audio_tone_multi_multi')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('audio_tone_multi_plain')), findsNothing);
     expect(find.text('多角色'), findsOneWidget);
   });

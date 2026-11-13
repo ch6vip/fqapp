@@ -54,11 +54,7 @@ void main() {
               'has_more': false,
               'next_offset': 0,
               'data_list': [
-                {
-                  'book_id': '101',
-                  'book_type': 0,
-                  'read_timestamp_ms': 100,
-                },
+                {'book_id': '101', 'book_type': 0, 'read_timestamp_ms': 100},
                 {'book_id': 'bad', 'book_type': 0, 'read_timestamp_ms': -1},
               ],
             },

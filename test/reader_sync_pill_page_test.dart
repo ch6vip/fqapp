@@ -122,45 +122,46 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('从本页听 starts in background from this page with the current tone', (
-      tester,
-    ) async {
-      await _mountOnline(tester);
-      // 已经在这本书里暂停：高亮不在屏内，同步胶囊可见。
-      ListeningSession.instance.update(
-        bookId: 'reader-test',
-        chapterId: 'c1',
-        chapterTitle: '第一章',
-        position: Duration.zero,
-        duration: const Duration(seconds: 60),
-        playing: false,
-        toneId: 'narrator-7',
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
+    testWidgets(
+      '从本页听 starts in background from this page with the current tone',
+      (tester) async {
+        await _mountOnline(tester);
+        // 已经在这本书里暂停：高亮不在屏内，同步胶囊可见。
+        ListeningSession.instance.update(
+          bookId: 'reader-test',
+          chapterId: 'c1',
+          chapterTitle: '第一章',
+          position: Duration.zero,
+          duration: const Duration(seconds: 60),
+          playing: false,
+          toneId: 'narrator-7',
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('reader_sync_pill')), findsOneWidget);
 
-      // 「从本页听」= 后台起播不跳页：拦截起播缝，验证请求参数与阅读页留存。
-      AudioPage? started;
-      AudioPlaybackScope.startListeningOverride = (context, request) async {
-        started = request;
-        return true;
-      };
-      addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
+        // 「从本页听」= 后台起播不跳页：拦截起播缝，验证请求参数与阅读页留存。
+        AudioPage? started;
+        AudioPlaybackScope.startListeningOverride = (context, request) async {
+          started = request;
+          return true;
+        };
+        addTearDown(() => AudioPlaybackScope.startListeningOverride = null);
 
-      await tester.tap(
-        find.byKey(const ValueKey('reader_sync_listen_from_here')),
-      );
-      await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('reader_sync_listen_from_here')),
+        );
+        await tester.pumpAndSettle();
 
-      expect(find.byType(AudioPage), findsNothing);
-      expect(started, isNotNull);
-      // 本页第一段带 <span start_time="4200">。
-      expect(started!.startPosition, const Duration(milliseconds: 4200));
-      expect(started!.initialToneId, 'narrator-7');
-      expect(tester.takeException(), isNull);
+        expect(find.byType(AudioPage), findsNothing);
+        expect(started, isNotNull);
+        // 本页第一段带 <span start_time="4200">。
+        expect(started!.startPosition, const Duration(milliseconds: 4200));
+        expect(started!.initialToneId, 'narrator-7');
+        expect(tester.takeException(), isNull);
 
-      await tester.pumpWidget(const SizedBox.shrink());
-    });
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
 
     testWidgets('从本页听 follows the default engine, not the works audio', (
       tester,

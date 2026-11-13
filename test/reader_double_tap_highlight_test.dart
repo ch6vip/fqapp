@@ -99,8 +99,10 @@ String _text() =>
     '<p idx="0">$_body</p>'
     '</article>';
 
-SubtitleTrack _track() =>
-    SubtitleTrack([SubtitleCue(startMs: 0, text: _body), SubtitleCue(startMs: 30000, text: '下一句。')]);
+SubtitleTrack _track() => SubtitleTrack([
+  SubtitleCue(startMs: 0, text: _body),
+  SubtitleCue(startMs: 30000, text: '下一句。'),
+]);
 
 Widget _app() => MaterialApp(
   home: ReaderPage(

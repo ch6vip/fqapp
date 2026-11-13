@@ -125,9 +125,7 @@ class AudioMultiRoleRibbon extends StatelessWidget {
       decoration: BoxDecoration(
         // 比画布略压一点，正好落在选中片与卡片之间的一档。
         color: Color.lerp(theme.canvas, theme.ink, 0.06),
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(10),
-        ),
+        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(10)),
       ),
       child: Text(
         '多角色',

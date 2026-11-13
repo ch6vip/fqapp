@@ -109,48 +109,52 @@ void main() {
   });
 
   group('ApiClient cancellation', () {
-    test('a request cancelled before the call starts never reaches the wire',
-        () async {
-      var calls = 0;
-      final transport = _RecordingTransport()
-        ..respond = () {
-          calls++;
-          return BackendResponse(200, Uint8List(0), '');
-        };
-      final api = ApiClient(transport: transport);
-      final request = BackendRequest()..cancel();
+    test(
+      'a request cancelled before the call starts never reaches the wire',
+      () async {
+        var calls = 0;
+        final transport = _RecordingTransport()
+          ..respond = () {
+            calls++;
+            return BackendResponse(200, Uint8List(0), '');
+          };
+        final api = ApiClient(transport: transport);
+        final request = BackendRequest()..cancel();
 
-      await expectLater(
-        api.withCancellation(request, () => api.detail('1')),
-        throwsA(isA<BackendRequestAborted>()),
-      );
-      expect(calls, 0);
-      expect(transport.seen, isEmpty);
-    });
+        await expectLater(
+          api.withCancellation(request, () => api.detail('1')),
+          throwsA(isA<BackendRequestAborted>()),
+        );
+        expect(calls, 0);
+        expect(transport.seen, isEmpty);
+      },
+    );
 
-    test('cancelling while the call waits aborts it and drops the result',
-        () async {
-      final gate = Completer<void>();
-      final transport = _RecordingTransport()
-        ..gate = gate
-        ..respond = () =>
-            BackendResponse(200, utf8.encode('{"code":200,"data":{}}'), '');
-      final api = ApiClient(transport: transport);
-      final request = BackendRequest();
+    test(
+      'cancelling while the call waits aborts it and drops the result',
+      () async {
+        final gate = Completer<void>();
+        final transport = _RecordingTransport()
+          ..gate = gate
+          ..respond = () =>
+              BackendResponse(200, utf8.encode('{"code":200,"data":{}}'), '');
+        final api = ApiClient(transport: transport);
+        final request = BackendRequest();
 
-      final pending = api.withCancellation(request, () => api.detail('1'));
-      // Let the call reach the transport and register its cancellation hook.
-      await Future<void>.delayed(Duration.zero);
-      expect(transport.seen, hasLength(1));
-      expect(transport.seen.single, same(request));
+        final pending = api.withCancellation(request, () => api.detail('1'));
+        // Let the call reach the transport and register its cancellation hook.
+        await Future<void>.delayed(Duration.zero);
+        expect(transport.seen, hasLength(1));
+        expect(transport.seen.single, same(request));
 
-      request.cancel();
-      await expectLater(pending, throwsA(isA<BackendRequestAborted>()));
+        request.cancel();
+        await expectLater(pending, throwsA(isA<BackendRequestAborted>()));
 
-      // A late completion must not resurrect the call.
-      gate.complete();
-      await Future<void>.delayed(Duration.zero);
-    });
+        // A late completion must not resurrect the call.
+        gate.complete();
+        await Future<void>.delayed(Duration.zero);
+      },
+    );
 
     test('a superseding request cancels only the previous one', () async {
       final firstGate = Completer<void>();
@@ -178,10 +182,10 @@ void main() {
     test('cancelling after completion changes nothing', () async {
       final transport = _RecordingTransport()
         ..respond = () => BackendResponse(
-              200,
-              utf8.encode('{"code":200,"data":{"ok":true}}'),
-              '',
-            );
+          200,
+          utf8.encode('{"code":200,"data":{"ok":true}}'),
+          '',
+        );
       final api = ApiClient(transport: transport);
       final request = BackendRequest();
 
@@ -194,15 +198,12 @@ void main() {
     test('a plain client keeps working without a cancellation scope', () async {
       final transport = _RecordingTransport()
         ..respond = () => BackendResponse(
-              200,
-              utf8.encode('{"success":false,"error":"失败"}'),
-              '',
-            );
+          200,
+          utf8.encode('{"success":false,"error":"失败"}'),
+          '',
+        );
       final api = ApiClient(transport: transport);
-      await expectLater(
-        api.detail('1'),
-        throwsA(isA<ApiException>()),
-      );
+      await expectLater(api.detail('1'), throwsA(isA<ApiException>()));
       expect(transport.seen.single, isNull);
     });
   });
@@ -239,36 +240,39 @@ void main() {
       expect(issued, 0);
     });
 
-    test('cancel aborts a stalled exchange promptly, not via the deadline',
-        () async {
-      final server = await stalledServer();
-      addTearDown(() => server.close(force: true));
+    test(
+      'cancel aborts a stalled exchange promptly, not via the deadline',
+      () async {
+        final server = await stalledServer();
+        addTearDown(() => server.close(force: true));
 
-      final transport = HttpBackendTransport(
-        baseUrl: 'http://127.0.0.1:${server.port}',
-      );
-      final request = BackendRequest();
-      final stopped = Stopwatch()..start();
-      final pending = transport.send(
-        'GET',
-        Uri.parse('http://127.0.0.1:${server.port}/src/large.mp4'),
-        // Far longer than the assertion bound: only the cancel can end this.
-        timeout: const Duration(minutes: 5),
-        request: request,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      request.cancel();
-      await expectLater(
-        pending.timeout(const Duration(seconds: 5)),
-        throwsA(isA<BackendRequestAborted>()),
-      );
-      stopped.stop();
-      expect(
-        stopped.elapsed,
-        lessThan(const Duration(seconds: 5)),
-        reason: 'cancellation must abort the in-flight exchange, not wait it out',
-      );
-    });
+        final transport = HttpBackendTransport(
+          baseUrl: 'http://127.0.0.1:${server.port}',
+        );
+        final request = BackendRequest();
+        final stopped = Stopwatch()..start();
+        final pending = transport.send(
+          'GET',
+          Uri.parse('http://127.0.0.1:${server.port}/src/large.mp4'),
+          // Far longer than the assertion bound: only the cancel can end this.
+          timeout: const Duration(minutes: 5),
+          request: request,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        request.cancel();
+        await expectLater(
+          pending.timeout(const Duration(seconds: 5)),
+          throwsA(isA<BackendRequestAborted>()),
+        );
+        stopped.stop();
+        expect(
+          stopped.elapsed,
+          lessThan(const Duration(seconds: 5)),
+          reason:
+              'cancellation must abort the in-flight exchange, not wait it out',
+        );
+      },
+    );
 
     test('a deadline still surfaces as TimeoutException', () async {
       final server = await stalledServer();

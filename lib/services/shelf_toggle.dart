@@ -15,9 +15,9 @@ bool inShelf(MediaItem item) => ShelfStore.instance.containsItem(item);
 Future<void> toggleShelf(BuildContext context, MediaItem item) async {
   if (!ShelfStore.instance.isReady) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('本地书架暂不可用，请重试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
     }
     return;
   }

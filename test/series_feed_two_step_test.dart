@@ -113,10 +113,7 @@ void main() {
     expect(first.seriesId, '7669730394324880409');
     expect(first.title, '悍妻替嫁，从前说');
     expect(first.cover, 'https://example.invalid/tpl.jpg');
-    expect(page.items.map((item) => item.id), [
-      '7669730394324880409',
-      '222',
-    ]);
+    expect(page.items.map((item) => item.id), ['7669730394324880409', '222']);
     expect(page.nextOffset, 5);
     expect(page.sessionId, 'flow-0');
     expect(calls, hasLength(2));

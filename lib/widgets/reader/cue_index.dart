@@ -263,7 +263,8 @@ class CueIndex {
             }
             // 强边界一律切；弱边界攒够 [minPieceChars] 个真实字才切，否则
             // 跳过这个标点继续累积 —— 并列短语与密集对话据此不再切碎。
-            if (strong || _visibleCount(combined, pieceStart, e) >= minPieceChars) {
+            if (strong ||
+                _visibleCount(combined, pieceStart, e) >= minPieceChars) {
               pieces.add((pieceStart, e, strong));
               pieceStart = e;
             }
@@ -314,8 +315,8 @@ class CueIndex {
           var elapsed = 0;
           for (var p = 0; p < n; p++) {
             final piece = pieces[p];
-            final pieceStartMs = cueStartMs +
-                (flexible > 0 ? elapsed : duration * p ~/ n);
+            final pieceStartMs =
+                cueStartMs + (flexible > 0 ? elapsed : duration * p ~/ n);
             elapsed += flexible > 0
                 ? pieceBaseMs + flexible * weights[p] ~/ total
                 : 0;
