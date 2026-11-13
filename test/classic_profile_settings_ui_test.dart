@@ -178,10 +178,7 @@ void main() {
             .getRect(find.byKey(const ValueKey('classic-dock-selection')))
             .center
             .dx,
-        moreOrLessEquals(
-          tester.getRect(find.text('书架')).center.dx,
-          epsilon: 1,
-        ),
+        moreOrLessEquals(tester.getRect(find.text('书架')).center.dx, epsilon: 1),
       );
       await tester.tap(find.text('我的'));
       await tester.pumpAndSettle();

@@ -65,7 +65,8 @@ void main() {
         scheme: 'dragon1967',
         host: 'webview',
         queryParameters: {
-          'url': 'dragon1967://webview?url='
+          'url':
+              'dragon1967://webview?url='
               'dragon1967%3A%2F%2Fwebview%3Furl%3D'
               'dragon1967%253A%252F%252Fwebview%253Furl%253D'
               'https%25253A%25252F%25252Fexample.com',

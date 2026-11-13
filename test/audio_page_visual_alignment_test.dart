@@ -133,9 +133,7 @@ class _RealSession {
       extrasLoader: (_) async => AudioExtras(
         tones: const AudioToneSet(
           genreType: 1,
-          narratorTones: [
-            AudioTone(id: '7239243941252598845', title: '主播：老恒'),
-          ],
+          narratorTones: [AudioTone(id: '7239243941252598845', title: '主播：老恒')],
           ttsTones: [AudioTone(id: '96', title: '多角色对话升级版')],
         ),
         related: const [

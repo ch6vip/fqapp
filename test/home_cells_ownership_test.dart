@@ -96,11 +96,7 @@ void main() {
     await _flush();
     final fresh = container.read(provider);
     if (fresh.cells.isEmpty) {
-      expect(
-        fresh.cellsTabIndex,
-        isNot(0),
-        reason: '空区块不能还挂着上一个分类的归属',
-      );
+      expect(fresh.cellsTabIndex, isNot(0), reason: '空区块不能还挂着上一个分类的归属');
     }
   });
 

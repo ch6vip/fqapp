@@ -108,18 +108,13 @@ void main() {
     // 数值字段偶发以字符串下发，与 tab_type 同一套容错。
     expect(
       ChannelTable.fromPayload({
-        'data': {
-          'tab_index': '1',
-          'tab_item': [],
-        },
+        'data': {'tab_index': '1', 'tab_item': []},
       }).defaultIndex,
       1,
     );
     expect(
       ChannelTable.fromPayload({
-        'data': {
-          'tab_item': [],
-        },
+        'data': {'tab_item': []},
       }).defaultIndex,
       -1,
     );
@@ -127,12 +122,10 @@ void main() {
 
   test('a malformed table yields an empty table without an index', () {
     // 表不合法时下标一并作废：不能出现「有下标没条目」的半张表。
-    final broken = ChannelTable.fromPayload(
-      const {
-        'code': 1001,
-        'data': {'tab_index': 1},
-      },
-    );
+    final broken = ChannelTable.fromPayload(const {
+      'code': 1001,
+      'data': {'tab_index': 1},
+    });
     expect(broken.tabs, isEmpty);
     expect(broken.defaultIndex, -1);
     expect(ChannelTable.fromPayload(const {}), same(ChannelTable.empty));

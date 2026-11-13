@@ -18,9 +18,7 @@ Color detailStarColor(HomePalette palette) =>
 
 /// Tabular figures for the score, ID and progress (`font-variant-numeric`).
 /// No font family is set: the detail page keeps the app's own font.
-const List<FontFeature> detailNumericFeatures = [
-  FontFeature.tabularFigures(),
-];
+const List<FontFeature> detailNumericFeatures = [FontFeature.tabularFigures()];
 
 /// Rank pill fill (`--m-cur`): the current-chapter tint, black/white on e-ink.
 Color detailRankFill(HomePalette palette) {

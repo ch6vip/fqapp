@@ -67,6 +67,7 @@ class PlayerPreferences {
       throw StateError('Could not save the video decoder preference');
     }
   }
+
   static Future<double> loadPlaybackRate() async {
     final preferences = await SharedPreferences.getInstance();
     final saved = preferences.get(_playbackRateKey);
@@ -120,7 +121,6 @@ enum VideoDecoderPreference {
   final String label;
 }
 
-
 /// 解码器偏好的进程内缓存。
 ///
 /// `NativePlayer.create` 在起播关键路径上，不能 `await` 读盘：等待
@@ -146,6 +146,7 @@ class DecoderPreferenceCache {
     current = value;
   }
 }
+
 double normalizePlaybackRate(double value) {
   if (!value.isFinite || value <= 0) return 1;
   return PlayerPreferences.playbackRates.reduce(

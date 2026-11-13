@@ -83,9 +83,10 @@ List<ReaderTapZoneAction> normalizeReaderTapZones(List<Object?>? raw) {
   for (final item in raw) {
     final action = switch (item) {
       ReaderTapZoneAction action => action,
-      String name => ReaderTapZoneAction.values
-          .where((value) => value.name == name)
-          .firstOrNull,
+      String name =>
+        ReaderTapZoneAction.values
+            .where((value) => value.name == name)
+            .firstOrNull,
       _ => null,
     };
     if (action == null) {
@@ -119,12 +120,8 @@ ReaderTapZoneAction readerTapZoneActionAt({
   required double height,
 }) {
   final normalized = normalizeReaderTapZones(zones);
-  final column = width <= 0
-      ? 1
-      : ((dx / width) * 3).floor().clamp(0, 2);
-  final row = height <= 0
-      ? 1
-      : ((dy / height) * 3).floor().clamp(0, 2);
+  final column = width <= 0 ? 1 : ((dx / width) * 3).floor().clamp(0, 2);
+  final row = height <= 0 ? 1 : ((dy / height) * 3).floor().clamp(0, 2);
   return normalized[row * 3 + column];
 }
 

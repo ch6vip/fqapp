@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'dart:async';
+
 import 'services/linux_platform.dart';
 
 import 'pages/home_page.dart';

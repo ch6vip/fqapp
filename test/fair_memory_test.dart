@@ -40,9 +40,7 @@ void main() {
   });
 
   testWidgets('TRIM 清空内存图片缓存', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(home: Image.memory(_transparentPng)),
-    );
+    await tester.pumpWidget(MaterialApp(home: Image.memory(_transparentPng)));
     await tester.pump();
     final cache = PaintingBinding.instance.imageCache;
     expect(cache.liveImageCount, greaterThan(0));

@@ -6,16 +6,18 @@ import '../../../services/reader_preferences.dart';
 import '../reader_theme.dart';
 import 'reader_settings_widgets.dart';
 
-/// 字体选择结果：空路径表示系统字体。
-typedef ReaderFontSelection = ({String path, String name});
+/// 字体选择结果。内置宋体不是导入文件，因此由 [builtinSerif] 明确区分，
+/// 避免用空路径或显示名称猜测字体来源。
+typedef ReaderFontSelection = ({String path, String name, bool builtinSerif});
 
-/// 小号字体选择器：系统字体 / 导入字体。导入失败的错误留在面板里显示。
+/// 小号字体选择器：系统字体 / 内置宋体 / 导入字体。
 Future<ReaderFontSelection?> showReaderFontPicker({
   required BuildContext context,
   required ReaderThemePreset preset,
   required String currentPath,
   required String currentName,
   required Future<ReaderFont?> Function() onPickFont,
+  required bool currentBuiltinSerif,
 }) {
   return showModalBottomSheet<ReaderFontSelection>(
     context: context,
@@ -31,6 +33,7 @@ Future<ReaderFontSelection?> showReaderFontPicker({
       currentPath: currentPath,
       currentName: currentName,
       onPickFont: onPickFont,
+      currentBuiltinSerif: currentBuiltinSerif,
     ),
   );
 }
@@ -41,12 +44,14 @@ class _ReaderFontPickerSheet extends StatefulWidget {
     required this.currentPath,
     required this.currentName,
     required this.onPickFont,
+    required this.currentBuiltinSerif,
   });
 
   final ReaderThemePreset preset;
   final String currentPath;
   final String currentName;
   final Future<ReaderFont?> Function() onPickFont;
+  final bool currentBuiltinSerif;
 
   @override
   State<_ReaderFontPickerSheet> createState() => _ReaderFontPickerSheetState();
@@ -64,7 +69,11 @@ class _ReaderFontPickerSheetState extends State<_ReaderFontPickerSheet> {
     try {
       final font = await widget.onPickFont();
       if (!mounted || font == null) return;
-      Navigator.pop(context, (path: font.path, name: font.name));
+      Navigator.pop(context, (
+        path: font.path,
+        name: font.name,
+        builtinSerif: false,
+      ));
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -81,6 +90,7 @@ class _ReaderFontPickerSheetState extends State<_ReaderFontPickerSheet> {
   Widget build(BuildContext context) {
     final preset = widget.preset;
     final hasCustom = widget.currentPath.isNotEmpty;
+    final builtinSelected = widget.currentBuiltinSerif && !hasCustom;
     return ReaderSettingsSheetFrame(
       preset: widget.preset,
       title: '字体',
@@ -97,8 +107,22 @@ class _ReaderFontPickerSheetState extends State<_ReaderFontPickerSheet> {
               ReaderSettingsChip(
                 key: const ValueKey('reader-font-system'),
                 label: '系统字体',
-                selected: !hasCustom,
-                onTap: () => Navigator.pop(context, (path: '', name: '')),
+                selected: !hasCustom && !builtinSelected,
+                onTap: () => Navigator.pop(context, (
+                  path: '',
+                  name: '',
+                  builtinSerif: false,
+                )),
+              ),
+              ReaderSettingsChip(
+                key: const ValueKey('reader-font-serif'),
+                label: '宋体',
+                selected: builtinSelected,
+                onTap: () => Navigator.pop(context, (
+                  path: '',
+                  name: '宋体',
+                  builtinSerif: true,
+                )),
               ),
               ReaderSettingsChip(
                 key: const ValueKey('reader-font-import'),

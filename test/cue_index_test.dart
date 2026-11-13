@@ -408,18 +408,13 @@ void main() {
         isFalse,
         reason: '片尾「$text」是顿号：并列短语被逐词切开了，高亮会跳得极碎',
       );
-      expect(
-        text.length,
-        greaterThan(3),
-        reason: '片「$text」太短，多半是按顿号切碎了',
-      );
+      expect(text.length, greaterThan(3), reason: '片「$text」太短，多半是按顿号切碎了');
     }
   });
 
   testWidgets('逗号列举不再逐词切片，每片攒够 5 个真实字', (tester) async {
     // 与截图同一段：把顿号换成逗号，旧逻辑会切出 8 片、每片 475ms 的碎跳。
-    final body =
-        '修行之道，划分为：后天境，先天境，黄灵境，玄灵境，地灵境，天灵境。';
+    final body = '修行之道，划分为：后天境，先天境，黄灵境，玄灵境，地灵境，天灵境。';
     final layout = layoutWith([body]);
     final index = CueIndex.build(
       layout: layout,
@@ -429,7 +424,8 @@ void main() {
     final pieces = index.spans
         .where((s) => s.cueIndex == 0)
         .map(
-          (s) => block.text.substring(s.start - block.start, s.end - block.start),
+          (s) =>
+              block.text.substring(s.start - block.start, s.end - block.start),
         )
         .toList();
 
@@ -455,7 +451,8 @@ void main() {
     final pieces = index.spans
         .where((s) => s.cueIndex == 0)
         .map(
-          (s) => block.text.substring(s.start - block.start, s.end - block.start),
+          (s) =>
+              block.text.substring(s.start - block.start, s.end - block.start),
         )
         .toList();
 
@@ -475,13 +472,17 @@ void main() {
     final pieces = index.spans
         .where((s) => s.cueIndex == 0)
         .map(
-          (s) => block.text.substring(s.start - block.start, s.end - block.start),
+          (s) =>
+              block.text.substring(s.start - block.start, s.end - block.start),
         )
         .toList();
     final real = RegExp(r'[\s，。！？；：、“”‘’（）《》〈〉…—·,.!?;:"()\[\]{}]');
 
-    expect(pieces.last.replaceAll(real, '').length, greaterThanOrEqualTo(5),
-        reason: '尾片「${pieces.last}」不应只剩「嗯。」');
+    expect(
+      pieces.last.replaceAll(real, '').length,
+      greaterThanOrEqualTo(5),
+      reason: '尾片「${pieces.last}」不应只剩「嗯。」',
+    );
     expect(pieces.last, endsWith('土腥味，嗯。'), reason: '尾片并回上一片');
   });
 }

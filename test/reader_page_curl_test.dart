@@ -125,41 +125,38 @@ void main() {
   group('ReaderPageCurl widget', () {
     for (final forward in [true, false]) {
       for (final progress in [0.0, 0.5, 1.0]) {
-        testWidgets(
-          'renders at progress $progress forward=$forward',
-          (tester) async {
-            await tester.pumpWidget(
-              MaterialApp(
-                home: SizedBox(
-                  width: 400,
-                  height: 800,
-                  child: ReaderPageCurl(
-                    outgoing: const ColoredBox(
-                      color: Colors.white,
-                      child: Text('outgoing'),
-                    ),
-                    incoming: const ColoredBox(
-                      color: Colors.grey,
-                      child: Text('incoming'),
-                    ),
-                    progress: progress,
-                    forward: forward,
-                    backgroundColor: Colors.white,
+        testWidgets('renders at progress $progress forward=$forward', (
+          tester,
+        ) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: SizedBox(
+                width: 400,
+                height: 800,
+                child: ReaderPageCurl(
+                  outgoing: const ColoredBox(
+                    color: Colors.white,
+                    child: Text('outgoing'),
                   ),
+                  incoming: const ColoredBox(
+                    color: Colors.grey,
+                    child: Text('incoming'),
+                  ),
+                  progress: progress,
+                  forward: forward,
+                  backgroundColor: Colors.white,
                 ),
               ),
-            );
-            expect(tester.takeException(), isNull);
-          },
-        );
+            ),
+          );
+          expect(tester.takeException(), isNull);
+        });
       }
     }
   });
 
   test('curl style persists through preferences', () async {
-    SharedPreferences.setMockInitialValues({
-      'reader_page_turn_style': 'curl',
-    });
+    SharedPreferences.setMockInitialValues({'reader_page_turn_style': 'curl'});
     final loaded = await ReaderPreferences.load();
     expect(loaded.pageTurnStyle, ReaderPageTurnStyle.curl);
   });

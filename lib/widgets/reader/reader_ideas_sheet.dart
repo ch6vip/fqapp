@@ -451,11 +451,7 @@ class _CommentRowState extends State<_CommentRow> {
           AnimatedRotation(
             turns: open ? 0.5 : 0,
             duration: const Duration(milliseconds: 160),
-            child: Icon(
-              LucideIcons.chevron_down,
-              size: 13,
-              color: mutedColor,
-            ),
+            child: Icon(LucideIcons.chevron_down, size: 13, color: mutedColor),
           ),
         ],
       ),

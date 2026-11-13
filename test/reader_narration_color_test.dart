@@ -16,8 +16,9 @@ void main() {
 
   test('选色后能存下来、读回来', () async {
     final color = ReaderPreferences.narrationHighlightPresets.first;
-    final preferences = const ReaderPreferences()
-        .copyWith(narrationHighlightColor: color);
+    final preferences = const ReaderPreferences().copyWith(
+      narrationHighlightColor: color,
+    );
     expect(preferences.narrationHighlightColor, color);
 
     await preferences.save();
@@ -47,19 +48,14 @@ void main() {
       isTrue,
       reason: '墨水屏默认下划线：色块会整屏拖影',
     );
-    expect(
-      preferences.narrationUnderlineFor(ReaderThemePreset.light),
-      isFalse,
-    );
-    expect(
-      preferences.narrationUnderlineFor(ReaderThemePreset.dark),
-      isFalse,
-    );
+    expect(preferences.narrationUnderlineFor(ReaderThemePreset.light), isFalse);
+    expect(preferences.narrationUnderlineFor(ReaderThemePreset.dark), isFalse);
   });
 
   test('显式选样式后覆盖自动判定', () {
     final underline = const ReaderPreferences().copyWith(
-      narrationHighlightStyle: ReaderPreferences.narrationHighlightStyleUnderline,
+      narrationHighlightStyle:
+          ReaderPreferences.narrationHighlightStyleUnderline,
     );
     expect(underline.narrationUnderlineFor(ReaderThemePreset.light), isTrue);
     expect(underline.narrationUnderlineFor(ReaderThemePreset.eink), isTrue);
