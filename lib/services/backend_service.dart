@@ -148,7 +148,7 @@ class BackendService {
             )
             as Map<String, dynamic>;
     config['network_proxy'] =
-        (Platform.isWindows
+        (Platform.isWindows || Platform.isLinux
                 ? await NetworkProxyPreferences.instance.load()
                 : const NetworkProxyConfig())
             .toJson();

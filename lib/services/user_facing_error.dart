@@ -21,11 +21,14 @@ String userFacingError(Object error) {
     // '搜索失败'); a bare upstream code like `NO_THIS_TONE` is not user text.
     final message = error.message.trim();
     if (message.isNotEmpty && _hasCuratedText.hasMatch(message)) return message;
-    // The core prefixes a failed device-pool draw with `get device:`
-    // (upstream/client.rs). A cold pool registers on the first request, and
-    // the registration hosts are the ones DNS blockers tend to drop (#212).
+    // Only this registration stage uses log.snssdk.com; other pool failures
+    // (storage, invalid replies, key registration) need different diagnostics.
     if (message.startsWith('get device:')) {
-      return '设备注册失败，请检查网络、VPN 或私人 DNS 后重试';
+      if (message.contains('device_register:') &&
+          message.contains('Network(')) {
+        return '设备注册连接失败，请检查 log.snssdk.com:443 的网络与拦截规则后重试，无需关闭代理';
+      }
+      return '设备初始化失败，请稍后重试';
     }
     return '加载失败，请稍后重试';
   }

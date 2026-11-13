@@ -18,15 +18,30 @@ void main() {
     expect(userFacingError(BackendRequestAborted('请求已取消')), '加载失败，请稍后重试');
   });
 
-  test('设备池取设备失败提示检查网络，不透出英文原文（issue #212）', () {
+  test('注册连接失败显示精确域名和可操作指引，不要求关闭代理', () {
     final message = userFacingError(
       const ApiException(
         'get device: device_register: Network(dns error)',
         statusCode: 500,
       ),
     );
-    expect(message, '设备注册失败，请检查网络、VPN 或私人 DNS 后重试');
+    expect(message, contains('log.snssdk.com:443'));
+    expect(message, contains('拦截规则'));
+    expect(message, contains('无需关闭代理'));
     expect(message, isNot(contains('dns error')));
+  });
+
+  test('非网络设备池错误不误报为代理或域名拦截', () {
+    for (final error in [
+      'get device: storage unavailable',
+      'get device: device_register: HTTP 503',
+      'get device: device_register: missing device_id',
+    ]) {
+      final message = userFacingError(ApiException(error, statusCode: 500));
+      expect(message, isNot(contains('log.snssdk.com')));
+      expect(message, isNot(contains('VPN')));
+      expect(message, isNot(contains('拦截')));
+    }
   });
 
   test('其它英文核心错误仍用通用文案，中文消息原样透传', () {

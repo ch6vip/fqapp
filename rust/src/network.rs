@@ -1,5 +1,6 @@
-//! Windows outbound policy; other platforms retain reqwest's default routing.
-//! Windows client caches rotate with each core initialization.
+//! Explicit desktop proxies override default routing without a direct fallback.
+//! Linux defaults retain OS/environment routing; Windows defaults force direct.
+//! Desktop client caches rotate with each core initialization.
 use std::sync::{Mutex, RwLock};
 
 use crate::config::NetworkProxy;
@@ -7,16 +8,16 @@ use crate::config::NetworkProxy;
 #[derive(Clone, Default)]
 pub(crate) struct Policy {
     generation: u64,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     proxy: Option<reqwest::Proxy>,
 }
 static POLICY: RwLock<Policy> = RwLock::new(Policy {
     generation: 0,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     proxy: None,
 });
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 impl NetworkProxy {
     pub(crate) fn validate(&self) -> Result<Option<reqwest::Proxy>, String> {
         if !self.enabled {
@@ -55,12 +56,12 @@ impl NetworkProxy {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub(crate) fn apply(_config: &NetworkProxy) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(crate) fn apply(config: &NetworkProxy) -> Result<(), String> {
     let proxy = config.validate()?;
     let mut policy = POLICY.write().map_err(|_| "network policy lock poisoned")?;
@@ -74,36 +75,34 @@ pub(crate) fn policy() -> Policy {
 }
 
 impl Policy {
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     pub(crate) fn configure(&self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         builder
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub(crate) fn configure(&self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
-        let builder = builder.no_proxy();
         match &self.proxy {
-            Some(proxy) => builder.proxy(proxy.clone()),
-            None => builder,
+            Some(proxy) => builder.no_proxy().proxy(proxy.clone()),
+            None => {
+                #[cfg(target_os = "windows")]
+                let builder = builder.no_proxy();
+                builder
+            }
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub(crate) fn configure_blocking(
         &self,
         builder: reqwest::blocking::ClientBuilder,
     ) -> reqwest::blocking::ClientBuilder {
-        builder
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn configure_blocking(
-        &self,
-        builder: reqwest::blocking::ClientBuilder,
-    ) -> reqwest::blocking::ClientBuilder {
-        let builder = builder.no_proxy();
         match &self.proxy {
-            Some(proxy) => builder.proxy(proxy.clone()),
-            None => builder,
+            Some(proxy) => builder.no_proxy().proxy(proxy.clone()),
+            None => {
+                #[cfg(target_os = "windows")]
+                let builder = builder.no_proxy();
+                builder
+            }
         }
     }
 }

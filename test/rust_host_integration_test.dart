@@ -371,7 +371,7 @@ void main() {
   );
 
   test(
-    'persisted proxy respects the host platform and restart restores direct mode',
+    'persisted proxy respects the host platform and restart restores default routing',
     () async {
       final proxy = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final proxied = <Uri>[];
@@ -401,7 +401,7 @@ void main() {
       final api = ApiClient(transport: backend.transport);
       expect(await api.health(), isTrue);
       await api.search('proxy');
-      if (Platform.isWindows) {
+      if (Platform.isWindows || Platform.isLinux) {
         expect(proxied, isNotEmpty);
         expect(mockRequests, isEmpty);
       } else {

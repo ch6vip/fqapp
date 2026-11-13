@@ -19,6 +19,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../services/backend_service.dart';
 import '../services/desktop_platform.dart';
 import '../services/lan_share_preferences.dart';
+import '../services/linux_platform.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/home/home_design.dart';
 import '../widgets/settings/core_proxy_settings_panel.dart';
@@ -452,7 +453,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
               ),
             ),
 
-            if (isWindowsDesktop) ...[
+            if (isWindowsDesktop || isLinuxDesktop) ...[
               const SizedBox(height: 14),
               _proxySettingsPanel(),
             ],
@@ -696,7 +697,7 @@ class _ApiServicePageState extends State<ApiServicePage> {
               ),
             ),
 
-            if (isWindowsDesktop) ...[
+            if (isWindowsDesktop || isLinuxDesktop) ...[
               const SizedBox(height: 14),
               _proxySettingsPanel(),
             ],

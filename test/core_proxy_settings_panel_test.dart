@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:fqapp/services/app_theme.dart';
@@ -35,6 +36,27 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'Linux default routing explains TUN without requesting a proxy port',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(child: CoreProxySettingsPanel()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('TUN/VPN'), findsOneWidget);
+      expect(find.textContaining('保留环境代理'), findsOneWidget);
+      expect(find.text('检测本机代理'), findsNothing);
+      expect((await NetworkProxyPreferences.instance.load()).enabled, isFalse);
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
 
   testWidgets(
     'detection runs only on click and selecting a candidate fills proxy for explicit save',

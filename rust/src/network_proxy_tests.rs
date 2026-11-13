@@ -1,24 +1,24 @@
 //! Runs policy mutations in a dedicated test process so parallel tests keep direct networking.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::io::{Read, Write};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::net::TcpListener;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::time::Duration;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 struct Server {
     url: String,
     hits: Arc<AtomicUsize>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 impl Server {
     fn new(body: &'static str, proxy: bool) -> Self {
         Self::serve(body, proxy, None)
@@ -80,7 +80,17 @@ impl Server {
                             continue;
                         }
                         if proxy {
-                            assert!(request.starts_with("GET http://"), "{request}");
+                            assert!(
+                                request.starts_with("GET http://")
+                                    || request.starts_with("POST http://"),
+                                "{request}"
+                            );
+                            if request.starts_with("POST ") {
+                                assert!(request.contains("/service/2/device_register/?"));
+                                assert!(request
+                                    .to_ascii_lowercase()
+                                    .contains("host: log.snssdk.com"));
+                            }
                         }
                         count.fetch_add(1, Ordering::SeqCst);
                         let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -104,7 +114,7 @@ impl Server {
         }
     }
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
@@ -112,7 +122,7 @@ impl Drop for Server {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn run<F: std::future::Future>(f: F) -> F::Output {
     thread_local! {
         static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
@@ -120,7 +130,7 @@ fn run<F: std::future::Future>(f: F) -> F::Output {
     RUNTIME.with(|runtime| runtime.block_on(f))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn restart(root: &std::path::Path, enabled: bool, url: &str) -> Result<String, String> {
     restart_config(
         root,
@@ -128,7 +138,7 @@ fn restart(root: &std::path::Path, enabled: bool, url: &str) -> Result<String, S
     )
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn restart_config(root: &std::path::Path, value: serde_json::Value) -> Result<String, String> {
     let config = root.join("config.json");
     std::fs::write(&config, value.to_string()).unwrap();
@@ -147,13 +157,13 @@ fn restart_config(root: &std::path::Path, value: serde_json::Value) -> Result<St
     })
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn fetch(url: &str) -> Vec<u8> {
     let http = crate::upstream::HttpTransport::new(5).unwrap();
     run(http.request("GET", url, &[], None, None)).unwrap().body
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn assert_media(root: &std::path::Path, url: &str, expected: &[u8]) {
     let path = root.join("video.part");
     run(crate::endpoints::video::stream_download_to_file_with_cap(
@@ -165,7 +175,7 @@ fn assert_media(root: &std::path::Path, url: &str, expected: &[u8]) {
         expected,
         "streaming singleton must use current policy"
     );
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let client = crate::desktop_fetch::shared_client().unwrap();
         assert_eq!(
@@ -183,9 +193,9 @@ fn assert_media(root: &std::path::Path, url: &str, expected: &[u8]) {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[test]
-fn non_windows_ignores_proxy_configuration() {
+fn non_desktop_ignores_proxy_configuration() {
     let invalid = crate::config::NetworkProxy {
         enabled: true,
         url: "not a proxy URL".into(),
@@ -287,7 +297,7 @@ fn proxy_url_rejects_percent_escaped_hosts() {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[test]
 fn unified_network_policy() {
     const CHILD: &str = "FQAPP_PROXY_TEST_CHILD";
@@ -329,6 +339,19 @@ fn unified_network_policy() {
         "configured proxy must carry upstream requests"
     );
     assert_media(&root, &origin.url, b"proxy-one");
+    let before_registration = first_proxy.hits.load(Ordering::SeqCst);
+    let registrar = crate::device::register::Registrar::with_mock_origin(&origin.url).unwrap();
+    let error = run(registrar.register()).unwrap_err();
+    assert!(
+        error.starts_with("device_register: json:"),
+        "fixture must preserve registration failure: {error}"
+    );
+    assert_eq!(
+        first_proxy.hits.load(Ordering::SeqCst),
+        before_registration + 1,
+        "real registration POST must use the configured transport"
+    );
+    assert_eq!(origin.hits.load(Ordering::SeqCst), 0);
     let first_account = crate::upstream::http::account_transport().unwrap();
     assert_eq!(
         run(first_account.request("GET", &origin.url, &[], None, None))
@@ -336,6 +359,8 @@ fn unified_network_policy() {
             .body,
         b"proxy-one"
     );
+    std::env::set_var("HTTP_PROXY", &first_proxy.url);
+    std::env::set_var("ALL_PROXY", &first_proxy.url);
     restart(&root, true, &second_proxy.url).unwrap();
     let account = crate::upstream::http::account_transport().unwrap();
     assert_eq!(
@@ -352,11 +377,21 @@ fn unified_network_policy() {
     std::env::set_var("HTTPS_PROXY", &first_proxy.url);
     std::env::set_var("ALL_PROXY", &first_proxy.url);
     std::env::remove_var("NO_PROXY");
-    assert_eq!(
-        fetch(&origin.url),
-        b"origin",
-        "direct must ignore environment proxies"
-    );
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(
+            fetch(&origin.url),
+            b"proxy-one",
+            "disabled Linux policy retains environment routing"
+        );
+        assert_media(&root, &origin.url, b"proxy-one");
+        for name in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+            std::env::remove_var(name);
+        }
+        // Rotate cached clients after changing the process environment.
+        restart(&root, false, "").unwrap();
+    }
+    assert_eq!(fetch(&origin.url), b"origin");
     assert_media(&root, &origin.url, b"origin");
     assert_eq!(
         run(crate::upstream::http::account_transport().unwrap().request(
@@ -380,6 +415,12 @@ fn unified_network_policy() {
         run(http.request("GET", &origin.url, &[], None, None)).is_err(),
         "proxy errors must propagate"
     );
+    let registrar = crate::device::register::Registrar::with_mock_origin(&origin.url).unwrap();
+    let error = run(registrar.register()).unwrap_err();
+    assert!(
+        error.starts_with("device_register: Network("),
+        "registration network failure must remain diagnosable: {error}"
+    );
     assert!(
         run(crate::upstream::http::account_transport().unwrap().request(
             "GET",
@@ -399,7 +440,7 @@ fn unified_network_policy() {
         ))
         .is_err()
     );
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     assert!(crate::desktop_fetch::shared_client()
         .unwrap()
         .get(&origin.url)
