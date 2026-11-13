@@ -90,4 +90,3 @@ class ChapterImage extends ChapterBlock {
   double? get aspectRatio =>
       width != null && height != null ? width! / height! : null;
 }
-

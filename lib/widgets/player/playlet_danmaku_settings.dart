@@ -14,7 +14,7 @@
 /// 横屏调显示区域密度（`v.java:958-991`）。
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'player_side_panel.dart';

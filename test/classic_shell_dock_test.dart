@@ -1,7 +1,7 @@
 // Classic dock regression: concentric geometry (outer capsule vs selection
 // backdrop), full icon+label coverage, and the draggable highlight that
 // follows the finger and switches pages on release.
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/semantics.dart'
     show SemanticsAction, SemanticsActionEvent;
 import 'package:flutter_lucide/flutter_lucide.dart';
@@ -46,7 +46,10 @@ void main() {
           extensions: const [AppStyleTokens.classic()],
         ),
         home: MediaQuery(
-          data: MediaQueryData(size: size, disableAnimations: disableAnimations),
+          data: MediaQueryData(
+            size: size,
+            disableAnimations: disableAnimations,
+          ),
           child: Scaffold(
             body: const SizedBox.expand(),
             bottomNavigationBar: ClassicShellDock(
@@ -552,9 +555,7 @@ void main() {
     );
   });
 
-  testWidgets('入口 Semantics 注册 tap 激活动作，屏幕阅读器双击可切换', (
-    tester,
-  ) async {
+  testWidgets('入口 Semantics 注册 tap 激活动作，屏幕阅读器双击可切换', (tester) async {
     // PR #320 审查遗留：手势在子级 GestureDetector 上，外层 Semantics 只标
     // button/selected 时 TalkBack 能读出但双击无法激活，须显式补 onTap。
     final handle = tester.ensureSemantics();

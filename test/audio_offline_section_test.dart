@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -9,6 +9,7 @@ import 'package:fqapp/services/audio_downloader.dart';
 import 'package:fqapp/widgets/audio/audio_offline_section.dart';
 import 'package:fqapp/widgets/chapter_cache_sheet.dart';
 import 'package:fqapp/services/chapter_cache_store.dart';
+
 import 'support/fakes.dart';
 
 class _StubStore implements AudioDownloadStore {
@@ -88,8 +89,7 @@ void main() {
     store = _StubStore(temp);
     downloader = AudioDownloader(
       store: store,
-      resolve: (bookId, itemId, toneId) async =>
-          throw StateError('本用例不触发真实下载'),
+      resolve: (bookId, itemId, toneId) async => throw StateError('本用例不触发真实下载'),
     );
   });
 

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -87,7 +87,11 @@ void main() {
       (tester) async {
         final boundaries = <int>[];
         final taps = <int>[];
-        final state = await pumpPaged(tester, boundaries: boundaries, taps: taps);
+        final state = await pumpPaged(
+          tester,
+          boundaries: boundaries,
+          taps: taps,
+        );
         state.turnPage(1);
         await tester.pump();
         await tester.pump();

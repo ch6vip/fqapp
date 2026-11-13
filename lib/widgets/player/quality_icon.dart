@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 官方旧栏 drawable/b2s.xml 的 28dp 清晰度图标：圆角框 + 「HD」字形。
 /// 路径坐标与官方 vector 逐点一致（viewport 28×28）。浅色更多面板的
@@ -34,8 +34,16 @@ class QualityIconPainter extends CustomPainter {
       stroke,
     );
     stroke.strokeCap = StrokeCap.butt;
-    canvas.drawLine(const Offset(8.484, 11.193), const Offset(8.484, 16.959), stroke);
-    canvas.drawLine(const Offset(12.783, 11.193), const Offset(12.783, 16.959), stroke);
+    canvas.drawLine(
+      const Offset(8.484, 11.193),
+      const Offset(8.484, 16.959),
+      stroke,
+    );
+    canvas.drawLine(
+      const Offset(12.783, 11.193),
+      const Offset(12.783, 16.959),
+      stroke,
+    );
     // 「D」字形是官方 pathData 的五段填充（上下衬线、外碗、内碗、竖笔），
     // 坐标原样搬运；winding 方向官方即 nonzero。
     final fill = Paint()

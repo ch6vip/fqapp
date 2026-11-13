@@ -184,34 +184,30 @@ void main() {
     expect(result.error, isNotNull);
     expect((result.content.blocks.single as ChapterParagraph).text, 'a' * 100);
   });
-  test(
-    'pathological regex times out and leaves engine usable',
-    () async {
-      final engine = TextReplacementEngine(
-        timeout: const Duration(milliseconds: 100),
-      );
-      final result = await engine.transform(
-        source: ChapterContent.fromPlainText('a' * 100),
-        chapterTitle: '',
-        snapshot: snapshot([
-          const TextReplacementRule(
-            id: 'bad',
-            pattern: r'^(a+)+b$',
-            replacement: '',
-            isRegex: true,
-          ),
-        ]),
-      );
-      expect(result.error, contains('超时'));
-      final next = await engine.transform(
-        source: ChapterContent.fromPlainText('a'),
-        chapterTitle: '',
-        snapshot: snapshot([
-          const TextReplacementRule(id: 'ok', pattern: 'a', replacement: 'b'),
-        ]),
-      );
-      expect((next.content.blocks.single as ChapterParagraph).text, 'b');
-    },
-    timeout: const Timeout(Duration(seconds: 10)),
-  );
+  test('pathological regex times out and leaves engine usable', () async {
+    final engine = TextReplacementEngine(
+      timeout: const Duration(milliseconds: 100),
+    );
+    final result = await engine.transform(
+      source: ChapterContent.fromPlainText('a' * 100),
+      chapterTitle: '',
+      snapshot: snapshot([
+        const TextReplacementRule(
+          id: 'bad',
+          pattern: r'^(a+)+b$',
+          replacement: '',
+          isRegex: true,
+        ),
+      ]),
+    );
+    expect(result.error, contains('超时'));
+    final next = await engine.transform(
+      source: ChapterContent.fromPlainText('a'),
+      chapterTitle: '',
+      snapshot: snapshot([
+        const TextReplacementRule(id: 'ok', pattern: 'a', replacement: 'b'),
+      ]),
+    );
+    expect((next.content.blocks.single as ChapterParagraph).text, 'b');
+  }, timeout: const Timeout(Duration(seconds: 10)));
 }

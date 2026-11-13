@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/media_item.dart';
@@ -35,9 +35,7 @@ void main() {
     PaintingBinding.instance.imageCache.clearLiveImages();
   });
 
-  testWidgets('「上一章」固定落在章首，「下一章」也落章首（issue #110）', (
-    tester,
-  ) async {
+  testWidgets('「上一章」固定落在章首，「下一章」也落章首（issue #110）', (tester) async {
     await _size(tester);
     final store = MemoryReaderStore();
     final cache = MemoryChapterCache();
@@ -132,7 +130,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(requests, isEmpty);
       await _openMenu(tester);
-        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      // 缓存入口已挪进顶栏「更多阅读操作」菜单。
       await tester.tap(find.byKey(const ValueKey('reader-header-more')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-cache')));
@@ -143,7 +141,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(
         _pager(tester).layout.blocks.where((block) => block.isImage),
@@ -193,14 +191,14 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(requests, 1);
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('上一章'));
+      await tester.tap(find.byTooltip('上一章'));
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      // 缓存入口已挪进顶栏「更多阅读操作」菜单。
       await tester.tap(find.byKey(const ValueKey('reader-header-more')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-cache')));
@@ -215,7 +213,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(requests, 2);
       expect(
@@ -265,7 +263,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      // 缓存入口已挪进顶栏「更多阅读操作」菜单。
       await tester.tap(find.byKey(const ValueKey('reader-header-more')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-cache')));
@@ -295,7 +293,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(cache.content[_bookId]!['second'], content.toCacheText());
       expect(
@@ -342,7 +340,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        // 缓存入口已挪进顶栏「更多阅读操作」菜单。
+      // 缓存入口已挪进顶栏「更多阅读操作」菜单。
       await tester.tap(find.byKey(const ValueKey('reader-header-more')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reader-cache')));
@@ -354,7 +352,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       expect(requests, 2);
       final content = _content();
@@ -774,10 +772,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('下一章'));
+      await tester.tap(find.byTooltip('下一章'));
       await tester.pumpAndSettle();
       await _openMenu(tester);
-        await tester.tap(find.byTooltip('上一章'));
+      await tester.tap(find.byTooltip('上一章'));
       await tester.pumpAndSettle();
       expect(store.entry!['chapterId'], 'first');
       pending.complete(_content().toCacheText());
@@ -1033,5 +1031,3 @@ class _Device extends ReaderDevice {
   @override
   Future<void> close() async {}
 }
-
-

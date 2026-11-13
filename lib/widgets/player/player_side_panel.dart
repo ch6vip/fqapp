@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 播放页右侧浮层的统一形态：贴右缘、全高、左圆角 12、200ms 从右滑入、
 /// 0.5 遮罩，宽度约为窗口的三分之一（夹在 240–420dp）。

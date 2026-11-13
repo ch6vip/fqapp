@@ -157,9 +157,9 @@ class PlayletComment {
       userName: _string(baseMap['user_name']),
       userAvatar: _string(baseMap['user_avatar']),
       // dataType 可能来自 mix_data，也可能直接挂在条目上；两者都容忍。
-      dataType: _int(mixMap['data_type'] ?? entry['data_type']).ifZero(
-        UgcRelativeType.comment,
-      ),
+      dataType: _int(
+        mixMap['data_type'] ?? entry['data_type'],
+      ).ifZero(UgcRelativeType.comment),
       parentCommentId: _string(parentCommentMap['comment_id']),
       playletRoleType: _int(expandMap['playlet_role_type']),
       userDigg: statMap['user_digg'] == true,
@@ -227,8 +227,7 @@ class PlayletCommentPage {
 
   /// 官方空态：计数 >0 用「无相关剧评」，==0 用「期待你的第一条剧评」
   /// （`gx1/n0.java:698-708`）。
-  String get emptyText =>
-      totalCount > 0 ? '无相关剧评' : '期待你的第一条剧评';
+  String get emptyText => totalCount > 0 ? '无相关剧评' : '期待你的第一条剧评';
 
   /// 官方入口计数：0 时「抢首评」/「评论」（`SeriesCommentView.java:182-188`）。
   static String entryLabel(int count) {

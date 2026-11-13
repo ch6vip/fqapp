@@ -23,24 +23,25 @@ void main() {
   });
 
   test('an unknown stored value falls back to automatic', () async {
-    SharedPreferences.setMockInitialValues({
-      'player_video_decoder': 'turbo',
-    });
+    SharedPreferences.setMockInitialValues({'player_video_decoder': 'turbo'});
     expect(
       await PlayerPreferences.loadVideoDecoder(),
       VideoDecoderPreference.automatic,
     );
   });
 
-  test('cache mirrors the saved value so create() can read it synchronously', () async {
-    await DecoderPreferenceCache.set(VideoDecoderPreference.software);
-    expect(DecoderPreferenceCache.current, VideoDecoderPreference.software);
-    // 落盘与内存必须一致，否则重启后又回到硬解。
-    expect(
-      await PlayerPreferences.loadVideoDecoder(),
-      VideoDecoderPreference.software,
-    );
-  });
+  test(
+    'cache mirrors the saved value so create() can read it synchronously',
+    () async {
+      await DecoderPreferenceCache.set(VideoDecoderPreference.software);
+      expect(DecoderPreferenceCache.current, VideoDecoderPreference.software);
+      // 落盘与内存必须一致，否则重启后又回到硬解。
+      expect(
+        await PlayerPreferences.loadVideoDecoder(),
+        VideoDecoderPreference.software,
+      );
+    },
+  );
 
   test('load() populates the cache from disk', () async {
     SharedPreferences.setMockInitialValues({

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
@@ -133,9 +133,7 @@ class _RealSession {
       extrasLoader: (_) async => AudioExtras(
         tones: const AudioToneSet(
           genreType: 1,
-          narratorTones: [
-            AudioTone(id: '7239243941252598845', title: '主播：老恒'),
-          ],
+          narratorTones: [AudioTone(id: '7239243941252598845', title: '主播：老恒')],
           ttsTones: [AudioTone(id: '96', title: '多角色对话升级版')],
         ),
         related: const [

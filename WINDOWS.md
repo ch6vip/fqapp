@@ -19,7 +19,7 @@ Windows 10/11 x64：解压完整目录后运行 `fqapp.exe`，不要单独移动
 
 ## 构建和验证
 
-需要 Flutter 3.44.6 / Dart 3.12.2、Rust stable、Visual Studio C++ 桌面工具、NuGet CLI 和 FFmpeg。
+需要 Flutter 3.50.0 / Dart 3.14.0、Rust stable、Visual Studio C++ 桌面工具、NuGet CLI 和 FFmpeg。
 执行 `pwsh -File scripts/build_windows.ps1 -FlutterRoot <Flutter SDK 路径>`。
 原生 DLL 由 Windows CMake 构建自动调用 Cargo 编译；C 解密核心由 Rust build.rs 编译。
 构建脚本对中文工作区使用临时英文目录联接，不移动源码。

@@ -1,5 +1,5 @@
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/models/audio_extra.dart';
@@ -48,9 +48,7 @@ class _HostState extends State<_Host> {
       );
     }
     return MaterialApp(
-      home: Scaffold(
-        body: SizedBox(height: 420, child: child),
-      ),
+      home: Scaffold(body: SizedBox(height: 420, child: child)),
     );
   }
 }
@@ -159,9 +157,7 @@ void main() {
   });
 
   testWidgets('没有进度时不响应点击', (tester) async {
-    await tester.pumpWidget(
-      _Host(track: _track(), initial: 0, onSeek: null),
-    );
+    await tester.pumpWidget(_Host(track: _track(), initial: 0, onSeek: null));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('第 2 句字幕'));
@@ -191,7 +187,9 @@ void main() {
     // `ScrollStartNotification` 里没有 `dragDetails`。
     await tester.sendEventToBinding(
       PointerScrollEvent(
-        position: tester.getCenter(find.byKey(const Key('audio_subtitle_list'))),
+        position: tester.getCenter(
+          find.byKey(const Key('audio_subtitle_list')),
+        ),
         scrollDelta: const Offset(0, -120),
       ),
     );

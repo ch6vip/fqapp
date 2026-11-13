@@ -30,10 +30,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # 中文 Material 文案（复制/粘贴/全选等系统文本菜单）：没有 delegates 时
-  # Flutter 一律回退英文，即使系统语言是中文（issue #79）。
-  flutter_localizations:
-    sdk: flutter
 
   http: ^1.6.0
   crypto: 3.0.8
@@ -75,6 +71,8 @@ dependencies:
   screen_retriever: 0.2.2
   smtc_windows: ^1.1.0
   ffi: ^2.1.4
+  material_ui: ^1.11.0
+  cupertino_ui: ^1.1.6
 dev_dependencies:
   integration_test:
     sdk: flutter

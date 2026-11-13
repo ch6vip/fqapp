@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import '../../services/app_style_tokens.dart';
@@ -613,12 +613,16 @@ class GlassIconButton extends StatelessWidget {
     );
     final semanticLabel = appText(context, label);
     final action = Semantics(
+      label: semanticLabel,
       button: true,
       enabled: onPressed != null,
+      onTap: onPressed,
+      excludeSemantics: true,
       child: Tooltip(
         message: semanticLabel,
         triggerMode: TooltipTriggerMode.manual,
-        excludeFromSemantics: true,
+        // Keep RawTooltip discoverable without exposing a second label.
+        excludeFromSemantics: false,
         child: _scaleCompactFace(
           compact: compact,
           scaleX: 40 / 48,
@@ -643,7 +647,7 @@ class GlassIconButton extends StatelessWidget {
         ),
       ),
     );
-    return liveGlass ? action : MergeSemantics(child: action);
+    return action;
   }
 }
 

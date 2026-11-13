@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../pages/audio_page.dart' show AudioPlaybackScope;
 import '../../services/listening_session.dart';

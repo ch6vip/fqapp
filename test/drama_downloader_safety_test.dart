@@ -6,6 +6,7 @@ import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/drama_downloader.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
+
 import 'support/fakes.dart';
 
 void main() {
@@ -34,7 +35,9 @@ void main() {
   });
 
   test('拒绝 Content-Range 起始偏移与本地续传长度不符的响应', () async {
-    final directory = await Directory.systemTemp.createTemp('drama-range-check-');
+    final directory = await Directory.systemTemp.createTemp(
+      'drama-range-check-',
+    );
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() async {
       await server.close(force: true);
@@ -42,7 +45,10 @@ void main() {
     });
     server.listen((request) async {
       request.response.statusCode = HttpStatus.partialContent;
-      request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes 2-5/6');
+      request.response.headers.set(
+        HttpHeaders.contentRangeHeader,
+        'bytes 2-5/6',
+      );
       request.response.contentLength = 4;
       request.response.add([1, 2, 3, 4]);
       await request.response.close();
@@ -75,7 +81,9 @@ void main() {
   });
 
   test('未知总长度的响应不会登记为完整下载', () async {
-    final directory = await Directory.systemTemp.createTemp('drama-unknown-size-');
+    final directory = await Directory.systemTemp.createTemp(
+      'drama-unknown-size-',
+    );
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() async {
       await server.close(force: true);
@@ -114,7 +122,9 @@ void main() {
   });
 }
 
-Future<DramaDownloadTask> _waitForTerminalTask(DramaDownloader downloader) async {
+Future<DramaDownloadTask> _waitForTerminalTask(
+  DramaDownloader downloader,
+) async {
   for (var i = 0; i < 300; i++) {
     final tasks = downloader.value;
     if (tasks.isNotEmpty &&

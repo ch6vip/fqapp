@@ -31,10 +31,16 @@ void main() {
     );
   });
 
-  test('returns null for unknown failures so the caller keeps its own text', () {
-    expect(audioPlayErrorMessage(const ApiException('SOMETHING_ELSE')), isNull);
-    expect(audioPlayErrorMessage(StateError('boom')), isNull);
-  });
+  test(
+    'returns null for unknown failures so the caller keeps its own text',
+    () {
+      expect(
+        audioPlayErrorMessage(const ApiException('SOMETHING_ELSE')),
+        isNull,
+      );
+      expect(audioPlayErrorMessage(StateError('boom')), isNull);
+    },
+  );
 
   test('prefers the delisted-tone reason over the review marker', () {
     // 两个标记同时出现时，音色下架是更具体的解释。

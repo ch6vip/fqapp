@@ -23,20 +23,22 @@ void main() {
       'common': {
         'content': {
           'text': text,
-          if (images.isNotEmpty)
-            'image_data_list': {'image_data': images},
+          if (images.isNotEmpty) 'image_data_list': {'image_data': images},
         },
         'create_timestamp': 1700000000,
         'user_info': {
-          'base_info': {'user_name': '小明', 'user_avatar': 'https://a.test/a.png'},
+          'base_info': {
+            'user_name': '小明',
+            'user_avatar': 'https://a.test/a.png',
+          },
         },
       },
       'stat': {'digg_count': digg, 'reply_count': 1},
       'expand': {
-      'playlet_role_type': roleType,
-      // 官方字段名（CommentExpand 的 @SerializedName("offset_time")）。
-      'offset_time': offset,
-    },
+        'playlet_role_type': roleType,
+        // 官方字段名（CommentExpand 的 @SerializedName("offset_time")）。
+        'offset_time': offset,
+      },
     },
     'mix_data': {
       'data_type': dataType,
@@ -115,20 +117,23 @@ void main() {
     expect(hot.id, 'reply-1');
   });
 
-  test('empty text entries are dropped and business errors yield an empty page', () {
-    final page = PlayletCommentPage.fromPayload({
-      'code': 0,
-      'data': {
-        'common_list_info': {'total': 5},
-        'data_list': [entry(text: '   '), entry(id: 'ok')],
-      },
-    });
-    expect(page.comments.map((c) => c.id), ['ok']);
-    expect(
-      PlayletCommentPage.fromPayload({'code': 103001, 'data': null}).comments,
-      isEmpty,
-    );
-  });
+  test(
+    'empty text entries are dropped and business errors yield an empty page',
+    () {
+      final page = PlayletCommentPage.fromPayload({
+        'code': 0,
+        'data': {
+          'common_list_info': {'total': 5},
+          'data_list': [entry(text: '   '), entry(id: 'ok')],
+        },
+      });
+      expect(page.comments.map((c) => c.id), ['ok']);
+      expect(
+        PlayletCommentPage.fromPayload({'code': 103001, 'data': null}).comments,
+        isEmpty,
+      );
+    },
+  );
 
   test('keeps image-only playlet comments and parses their image urls', () {
     final page = PlayletCommentPage.fromPayload({
@@ -161,10 +166,9 @@ void main() {
       text: '好看',
       imageUrls: ['https://example.test/playlet.jpg'],
     );
-    expect(
-      comment.withDigg(true).imageUrls,
-      ['https://example.test/playlet.jpg'],
-    );
+    expect(comment.withDigg(true).imageUrls, [
+      'https://example.test/playlet.jpg',
+    ]);
   });
 
   test('image-only entries never enter the danmaku stream', () {
@@ -238,7 +242,12 @@ void main() {
       'data': {
         'common_list_info': {'total': 1, 'has_more': false},
         'data_list': [
-          entry(id: 'd1', text: '前方高能', dataType: UgcRelativeType.seriesVideo, offset: 12500),
+          entry(
+            id: 'd1',
+            text: '前方高能',
+            dataType: UgcRelativeType.seriesVideo,
+            offset: 12500,
+          ),
         ],
       },
     });

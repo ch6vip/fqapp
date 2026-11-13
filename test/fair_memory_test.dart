@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/services/fair_memory.dart';
@@ -40,9 +40,7 @@ void main() {
   });
 
   testWidgets('TRIM 清空内存图片缓存', (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(home: Image.memory(_transparentPng)),
-    );
+    await tester.pumpWidget(MaterialApp(home: Image.memory(_transparentPng)));
     await tester.pump();
     final cache = PaintingBinding.instance.imageCache;
     expect(cache.liveImageCount, greaterThan(0));

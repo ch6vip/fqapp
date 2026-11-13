@@ -22,7 +22,7 @@
 // themselves in [SettingsCardRow], which supplies the classic padding and is a
 // no-op under the archive panel.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../app_ui/app_ui_scope.dart';

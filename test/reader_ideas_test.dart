@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -285,7 +285,10 @@ void main() {
       );
       expect(find.text('回复 2'), findsOneWidget);
       // 离线调用方拿不到只有失败可能的控件。
-      expect(find.byKey(const ValueKey('reader_reply_toggle_a1')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('reader_reply_toggle_a1')),
+        findsNothing,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -472,15 +475,18 @@ void main() {
         hasMore: true,
         nextOffset: 20,
       );
-      await pumpSheet(tester, load: (paragraph, cursor) async {
-        cursors.add(cursor);
-        if (cursor == null) return firstPage;
-        return const BookCommentPage(
-          comments: [BookComment(id: 'p2', text: '第二页的唯一评论')],
-          totalCount: 35,
-          nextOffset: 40,
-        );
-      });
+      await pumpSheet(
+        tester,
+        load: (paragraph, cursor) async {
+          cursors.add(cursor);
+          if (cursor == null) return firstPage;
+          return const BookCommentPage(
+            comments: [BookComment(id: 'p2', text: '第二页的唯一评论')],
+            totalCount: 35,
+            nextOffset: 40,
+          );
+        },
+      );
       await tester.pumpAndSettle();
       expect(cursors, [null]);
       expect(find.text('第二页的唯一评论'), findsNothing);
@@ -514,16 +520,19 @@ void main() {
         hasMore: true,
         nextOffset: 20,
       );
-      await pumpSheet(tester, load: (paragraph, cursor) async {
-        if (cursor == null) return firstPage;
-        // Fails until the test allows it, so the auto-retry that further
-        // scroll events trigger cannot heal the list before the tap.
-        if (!allowSecondPage) throw StateError('offline');
-        return const BookCommentPage(
-          comments: [BookComment(id: 'p2', text: '重试后的第二页')],
-          nextOffset: 40,
-        );
-      });
+      await pumpSheet(
+        tester,
+        load: (paragraph, cursor) async {
+          if (cursor == null) return firstPage;
+          // Fails until the test allows it, so the auto-retry that further
+          // scroll events trigger cannot heal the list before the tap.
+          if (!allowSecondPage) throw StateError('offline');
+          return const BookCommentPage(
+            comments: [BookComment(id: 'p2', text: '重试后的第二页')],
+            nextOffset: 40,
+          );
+        },
+      );
       await tester.pumpAndSettle();
       await tester.drag(
         find.byKey(const Key('reader-ideas-comments')),
@@ -543,24 +552,25 @@ void main() {
       tester,
     ) async {
       final cursors = <String?>[];
-      await pumpSheet(tester, load: (paragraph, cursor) async {
-        cursors.add(cursor);
-        if (cursor == null) {
+      await pumpSheet(
+        tester,
+        load: (paragraph, cursor) async {
+          cursors.add(cursor);
+          if (cursor == null) {
+            return const BookCommentPage(
+              comments: [BookComment(id: 'p1', text: '只有一条的第一页')],
+              totalCount: 2,
+              hasMore: true,
+              nextOffset: 20,
+            );
+          }
           return const BookCommentPage(
-            comments: [BookComment(id: 'p1', text: '只有一条的第一页')],
+            comments: [BookComment(id: 'p2', text: '补进来的第二条')],
             totalCount: 2,
-            hasMore: true,
-            nextOffset: 20,
+            nextOffset: 40,
           );
-        }
-        return const BookCommentPage(
-          comments: [
-            BookComment(id: 'p2', text: '补进来的第二条'),
-          ],
-          totalCount: 2,
-          nextOffset: 40,
-        );
-      });
+        },
+      );
       await tester.pumpAndSettle();
       expect(cursors, [null, '20']);
       expect(find.text('只有一条的第一页'), findsOneWidget);
@@ -604,7 +614,8 @@ void main() {
             // Injected so the reader neither touches Hive nor (per the offline
             // rule) fetches ideas on its own.
             chapterCache: MemoryChapterCache(),
-            chapterLoader: (_) async => parseChapterContent(_html).toCacheText(),
+            chapterLoader: (_) async =>
+                parseChapterContent(_html).toCacheText(),
             ideasLoader: ideasLoader,
             commentResolver: commentResolver,
           ),
@@ -650,8 +661,9 @@ void main() {
       expect(find.byType(ReaderPage), findsOneWidget);
     });
 
-    testWidgets('closing the sheet in e-ink mode does not blank the page',
-        (tester) async {
+    testWidgets('closing the sheet in e-ink mode does not blank the page', (
+      tester,
+    ) async {
       // #172: on devices without the vendor EPD channel the sheet-close
       // refresh used to fall back to the software white flash, blanking the
       // body behind the closing sheet. E-ink sheet close must never flash.

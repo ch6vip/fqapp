@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// fqapp ships a single Chinese locale. The upstream widget API stays in
 /// place, while locale conversion and its persisted dictionaries do not.

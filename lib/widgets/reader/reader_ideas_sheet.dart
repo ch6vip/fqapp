@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/book_comment.dart';
@@ -451,11 +451,7 @@ class _CommentRowState extends State<_CommentRow> {
           AnimatedRotation(
             turns: open ? 0.5 : 0,
             duration: const Duration(milliseconds: 160),
-            child: Icon(
-              LucideIcons.chevron_down,
-              size: 13,
-              color: mutedColor,
-            ),
+            child: Icon(LucideIcons.chevron_down, size: 13, color: mutedColor),
           ),
         ],
       ),

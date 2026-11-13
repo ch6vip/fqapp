@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/physics.dart' show ClampedSimulation;
 
 import '../../services/reader_preferences.dart';
@@ -138,7 +138,10 @@ class _ReaderPageScrollPhysics extends PageScrollPhysics {
       _ReaderPageScrollPhysics(parent: buildParent(ancestor));
 
   @override
-  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
     final simulation = super.createBallisticSimulation(position, velocity);
     if (simulation == null) return null;
     final width = position.viewportDimension;
@@ -165,6 +168,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
   Drag? _pageDrag;
   int _pageDragFrom = 0;
   int? _pageDragDirection;
+
   /// 起手瞬间的手指位置与页面位移。滑动翻页的位移量按「起手以来的手指
   /// 位移」计算，这样下一页总是从屏幕边沿滑进来，而不是在按下的一瞬间
   /// 就把接缝钉到触点位置（触点不在边沿时会凭空跳一大段）。
@@ -487,9 +491,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         notification.dragDetails != null) {
       _overscroll = 0;
       _edgeNotified = false;
-      _dragStartItem = _controller.hasClients
-          ? _attachedPage?.round()
-          : null;
+      _dragStartItem = _controller.hasClients ? _attachedPage?.round() : null;
       widget.onDragStart();
     }
     if (notification is OverscrollNotification &&
@@ -547,8 +549,10 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         // 不了一页以上。
         final width = position.viewportDimension;
         final advance =
-            ((_pageDragAnchorDx - details.globalPosition.dx) * direction)
-                .clamp(0.0, width);
+            ((_pageDragAnchorDx - details.globalPosition.dx) * direction).clamp(
+              0.0,
+              width,
+            );
         final limit = target * width;
         var pixels = direction > 0
             ? _pageDragStartPixels + advance
@@ -641,8 +645,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         if (!_curlDragLocked) {
           if (delta.abs() < 6) return;
           final direction = delta < 0 ? 1 : -1;
-          final current =
-              (_attachedPage ?? widget.pageIndex.toDouble()).round();
+          final current = (_attachedPage ?? widget.pageIndex.toDouble())
+              .round();
           final target = current + direction;
           _curlDragLocked = true;
           if (target < 0 || target >= _itemCount) {
@@ -672,12 +676,8 @@ class ReaderPagedViewState extends State<ReaderPagedView>
         // when the finger crosses back past the drag start. The 2px
         // deadband absorbs touch jitter.
         final direction = _curlTurn!.direction;
-        final retreated = direction > 0
-            ? dx > prevDx + 2
-            : dx < prevDx - 2;
-        final advanced = direction > 0
-            ? dx < prevDx - 2
-            : dx > prevDx + 2;
+        final retreated = direction > 0 ? dx > prevDx + 2 : dx < prevDx - 2;
+        final advanced = direction > 0 ? dx < prevDx - 2 : dx > prevDx + 2;
         if (retreated) {
           _curlDragCancelled = true;
         } else if (advanced) {
@@ -887,8 +887,7 @@ class ReaderPagedViewState extends State<ReaderPagedView>
       animation: _chapterTurnAnimation,
       builder: (context, _) {
         final t = Curves.easeOutCubic.transform(_chapterTurnAnimation.value);
-        final width =
-            (_attachedPosition?.hasContentDimensions ?? false)
+        final width = (_attachedPosition?.hasContentDimensions ?? false)
             ? _viewportWidth
             : MediaQuery.sizeOf(context).width;
         final outgoingShift = cover ? 0.0 : (forward ? -width * t : width * t);
@@ -1034,10 +1033,9 @@ class ReaderPageContent extends StatelessWidget {
                                   ),
                             onLongPressEnd: onParagraphLongPressEnd == null
                                 ? null
-                                : (details) =>
-                                      onParagraphLongPressEnd!(
-                                        details.globalPosition,
-                                      ),
+                                : (details) => onParagraphLongPressEnd!(
+                                    details.globalPosition,
+                                  ),
                             child: body,
                           ),
                         );

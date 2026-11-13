@@ -5,8 +5,8 @@
 // presets use `GlassTextButton`, cells use `JellyTapSurface` and the confirm
 // action uses the same glass button.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_preferences.dart';

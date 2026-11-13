@@ -13,7 +13,7 @@
 //   `_commitChapterFraction` / `_setChapterPreview`).
 //
 // No business logic, no chapter loading, no persistence lives here.
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/reader_preferences.dart';

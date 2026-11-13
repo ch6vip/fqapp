@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -235,17 +235,17 @@ void main() {
       final text = '${List.filled(299, '甲').join()}😀乙';
       final playback = session(text: text);
       try {
-      playback.start();
-      await tester.pump();
-      // The next sentence is queued straight away, so the first utterance is
-      // the one at the head of the list.
-      final first = spoken().first.arguments as Map;
-      expect((first['text'] as String).length, 299);
-      await event({'type': 'done', 'id': first['id']});
-      await tester.pump();
-      final second = spoken().last.arguments as Map;
-      expect(second['text'], '😀乙');
-      expect('${first['text']}${second['text']}', text);
+        playback.start();
+        await tester.pump();
+        // The next sentence is queued straight away, so the first utterance is
+        // the one at the head of the list.
+        final first = spoken().first.arguments as Map;
+        expect((first['text'] as String).length, 299);
+        await event({'type': 'done', 'id': first['id']});
+        await tester.pump();
+        final second = spoken().last.arguments as Map;
+        expect(second['text'], '😀乙');
+        expect('${first['text']}${second['text']}', text);
       } finally {
         await playback.close();
         await tester.pump();
@@ -455,27 +455,27 @@ void main() {
   group('sentenceRangeAt', () {
     test('narrows to the sentence under the offset', () {
       const text = '第一句。第二句！第三句？';
-      expect(
-        sentenceRangeAt(text, 5, lower: 0, upper: text.length),
-        (start: 4, end: 8),
-      );
+      expect(sentenceRangeAt(text, 5, lower: 0, upper: text.length), (
+        start: 4,
+        end: 8,
+      ));
     });
 
     test('closing marks stay with the sentence they end', () {
       const text = '他说：「走。」然后就走了。';
       // Offsets: 0他 1说 2： 3「 4走 5。 6」 7然 …
-      expect(
-        sentenceRangeAt(text, 8, lower: 0, upper: text.length),
-        (start: 7, end: 13),
-      );
+      expect(sentenceRangeAt(text, 8, lower: 0, upper: text.length), (
+        start: 7,
+        end: 13,
+      ));
     });
 
     test('a paragraph break also ends a sentence', () {
       const text = '第一段\n第二段';
-      expect(
-        sentenceRangeAt(text, 5, lower: 0, upper: text.length),
-        (start: 4, end: 7),
-      );
+      expect(sentenceRangeAt(text, 5, lower: 0, upper: text.length), (
+        start: 4,
+        end: 7,
+      ));
     });
 
     test('the result never leaves the piece being spoken', () {
@@ -535,10 +535,10 @@ void main() {
       await tester.pump();
       // A sentence per utterance is what lets a voice without `onRangeStart`
       // wash one sentence: the engine can only report the slice it was given.
-      expect(
-        spoken().map((c) => (c.arguments as Map)['text']),
-        ['第一句。', '第二句。'],
-      );
+      expect(spoken().map((c) => (c.arguments as Map)['text']), [
+        '第一句。',
+        '第二句。',
+      ]);
       expect((spoken().first.arguments as Map)['queue'], isFalse);
       expect((spoken().last.arguments as Map)['queue'], isTrue);
       final first = spoken().first.arguments as Map;
