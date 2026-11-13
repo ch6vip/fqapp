@@ -12,6 +12,7 @@ import 'package:fqapp/services/app_theme_style.dart';
 import 'package:fqapp/services/drama_download_store.dart';
 import 'package:fqapp/services/drama_downloader.dart';
 import 'package:fqapp/services/episode_source_cache.dart';
+import 'package:fqapp/services/platform_capabilities.dart';
 import 'package:fqapp/widgets/cache/cache_page_widgets.dart';
 import 'package:fqapp/widgets/settings/settings_widgets.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
@@ -136,6 +137,9 @@ void main() {
         await seed();
         await pumpDramaCacheWithStyle(tester, classic: classic);
         expect(find.text('测试剧'), findsOneWidget);
+        if (!supportsVideoPlayback) {
+          expect(find.textContaining('加密离线播放'), findsNothing);
+        }
         await tester.tap(find.text('测试剧'));
         await tester.pumpAndSettle();
 
@@ -172,12 +176,13 @@ void main() {
         await pumpDramaCacheWithStyle(tester, classic: classic);
 
         expect(find.textContaining('暂无离线缓存'), findsOneWidget);
-        if (platform == TargetPlatform.linux) {
+        if (!supportsVideoPlayback) {
           expect(
-            find.text('Linux 暂不支持视频播放，可在此查看和删除已有缓存；缓存不会被自动清理。'),
+            find.text('当前平台暂不支持视频播放，可在此查看和删除已有缓存；缓存不会被自动清理。'),
             findsOneWidget,
           );
           expect(find.textContaining('更多 → 离线缓存'), findsNothing);
+          expect(find.textContaining('加密离线播放'), findsNothing);
         } else {
           expect(
             find.text('播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。'),
@@ -285,7 +290,10 @@ void main() {
     expect(find.byType(ArchiveFeaturePage), findsNothing);
     expect(find.byType(CacheSummaryCard), findsOneWidget);
     expect(find.text('已缓存 1 部 · 共 2 集'), findsOneWidget);
-    expect(find.textContaining('占用空间：4.0 KB · 加密离线播放'), findsOneWidget);
+    expect(
+      find.text(supportsVideoPlayback ? '占用空间：4.0 KB · 加密离线播放' : '占用空间：4.0 KB'),
+      findsOneWidget,
+    );
     expect(find.byType(ArchiveSection), findsNothing);
     expect(find.byKey(const ValueKey('dramas-more-actions')), findsNothing);
     expect(find.byKey(const ValueKey('dramas-pause-all')), findsOneWidget);
@@ -304,7 +312,7 @@ void main() {
           .onPressed,
       isNotNull,
     );
-  });
+  }, variant: TargetPlatformVariant(TargetPlatform.values.toSet()));
 
   testWidgets('经典 AppBar 清空全部仍走确认并刷新空态', (tester) async {
     await seed();
