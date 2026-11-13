@@ -1,4 +1,5 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 
 /// 当前网络形态的折叠视图：是否在线、是否计费链路（非 WiFi/以太网）。
 /// 官方 `showWifiCheckDialog` 的启动门与 `onNetChangeCheck` 的运行中
@@ -35,3 +36,19 @@ Future<ConnectivityView?> probeConnectivity() async {
 
 Future<ConnectivityView> currentConnectivity() async =>
     await probeConnectivity() ?? (online: true, metered: false);
+
+/// Desktop adapter detection is advisory: VPNs, proxies and virtual adapters
+/// can report no connection even while the playback endpoint is reachable.
+/// Let the actual foreground request determine success on desktop. Keep the
+/// conservative network probe for automatic downloads and mobile offline use.
+Future<bool> videoNetworkIsOffline({
+  Future<ConnectivityView> Function()? probe,
+}) async {
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux)) {
+    return false;
+  }
+  return !(await (probe ?? currentConnectivity)()).online;
+}

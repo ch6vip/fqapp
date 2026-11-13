@@ -30,12 +30,38 @@ class WebDavSyncDocument {
   }
 
   factory WebDavSyncDocument.decode(Uint8List bytes) {
+    if (bytes.length > 20 * 1024 * 1024) {
+      throw const FormatException('同步文件超过 20 MB（DAV_SIZE）');
+    }
+    dynamic decoded;
     try {
-      final raw = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      var text = utf8.decode(bytes);
+      if (text.startsWith('\uFEFF')) text = text.substring(1);
+      decoded = jsonDecode(text);
+    } on FormatException {
+      throw const FormatException('同步文件不是完整的 UTF-8 JSON（DAV_JSON）');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('同步文件根节点必须是 JSON 对象（DAV_ROOT）');
+    }
+    final raw = decoded;
+    // A portable backup placed at the sync path is a known, validated legacy
+    // representation; do not confuse it with an arbitrary JSON object.
+    if (raw['format'] == 'fqapp.library-backup') {
+      return WebDavSyncDocument(LibraryBackup.decode(bytes));
+    }
+    try {
       if (raw['format'] != 'fqapp.webdav-sync' || raw['version'] != 1) {
-        throw const FormatException('不是兼容的 FQApp 同步文件');
+        throw const FormatException('不是兼容的 FQApp 同步文件（DAV_FORMAT）');
       }
-      final removed = raw['removedShelf'] as Map<String, dynamic>;
+      if (raw['backup'] is! Map<String, dynamic>) {
+        throw const FormatException('同步文件缺少书架备份对象（DAV_BACKUP）');
+      }
+      final rawRemoved = raw['removedShelf'];
+      if (rawRemoved != null && rawRemoved is! Map<String, dynamic>) {
+        throw const FormatException('书架移除记录必须是对象（DAV_REMOVED）');
+      }
+      final removed = rawRemoved as Map<String, dynamic>? ?? const {};
       if (removed.length > 10000) throw const FormatException('移除记录过多');
       final tombstones = <String, int>{};
       for (final entry in removed.entries) {

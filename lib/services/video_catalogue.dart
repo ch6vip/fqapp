@@ -35,7 +35,7 @@ Future<List<Chapter>> loadVideoCatalogue({
     ];
   }
 
-  if (loader == null && !(await currentConnectivity()).online) {
+  if (loader == null && await videoNetworkIsOffline()) {
     final local = await fallback();
     if (local.isNotEmpty) return local;
     throw const ApiException('当前离线，且没有可用的剧集目录');

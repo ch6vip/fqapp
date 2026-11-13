@@ -55,6 +55,13 @@ class LibraryBackup {
   int get assignmentCount =>
       groups['assignments'] is Map ? (groups['assignments'] as Map).length : 0;
 
+  static bool isPortableShelfRecord(ShelfRecord record) {
+    final item = record.item;
+    return !item.id.startsWith('local_') &&
+        !(item.seriesId?.startsWith('local_') ?? false) &&
+        !ShelfIdentity.isLocalContentKey(ShelfIdentity.contentKeyOf(item));
+  }
+
   factory LibraryBackup.capture({
     required List<ShelfRecord> shelf,
     required List<Map<String, dynamic>> history,
@@ -70,16 +77,8 @@ class LibraryBackup {
     }
 
     bool includeShelf(ShelfRecord record) {
-      final item = record.item;
-      // Keep the pre-migration rule: any record whose raw id (or series id)
-      // carries the local prefix is device-local, even when the id is
-      // malformed and no longer matches the strict `local_<millis>_<hex>`
-      // shape. Such a record would otherwise be exported and then rejected by
-      // `_id`, failing the whole export.
-      final local =
-          item.id.startsWith('local_') ||
-          (item.seriesId?.startsWith('local_') ?? false) ||
-          ShelfIdentity.isLocalContentKey(ShelfIdentity.contentKeyOf(item));
+      // Keep device-local records out of every portable sync snapshot.
+      final local = !isPortableShelfRecord(record);
       if (!local) return true;
       excluded++;
       return false;

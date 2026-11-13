@@ -87,6 +87,24 @@ void main() {
     },
   );
 
+  test(
+    'error categories survive missing numeric codes and reject injected secrets',
+    () {
+      final samples = <PlayerLoadSample>[];
+      final diagnostics = PlayerLoadDiagnostics(report: samples.add);
+      diagnostics
+          .begin(attempt: 1, episode: 1, trigger: 'initial', appActive: true)
+          .fail(errorCategory: 'format');
+      expect(samples.last.toJson()['errorCategory'], 'format');
+      expect(samples.last.errorCode, isNull);
+      diagnostics
+          .begin(attempt: 2, episode: 1, trigger: 'retry', appActive: true)
+          .fail(errorCategory: 'https://private.invalid?token=secret');
+      expect(samples.last.errorCategory, 'other');
+      expect(jsonEncode(samples.last.toJson()), isNot(contains('secret')));
+    },
+  );
+
   test('reporter failure cannot interrupt playback', () {
     final trace = PlayerLoadDiagnostics(
       report: (_) => throw StateError('logger'),

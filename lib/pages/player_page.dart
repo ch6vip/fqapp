@@ -1473,7 +1473,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ApiException() => error.statusCode,
       _ => null,
     };
-    _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
+    _loadTrace?.fail(
+      errorCode: errorCode,
+      httpStatusCode: httpStatusCode,
+      errorCategory: switch (error) {
+        FormatException() => 'format',
+        StateError() => 'state',
+        _ => PlaybackIssue.fromError(error).name,
+      },
+    );
     _sources.invalidate(widget.eps[_index].itemId);
     if (_retrySilently()) return;
     _prefetchTimer?.cancel();

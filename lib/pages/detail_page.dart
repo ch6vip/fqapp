@@ -410,7 +410,7 @@ class _DetailPageState extends State<DetailPage> {
         _isVideo &&
         widget.detailLoader == null &&
         widget.directoryLoader == null &&
-        !(await (widget.connectivity ?? currentConnectivity)()).online;
+        await videoNetworkIsOffline(probe: widget.connectivity);
     if (!mounted || generation != _loadGeneration) return;
 
     // Detail and directory are independent. Short-drama IDs sometimes do
