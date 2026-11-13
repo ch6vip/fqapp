@@ -613,7 +613,6 @@ class GlassIconButton extends StatelessWidget {
     );
     final semanticLabel = appText(context, label);
     final action = Semantics(
-      container: true,
       label: semanticLabel,
       button: true,
       enabled: onPressed != null,
