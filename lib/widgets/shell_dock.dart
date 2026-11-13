@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/app_theme.dart';
 import '../services/app_style_tokens.dart';
+import '../services/frame_stats.dart';
 import 'classic_shell_dock.dart';
 import 'wenku/src/easy_glass.dart';
 import 'wenku/wenku_ui.dart';
@@ -51,6 +52,20 @@ class ShellDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 临时诊断：量出 dock 自身重建吃了多少毫秒。切底部 tab 时壳层会 setState
+    // 两次（起手一次、动画结束恢复玻璃一次），需要知道这笔开销的归属。
+    // release 下 enabled 恒假，连 Stopwatch 都不创建。
+    if (!FrameStats.enabled) return _buildShell(context);
+    final watch = Stopwatch()..start();
+    final result = _buildShell(context);
+    FrameStats.mark(
+      'dock build ${watch.elapsedMicroseconds ~/ 1000}ms '
+      'anim=$animating static=$staticMaterial overVideo=$overVideo',
+    );
+    return result;
+  }
+
+  Widget _buildShell(BuildContext context) {
     if (AppStyleTokens.of(context).isClassic) {
       return ClassicShellDock(
         selectedIndex: selectedIndex,

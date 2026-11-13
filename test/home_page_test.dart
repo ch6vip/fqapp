@@ -303,11 +303,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('home_category_1')));
     await tester.pumpAndSettle();
 
-    // 区块的卡片并进当前分类的书架，标题用分类名，不用区块名。
-    expect(
-      tester.widget<HomeSectionLabel>(find.byType(HomeSectionLabel)).title,
-      '经典',
-    );
+    // 区块的卡片并进当前分类的书架；但这张网格就是页面第一段，不再用分类名
+    // 当分区头——顶栏已经选中「经典」，再写一遍是重复。
+    expect(find.byType(HomeSectionLabel), findsNothing);
     expect(find.text('经典必读'), findsNothing);
     expect(find.text('经典书一'), findsWidgets);
     // 旧管线的东西不该出现。

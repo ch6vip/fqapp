@@ -82,7 +82,7 @@ class StoryCover extends StatelessWidget {
         memCacheWidth: cacheWidth.clamp(1, 1200),
         fadeInDuration: MediaQuery.disableAnimationsOf(context)
             ? Duration.zero
-            : const Duration(milliseconds: 220),
+            : const Duration(milliseconds: 120),
         placeholder: (_, _) => fallback,
         errorWidget: (_, _, _) => fallback,
       );

@@ -124,18 +124,17 @@ class HomeSectionHeader extends StatelessWidget {
     required this.title,
     this.action,
     this.gutter = homeGutter,
+    this.topPadding = homeSectionGap,
   });
+
+  /// 与上一段内容的间距。默认 [homeSectionGap]；紧跟分类条的第一段传小值。
+  final double topPadding;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        gutter,
-        homeSectionGap,
-        gutter,
-        homeHeaderGap,
-      ),
+      padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, homeHeaderGap),
       child: Row(
         children: [
           Expanded(

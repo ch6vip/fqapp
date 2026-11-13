@@ -45,10 +45,13 @@ ImageProvider<Object> shelfCoverImageProvider(
   final value = url.trim();
   final decodeWidth = shelfCoverDecodeWidth(width, devicePixelRatio);
   if (isRemoteCover(value)) {
-    return CachedNetworkImageProvider(
-      value,
-      cacheManager: PosterCache.instance,
-      maxWidth: decodeWidth,
+    // 与 [ShelfCoverImage] 的 CachedNetworkImage(memCacheWidth) 保持同一个
+    // provider 形状：磁盘缓存键只看 URL，内存缓存键才会带上解码宽度。
+    // 直接用 `maxWidth:` 会改掉磁盘键，预热写进去的文件显示时再下一遍。
+    return ResizeImage.resizeIfNeeded(
+      decodeWidth,
+      null,
+      CachedNetworkImageProvider(value, cacheManager: PosterCache.instance),
     );
   }
   if (value.isEmpty || _isSvgPath(value)) {
@@ -204,7 +207,7 @@ class ShelfCoverImage extends StatelessWidget {
         memCacheWidth: decode,
         fadeInDuration: MediaQuery.disableAnimationsOf(context)
             ? Duration.zero
-            : const Duration(milliseconds: 150),
+            : const Duration(milliseconds: 120),
         placeholder: (_, _) => placeholder,
         errorWidget: (_, _, _) => placeholder,
       );

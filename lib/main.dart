@@ -25,6 +25,8 @@ import 'pages/library_page.dart';
 import 'pages/mine_page.dart';
 import 'pages/theme_page.dart';
 import 'services/app_log.dart';
+import 'services/frame_stats.dart';
+import 'services/shell_visibility.dart';
 import 'services/app_theme.dart';
 import 'services/app_theme_style.dart';
 import 'services/api_client.dart';
@@ -92,6 +94,9 @@ Future<void> _prepareRuntime() async {
   // [main] 的 runZonedGuarded 捕获；文件持久化异步开启，失败只退回内存模式。
   AppLog.instance.install();
   unawaited(AppLog.instance.startPersistence());
+  // 帧耗时采样（debug/profile）：真机上唯一能拿到 UI/raster 拆分的手段。
+  // release 里 install() 直接返回，不产生任何开销。
+  FrameStats.install();
   // 短剧分享的「系统分享」走 Android 的 Intent.ACTION_SEND
   //（官方同一条路径）。桥不可用时 PlayletShare 自动降级为复制链接，
   // 不会把失败说成成功。
@@ -107,23 +112,24 @@ Future<void> _prepareRuntime() async {
   // 核心只在 Android 落盘（桌面/测试构建不装 logger），读不到时页面给空态。
   RustLogSource.reader = BackendService.instance.readRustLog;
   if (isWindowsDesktop || isLinuxDesktop) {
-    DesktopPlatform.instance.beforeClose = LinuxPlatform.beforeClose = () async {
-      DramaDownloader.instance.pauseAll();
-      AudioDownloader.instance.pauseAll();
-      await FairMemoryService.instance.flushForExit();
-      try {
-        if (isMediaDesktop) await NativePlayer.pauseOthers();
-      } catch (error, stack) {
-        // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
-        AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
-      }
-      try {
-        await BackendService.instance.stop();
-      } catch (error, stack) {
-        AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
-      }
-      await Hive.close();
-    };
+    DesktopPlatform.instance.beforeClose = LinuxPlatform.beforeClose =
+        () async {
+          DramaDownloader.instance.pauseAll();
+          AudioDownloader.instance.pauseAll();
+          await FairMemoryService.instance.flushForExit();
+          try {
+            if (isMediaDesktop) await NativePlayer.pauseOthers();
+          } catch (error, stack) {
+            // 退出路径继续往下走，但失败要留痕：否则「关闭后还有声音」无从查起。
+            AppLog.w('exit', '退出前暂停播放器失败', error: error, stack: stack);
+          }
+          try {
+            await BackendService.instance.stop();
+          } catch (error, stack) {
+            AppLog.w('exit', '退出前停止后端失败', error: error, stack: stack);
+          }
+          await Hive.close();
+        };
   }
 }
 
@@ -591,6 +597,10 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   /// 分类栏会自己重新吸住。
   void _selectTab(int index) {
     if (index != _index) {
+      FrameStats.mark('shell tab $index');
+      // 先广播可见性：页面据此暂停/恢复播放器与定时器，不靠 TickerMode 翻转
+      // 触发整页重建。
+      shellVisibleTab.value = index;
       // 任何实际切换都使待执行的预挂载回调失效，防止过期回调覆盖新选择。
       final generation = ++_premountGeneration;
       if (_visitedTabs.contains(index) ||
@@ -694,6 +704,8 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     // 短剧频道在推荐（视频流）与浅色页之间切换时，悬浮 dock 和系统导航栏
     // 要跟着换肤，所以停在壳层的 build 里监听。
     dramaLightPageNotifier.addListener(_onDramaChromeChanged);
+    // 初始可见页：页面据此决定是否暂停播放器/定时器。
+    shellVisibleTab.value = _index;
     _pageMotion.addStatusListener(_onPageMotionStatus);
     _startBackend();
   }
@@ -708,6 +720,7 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     if ((status == AnimationStatus.completed ||
             status == AnimationStatus.dismissed) &&
         mounted) {
+      FrameStats.mark('motion end');
       setState(() {});
     }
   }

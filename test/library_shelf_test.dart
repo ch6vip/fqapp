@@ -668,8 +668,8 @@ void main() {
       });
 
       // RootShell 保活书架页（移动端 Stack+Offstage / 桌面 LazyIndexedStack）：
-      // 切到别的 tab 只是把页面藏起来
-      // （TickerMode 关掉 → 页面的 _visible 变 false），编辑态留在 State 里。
+      // 切到别的 tab 只是把页面藏起来（壳层可见性通知 → 页面的 _visible 变
+      // false），编辑态留在 State 里。
       final index = ValueNotifier<int>(0);
       addTearDown(index.dispose);
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
@@ -680,7 +680,8 @@ void main() {
             builder: (context, value, child) => LazyIndexedStack(
               index: value,
               children: [
-                const LibraryPage(),
+                // 宿主下标 0：页面据此判断壳层是否停在自己身上。
+                const LibraryPage(shellIndex: 0),
                 const SizedBox.expand(child: Text('其他 tab')),
               ],
             ),

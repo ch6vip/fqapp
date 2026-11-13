@@ -6,6 +6,7 @@ import '../models/home_cell.dart';
 import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/app_log.dart';
+import '../services/frame_stats.dart';
 import '../services/backend_transport.dart';
 import '../services/home_feed_cache.dart';
 import '../services/home_page_affinity.dart';
@@ -130,6 +131,11 @@ class _TabFeed {
   bool hasMore = true;
   bool loaded = false;
 
+  /// 上一次 load 的响应没落地（被切分类取消、或页面已换）：列表里可能是
+  /// 快照种子而不是新数据，下次进入要回源。`loaded` 区分不了这种情况——
+  /// 快照在 await 之前就铺了 items，取消时 `loaded` 仍是假但 items 非空。
+  bool stale = false;
+
   /// The card the user is currently on, reported by the page as it renders
   /// feeds. Persisted with the snapshot so the next cold start can resume from
   /// it (officially the landing cache keeps one video plus its position,
@@ -145,6 +151,7 @@ class _TabFeed {
     items = [];
     cells = [];
     appendedStreamItems.clear();
+    _viewCache = null;
     offset = 0;
     sessionId = null;
     searchPage = 0;
@@ -156,6 +163,7 @@ class _TabFeed {
     recommendExhausted = false;
     hasMore = true;
     loaded = false;
+    stale = false;
     // A cancelled load must not leave its resume intent behind; lastVid is
     // deliberately kept — it tracks the card on screen across refreshes.
     resumedVid = null;
@@ -166,9 +174,17 @@ class _TabFeed {
   /// 只补「无限流」那一个区块——追加页的书本来就是它的续页；其他区块
   /// （排行榜等）保持上游原样。快照缓存存的也是这份拼好的（恢复后网格
   /// 与滚动位置所见一致）。
+  ///
+  /// 结果按需缓存：切回一个分类时 `selectTab` 会再读一次，若每次都拼一份
+  /// 新列表，页面那边「数据没变就复用 body」的判据永远不成立，切一次就
+  /// 重建一次整页。缓存随 `reset()` 与追加一并失效。
+  List<HomeCell>? _viewCache;
+
   List<HomeCell> cellsForView() {
     if (appendedStreamItems.isEmpty) return cells;
-    return [
+    final cached = _viewCache;
+    if (cached != null) return cached;
+    return _viewCache = [
       for (final cell in cells)
         switch (cell.showType) {
           384 => HomeCell(
@@ -502,6 +518,7 @@ class HomeNotifier extends Notifier<HomeState> {
   /// `Se` → `sf(listOf(cache))` + `Te` → `uf` append).
   Future<void> load({bool manualRefresh = false}) async {
     final tabIndex = state.tabIndex;
+    FrameStats.mark('load start tab=$tabIndex');
     final generation = ++_generation;
     final feed = _feedFor(tabIndex)..reset();
     // Stale-while-revalidate: show the last rendered cards while the network
@@ -568,10 +585,14 @@ class HomeNotifier extends Notifier<HomeState> {
       if (!ref.mounted ||
           generation != _generation ||
           state.tabIndex != tabIndex) {
+        // 响应没落地：列表里可能只剩快照种子，下次进入要回源。
+        feed.stale = true;
         return;
       }
       final resume = feed.resumedVid != null;
       feed.resumedVid = null;
+      feed.stale = false;
+      FrameStats.mark('load apply tab=$tabIndex');
       _applyFetched(feed, fetched, replace: !resume);
       state = state.copyWith(
         items: feed.items,
@@ -598,8 +619,11 @@ class HomeNotifier extends Notifier<HomeState> {
       if (!ref.mounted ||
           generation != _generation ||
           state.tabIndex != tabIndex) {
+        feed.stale = true;
         return;
       }
+      // 请求失败也是「没落地」：下次进入要重试，而不是拿着快照当已加载。
+      feed.stale = true;
       feed.hasMore = false;
       // The seeded snapshot (or nothing, on a cold start) stays on screen;
       // the error surface only takes over when there is nothing to show.
@@ -644,7 +668,24 @@ class HomeNotifier extends Notifier<HomeState> {
       hasMore: cached?.hasMore ?? true,
       clearError: true,
     );
-    if (cached == null || !cached.loaded) load();
+    // 只有「还什么都没有、且没成功落地过」才在进入时重拉。
+    //
+    // 旧判据 `!cached.loaded` 有个陷阱：快速连滑会取消上一路的请求，
+    // `load()` 开头的 `reset()` 已经把 `loaded` 置假、列表清空，于是**每次**
+    // 切回来都判定为未加载 → 再 reset 一次 → 再请求一次；页面那边看到的
+    // items/cells 每切一次就换一份实例，body 复用永远不命中，于是每切一次
+    // 都重排整页（真机日志：每次 selectTab 后面紧跟一次 body build）。
+    // 只看 items 又会把「加载成功但确实为空」当成没加载过：每次进入都清空
+    // 重拉、空态闪回骨架。两个条件一起判才既不空转也不重拉。
+    //
+    // 还有第三种情况：[stale]——快照在 await 之前就铺了 items，请求却被
+    // 切分类取消（或失败），此时 items 非空、loaded 为假，必须回源。
+    if (cached == null ||
+        cached.stale ||
+        (!cached.loaded && cached.items.isEmpty)) {
+      cached?.stale = false;
+      load();
+    }
   }
 
   /// Appends the next page to the selected feed.
@@ -723,6 +764,7 @@ class HomeNotifier extends Notifier<HomeState> {
     final cache = _feedCache;
     if (feed == null || cache == null || feed.items.isEmpty) return;
     final savedVid = feed.lastVid ?? feed.items.first.id;
+    FrameStats.mark('snapshot tab=$tabIndex items=${feed.items.length}');
     unawaited(
       cache.save(
         tabIndex,
@@ -1186,6 +1228,8 @@ class HomeNotifier extends Notifier<HomeState> {
             ? fresh
             : const <MediaItem>[],
       )
+      // 上面改了 cells / 追加列表，拼好的视图必须重算。
+      .._viewCache = null
       ..tabs = fetched.tabs.isNotEmpty ? fetched.tabs : feed.tabs
       ..offset = fetched.nextOffset ?? feed.offset
       ..sessionId = fetched.sessionId ?? feed.sessionId

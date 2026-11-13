@@ -49,6 +49,9 @@ class ClassicHomeRankRail extends StatelessWidget {
         HomeSectionHeader(
           title: title,
           action: ClassicHomeBlockMore(onTap: onMore),
+          // 首页分类条下面的第一段：标签条已经有下缘留白，这里再叠 20 会让
+          // 「标签 → 排行榜」空出三十多个像素，中间一片空白。
+          topPadding: 8,
         ),
         if (names.length > 1)
           _BoardNames(

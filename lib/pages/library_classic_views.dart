@@ -11,28 +11,30 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
         bottom: false,
         child: Column(
           children: [
-            if (_editing) _classicEditBar(palette) else _classicTabRow(palette),
-            if (!_editing && _tab != 1) _classicToolbar(palette),
-            if (_classicHasFilters) _classicFilterStatus(palette),
-            if (_tab != 1 &&
-                ShelfViewStore.instance.state.source ==
-                    ShelfSourceFilter.cached)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: ShelfTokens.screenPadding,
-                ),
-                child: _cacheStatus(),
+            if (_editing)
+              _classicEditBar(palette)
+            else
+              // The sliding underline needs the measured tab centres, which
+              // only exist after the layout.
+              Builder(
+                builder: (context) {
+                  _scheduleClassicMeasure();
+                  return _classicTabRow(palette);
+                },
               ),
             Expanded(
-              child: TabSwipeArea(
+              child: TabSwipeArea.pages(
                 index: _tab,
                 count: _tabTitles.length,
                 onSelect: _selectTab,
+                onProgress: (value) {
+                  if (_tabProgress.value != value) {
+                    _tabProgress.value = value;
+                  }
+                },
                 enabled: !_editing,
-                child: RefreshIndicator(
-                  onRefresh: () => _refreshUpdates(force: true),
-                  child: _classicContent(context),
-                ),
+                pageBuilder: (context, target) =>
+                    _classicTabBody(context, target),
               ),
             ),
           ],
@@ -42,8 +44,33 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     );
   }
 
-  Widget _classicContent(BuildContext context) {
-    final entries = _visibleEntries;
+  /// 工具栏与内容作为同一张邻页滑动，切历史时不再改变滑动视口高度。
+  Widget _classicTabBody(BuildContext context, int tab) {
+    final palette = HomePalette.of(context);
+    return Column(
+      children: [
+        if (!_editing && tab != 1) _classicToolbar(palette, tab),
+        if (_classicHasFiltersForTab(tab)) _classicFilterStatus(palette, tab),
+        if (tab != 1 &&
+            ShelfViewStore.instance.state.source == ShelfSourceFilter.cached)
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: ShelfTokens.screenPadding,
+            ),
+            child: _cacheStatus(),
+          ),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => _refreshUpdates(force: true),
+            child: _classicContent(context, tab),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _classicContent(BuildContext context, int tab) {
+    final entries = _visibleEntriesForTab(tab);
     if (entries.isEmpty) {
       // Keep pull-to-refresh working even when a filter hides every entry.
       return CustomScrollView(
@@ -51,7 +78,7 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
         slivers: [
           SliverFillRemaining(
             hasScrollBody: false,
-            child: _classicEmptyState(),
+            child: _classicEmptyState(tab),
           ),
         ],
       );
@@ -60,19 +87,19 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     // The archive's fixed history list and four-mode setting are untouched.
     final layout = _classicLayout.value;
     return switch (layout) {
-      BookshelfLayout.grid => _classicGrid(entries),
-      BookshelfLayout.doubleColumn => _classicDoubleGrid(entries),
-      BookshelfLayout.list => _classicList(entries),
+      BookshelfLayout.grid => _classicGrid(entries, tab),
+      BookshelfLayout.doubleColumn => _classicDoubleGrid(entries, tab),
+      BookshelfLayout.list => _classicList(entries, tab),
     };
   }
 
   /// 空态锚点补偿用的动态头部总高：筛选状态栏定高（行内文字已钳制
   /// 1.3 倍内，定高恒成立）；缓存扫描行只在扫描未完成时占高（完成后
   /// 是 SizedBox.shrink），高度随 textScaler 与实际渲染同源计算。
-  double get _classicDynamicHeaderHeight {
+  double _classicDynamicHeaderHeight(int tab) {
     var height = 0.0;
-    if (_classicHasFilters) height += ShelfTokens.filterStatusHeight;
-    if (_tab != 1 &&
+    if (_classicHasFiltersForTab(tab)) height += ShelfTokens.filterStatusHeight;
+    if (tab != 1 &&
         ShelfViewStore.instance.state.source == ShelfSourceFilter.cached &&
         !_cacheScanComplete) {
       height += shelfCacheStatusHeight(context);
@@ -80,14 +107,14 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     return height;
   }
 
-  Widget _classicEmptyState() {
-    final headerHeight = _classicDynamicHeaderHeight;
-    final category = _tab == 0 ? _category : ShelfCategory.all;
+  Widget _classicEmptyState(int tab) {
+    final headerHeight = _classicDynamicHeaderHeight(tab);
+    final category = tab == 0 ? _categoryForTab(tab) : ShelfCategory.all;
     // A selected group is empty only when no shelf entry belongs to it at all.
     // Other active filters must keep the generic "没有符合筛选" copy: the
     // group itself still has books, they are just hidden by source/reading.
     final groupEmpty =
-        _tab == 0 &&
+        tab == 0 &&
         category != ShelfCategory.all &&
         !_shelf.any(
           (entry) => ShelfGroupStore.instance.matchesKey(
@@ -96,7 +123,7 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
             category,
           ),
         );
-    if (_tab == 0 && _shelf.isEmpty && !groupEmpty) {
+    if (tab == 0 && _shelf.isEmpty && !groupEmpty) {
       return _ClassicEmptyNotice(
         icon: LucideIcons.book_open,
         title: '书架暂无书籍',
@@ -108,9 +135,10 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
         headerHeight: headerHeight,
       );
     }
-    if (_tab == 2 &&
+    if (tab == 2 &&
         (_collection.isEmpty ||
-            (_activeFilters == 0 && _category == ShelfCategory.all))) {
+            (_activeFiltersForTab(tab) == 0 &&
+                _categoryForTab(tab) == ShelfCategory.all))) {
       return _ClassicEmptyNotice(
         icon: LucideIcons.clapperboard,
         title: switch (_collectionFilter) {
@@ -124,7 +152,7 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
         headerHeight: headerHeight,
       );
     }
-    final filtered = _classicHasFilters;
+    final filtered = _classicHasFiltersForTab(tab);
     final groupEmptyTitle = groupEmpty
         ? '「${ShelfGroupStore.instance.nameOf(category)}」暂无书籍'
         : null;
@@ -134,7 +162,7 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
           groupEmptyTitle ??
           (!filtered
               ? '未找到相关内容'
-              : switch (_tab) {
+              : switch (tab) {
                   0 => '没有符合筛选的书籍',
                   2 => '没有符合筛选的收藏',
                   _ => '没有符合筛选的记录',
@@ -146,10 +174,10 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     );
   }
 
-  Widget _classicGrid(List<_ShelfEntry> entries) => LayoutBuilder(
+  Widget _classicGrid(List<_ShelfEntry> entries, int tab) => LayoutBuilder(
     builder: (context, constraints) => GridView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
-      key: PageStorageKey('classic-shelf-grid-$_tab'),
+      key: PageStorageKey('classic-shelf-grid-$tab'),
       padding: const EdgeInsets.fromLTRB(
         ShelfTokens.screenPadding,
         ShelfTokens.spaceXS,
@@ -182,45 +210,46 @@ mixin _LibraryClassicViews on _LibraryClassicChrome {
     ),
   );
 
-  Widget _classicDoubleGrid(List<_ShelfEntry> entries) => LayoutBuilder(
-    builder: (context, constraints) => GridView.builder(
-      physics: const AlwaysScrollableScrollPhysics(),
-      key: PageStorageKey('classic-shelf-double-$_tab'),
-      padding: const EdgeInsets.fromLTRB(
-        ShelfTokens.screenPadding,
-        ShelfTokens.spaceXS,
-        ShelfTokens.screenPadding,
-        ShelfTokens.contentBottomInset,
-      ),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: ShelfTokens.gridSpacing,
-        mainAxisSpacing: ShelfTokens.gridSpacing,
-        childAspectRatio: shelfDoubleChildAspectRatio(
-          context,
-          availableWidth: constraints.maxWidth,
+  Widget _classicDoubleGrid(List<_ShelfEntry> entries, int tab) =>
+      LayoutBuilder(
+        builder: (context, constraints) => GridView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          key: PageStorageKey('classic-shelf-double-$tab'),
+          padding: const EdgeInsets.fromLTRB(
+            ShelfTokens.screenPadding,
+            ShelfTokens.spaceXS,
+            ShelfTokens.screenPadding,
+            ShelfTokens.contentBottomInset,
+          ),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: ShelfTokens.gridSpacing,
+            mainAxisSpacing: ShelfTokens.gridSpacing,
+            childAspectRatio: shelfDoubleChildAspectRatio(
+              context,
+              availableWidth: constraints.maxWidth,
+            ),
+          ),
+          itemCount: entries.length,
+          itemBuilder: (context, index) {
+            final entry = entries[index];
+            return BookshelfDoubleCard(
+              key: ValueKey('shelf-double-${entry.selectionKey}'),
+              item: entry.item,
+              badgeText: entry.badgeText,
+              subtitleText: entry.subtitleText,
+              editing: _editing,
+              selected: _selected.contains(entry.selectionKey),
+              onTap: () => _tap(entry),
+              onLongPress: () => _longPress(entry),
+            );
+          },
         ),
-      ),
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
-        final entry = entries[index];
-        return BookshelfDoubleCard(
-          key: ValueKey('shelf-double-${entry.selectionKey}'),
-          item: entry.item,
-          badgeText: entry.badgeText,
-          subtitleText: entry.subtitleText,
-          editing: _editing,
-          selected: _selected.contains(entry.selectionKey),
-          onTap: () => _tap(entry),
-          onLongPress: () => _longPress(entry),
-        );
-      },
-    ),
-  );
+      );
 
-  Widget _classicList(List<_ShelfEntry> entries) => ListView.separated(
+  Widget _classicList(List<_ShelfEntry> entries, int tab) => ListView.separated(
     physics: const AlwaysScrollableScrollPhysics(),
-    key: PageStorageKey('classic-shelf-list-$_tab'),
+    key: PageStorageKey('classic-shelf-list-$tab'),
     padding: const EdgeInsets.only(
       top: ShelfTokens.spaceXS,
       bottom: ShelfTokens.contentBottomInset,
