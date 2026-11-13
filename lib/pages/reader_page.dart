@@ -19,6 +19,10 @@ import '../models/chapter_ideas.dart';
 import '../models/audio_extra.dart';
 import '../models/comment_reply.dart';
 import '../models/media_item.dart';
+import '../models/book_detail.dart';
+import 'author_page.dart';
+import '../models/shuqi_book.dart';
+import 'shuqi_detail_page.dart';
 import '../models/reader_video_match.dart';
 import '../models/media_id.dart';
 import '../services/backend_transport.dart' show BackendRequest;
@@ -37,6 +41,7 @@ import '../services/ai_reading/ai_models.dart';
 import '../services/chapter_text_formatter.dart';
 import '../services/text_replacement_engine.dart';
 import '../services/text_replacement_store.dart';
+import '../services/imported_book_store.dart';
 import '../services/library_store.dart';
 import '../services/listening_session.dart';
 import '../services/reader_device.dart';
@@ -51,12 +56,15 @@ import '../services/fair_memory.dart';
 import '../services/haptic_preferences.dart';
 import '../services/volume_key.dart';
 import '../services/reader_bookmark_store.dart';
+import '../services/playlet_share.dart';
+import '../services/reader_full_search.dart';
 import '../services/reader_history.dart';
 import '../services/audio_preferences.dart';
 import '../services/reader_preferences.dart';
 import '../services/reader_tap_zones.dart';
 import '../services/reader_underline_store.dart';
 import '../services/shelf_store.dart';
+import '../services/shuqi_reader_source.dart';
 import '../services/shelf_toggle.dart';
 import '../services/system_tts.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
@@ -67,8 +75,15 @@ import '../widgets/reader/reader_chapter_layout.dart';
 import '../widgets/reader/reader_joined_scroll.dart';
 import '../widgets/reader/cue_index.dart';
 import '../widgets/reader/reader_bookmarks_panel.dart';
+import '../widgets/reader/reader_book_panel.dart';
+import '../widgets/reader/reader_book_notes.dart';
 import '../widgets/reader/reader_chrome.dart';
 import '../widgets/reader/reader_classic_chrome.dart';
+import '../widgets/reader/reader_classic_more_sheet.dart';
+import '../widgets/reader/reader_toast.dart';
+import '../widgets/reader/reader_bookmark_ribbon.dart';
+import '../widgets/reader/reader_bookmark_pull.dart';
+import '../widgets/reader/reader_full_search_panel.dart';
 import '../widgets/reader/reader_find_panel.dart';
 import '../widgets/reader/reader_controls.dart';
 import '../widgets/reader/reader_cutout_insets.dart';
@@ -88,6 +103,7 @@ import '../widgets/reader/settings/reader_settings_widgets.dart';
 import '../widgets/wenku/wenku_ui.dart';
 import 'audio_page.dart';
 import 'text_replacement_page.dart';
+import 'detail_page.dart';
 
 part 'reader/reader_page_fields.dart';
 part 'reader/reader_page_listening.dart';
@@ -98,6 +114,8 @@ part 'reader/reader_page_chapter_loading.dart';
 part 'reader/reader_page_ideas.dart';
 part 'reader/reader_page_preferences.dart';
 part 'reader/reader_page_navigation.dart';
+part 'reader/reader_page_book_panel.dart';
+part 'reader/reader_page_full_search.dart';
 part 'reader/reader_page_progress.dart';
 part 'reader/reader_page_build.dart';
 part 'reader/reader_page_content.dart';
@@ -133,6 +151,11 @@ class ReaderPage extends StatefulWidget {
   final String cover;
   final List<Chapter> chapters;
   final int startIndex;
+
+  /// Disable Fanqie-specific online reader actions (comments, listening/video,
+  /// manual downloads and share). This is not a source identifier or a blanket
+  /// disk-cache switch: imported files stay local, while Shuqi uses its own
+  /// loader and source-scoped encrypted automatic cache.
   final bool localOnly;
   final ChapterTextLoader? chapterLoader;
   final ReaderStore? readerStore;
@@ -158,6 +181,8 @@ class ReaderPage extends StatefulWidget {
   /// 加入书架时用的条目（issue #103）。详情页传入原 `MediaItem`，书架卡片因此
   /// 保留作者/徽标等字段；其他入口省略，按 [bookId]/[title]/[cover] 兜底成小说。
   final MediaItem? shelfItem;
+  final BookDetail? bookDetail;
+  final Future<BookDetail> Function()? bookDetailLoader;
 
   const ReaderPage({
     super.key,
@@ -176,6 +201,8 @@ class ReaderPage extends StatefulWidget {
     this.ideasLoader,
     this.commentResolver,
     this.shelfItem,
+    this.bookDetail,
+    this.bookDetailLoader,
     this.underlineStore,
     this.replacementStore,
     this.replacementEngine,
@@ -382,12 +409,14 @@ class _ReaderPageState extends State<ReaderPage>
         : widget.chapters[_index].itemId;
     EinkRefreshService.instance.flashRequest.addListener(_onEinkFlashRequest);
     _scrollController.addListener(_onScroll);
+    _bookmarkStore.changes.addListener(_refreshPageBookmarks);
+    unawaited(_refreshPageBookmarks());
     _preferencesFuture = _loadPreferences();
     if (widget.chapters.isEmpty) {
       _loading = false;
       _error = '暂无可阅读章节';
     } else {
-      if (!widget.localOnly) {
+      if (_usesChapterDiskCache) {
         unawaited(_ensureCatalog().catchError((_) {}));
       }
       _load();
@@ -406,7 +435,7 @@ class _ReaderPageState extends State<ReaderPage>
     final next = widget.chapters.indexWhere((c) => c.itemId == chapterId);
     _index = next < 0 ? _index.clamp(0, widget.chapters.length - 1) : next;
     _catalogFuture = null;
-    if (!widget.localOnly) unawaited(_ensureCatalog().catchError((_) {}));
+    if (_usesChapterDiskCache) unawaited(_ensureCatalog().catchError((_) {}));
     if (next < 0) unawaited(_load());
   }
 
@@ -420,10 +449,17 @@ class _ReaderPageState extends State<ReaderPage>
         MediaQuery.accessibleNavigationOf(context) ||
         !PerformanceScope.of(context).motion;
     if (_reduceReaderMotion) _chrome.value = _controlsVisible ? 1 : 0;
+    final classic = AppUiScope.isClassic(context);
+    if (_readerNoticeClassic != null && _readerNoticeClassic != classic) {
+      _dismissReaderNotice();
+    }
     final current = ModalRoute.isCurrentOf(context) ?? true;
     if (_routeCurrent == current) return;
     _routeCurrent = current;
-    if (!current) _cancelVideoOpen();
+    if (!current) {
+      _cancelVideoOpen();
+      _dismissReaderNotice();
+    }
     // The ideas sheet (#57) holds immersive while it is open. Once this
     // route is current again the sheet is gone, so the hold is released
     // here — the sheet's own finally runs before this notification lands
@@ -447,6 +483,9 @@ class _ReaderPageState extends State<ReaderPage>
 
   @override
   void dispose() {
+    _bookmarkStore.changes.removeListener(_refreshPageBookmarks);
+    _pageBookmarksGeneration++;
+    _readerToastTimer?.cancel();
     _chrome.dispose();
     _locationHighlightTimer?.cancel();
     _progressPreviewActive = false;
@@ -493,6 +532,12 @@ class _ReaderPageState extends State<ReaderPage>
     _einkFlashTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // Keyboard and orientation changes invalidate a transient notice's margin.
+    _dismissReaderNotice();
   }
 
   @override

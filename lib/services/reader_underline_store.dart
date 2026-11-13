@@ -290,6 +290,42 @@ class ReaderUnderlineStore {
         return out;
       }, onUnavailable: const {});
 
+  /// Book-wide reads for the notes panel. Unlike the chapter paint path,
+  /// unavailable storage is an error, so it is never presented as no notes.
+  Future<List<ReaderUnderline>> loadBook(String bookId) => _serialize(
+    (box) async {
+      final out = <ReaderUnderline>[];
+      for (final raw in box.values) {
+        final entry = ReaderUnderline.fromMap(raw);
+        final range = ReaderRangeUnderline.fromMap(raw);
+        if (entry == null && range == null) {
+          throw const FormatException('划线记录无法读取');
+        }
+        if (entry?.bookId == bookId) out.add(entry!);
+      }
+      return out;
+    },
+    onUnavailable: const [],
+    failWhenUnavailable: true,
+  );
+
+  Future<List<ReaderRangeUnderline>> loadBookRanges(String bookId) =>
+      _serialize(
+        (box) async {
+          final out = <ReaderRangeUnderline>[];
+          for (final raw in box.values) {
+            final entry = ReaderRangeUnderline.fromMap(raw);
+            if (entry == null && ReaderUnderline.fromMap(raw) == null) {
+              throw const FormatException('划线记录无法读取');
+            }
+            if (entry?.bookId == bookId) out.add(entry!);
+          }
+          return out;
+        },
+        onUnavailable: const [],
+        failWhenUnavailable: true,
+      );
+
   Future<void> add(ReaderUnderline underline) => _serialize(
     (box) async {
       await box.put(underline.key, underline.toMap());

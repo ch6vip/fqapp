@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/media_item.dart';
+import '../models/shuqi_book.dart';
 import '../services/book_updates.dart';
 import '../services/chapter_cache_store.dart';
 import '../services/connectivity_status.dart';
@@ -10,6 +11,7 @@ import '../services/library_store.dart';
 import '../services/media_history_store.dart';
 import '../services/player_history.dart';
 import '../services/reader_history.dart';
+import '../services/shuqi_reader_source.dart';
 import 'comic_reader_page.dart';
 import 'reader_page.dart';
 
@@ -26,6 +28,11 @@ Future<bool> openRecentBook(
   BookDirectoryLoader? directoryLoader,
 }) async {
   final kind = item.kind;
+  // Shuqi deliberately has no reading history. Never consult a raw book ID:
+  // it may belong to a different Fanqie book with the same numeric ID.
+  if (isShuqiItem(item) || item.id.startsWith('shuqi:')) {
+    return false;
+  }
   if ((kind != 'book' && kind != 'manga') || item.id.isEmpty) return false;
   final isManga = kind == 'manga';
   final store = cache ?? ChapterCacheStore.instance;
@@ -194,9 +201,29 @@ Future<bool> openCachedBook(
   required CachedBook book,
   ChapterCache? cache,
   ReaderStore? readerStore,
+  MediaItem? shelfItem,
 }) async {
   final store = cache ?? ChapterCacheStore.instance;
-  final historyStore = readerStore ?? LibraryStore.instance;
+  final shuqiId = shuqiBookIdFromReaderId(book.id);
+  if (book.id.startsWith('shuqi:') && shuqiId == null) {
+    throw StateError('书旗缓存标识无效，请删除后重新缓存');
+  }
+  final historyStore = shuqiId != null
+      ? const ReadOnlyReaderStore()
+      : readerStore ?? LibraryStore.instance;
+  final sourceItem = shuqiId == null
+      ? shelfItem
+      : shelfItem?.copyWith(id: shuqiId, source: shuqiSourceId) ??
+            MediaItem(
+              id: shuqiId,
+              title: book.title,
+              cover: book.cover,
+              author: '',
+              badge: '',
+              ep: '',
+              kind: 'book',
+              source: shuqiSourceId,
+            );
   final cached = await store.cachedChapterIds(book.id);
   if (cached.isEmpty || !context.mounted) return false;
   Map<String, dynamic>? saved;
@@ -221,6 +248,13 @@ Future<bool> openCachedBook(
         // （见 ReaderPage._loadIdeas），这正是离线可读的前提。
         chapterCache: store,
         readerStore: historyStore,
+        shelfItem: sourceItem,
+        localOnly: shuqiId != null,
+        // This is an offline entry. A missing chapter must never fall through
+        // to the default Fanqie loader or silently become a network request.
+        chapterLoader: shuqiId == null
+            ? null
+            : (_) => Future<String>.error(StateError('此书旗章节未缓存，请联网后从书旗详情打开')),
       ),
     ),
   );
@@ -241,7 +275,9 @@ Future<CachedBook?> cachedBookForOfflineOpen(
   }
   CachedBook? catalogue;
   try {
-    catalogue = await cache.cachedBook(item.id);
+    catalogue = await cache.cachedBook(
+      isShuqiItem(item) ? shuqiReaderId(item.id) : item.id,
+    );
   } catch (_) {
     // 缓存读不出来就照旧走详情页，别把用户卡在书架上。
     return null;

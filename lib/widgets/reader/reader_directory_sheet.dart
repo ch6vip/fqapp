@@ -53,7 +53,13 @@ class ReaderDirectorySheet extends StatefulWidget {
     required this.aiStatuses,
     required this.aiController,
     this.preset = ReaderThemePreset.light,
+    this.embedded = false,
+    this.currentProgress = 0,
   });
+
+  /// The classic book panel owns its header, tabs and bottom actions.
+  final bool embedded;
+  final double currentProgress;
 
   @override
   State<ReaderDirectorySheet> createState() => _ReaderDirectorySheetState();
@@ -91,7 +97,9 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     final groups = <String>{
       for (final chapter in widget.chapters) chapter.volumeName.trim(),
     };
-    final grouped = groups.where((name) => name.isNotEmpty).length > 1;
+    final grouped = widget.embedded
+        ? groups.any((name) => name.isNotEmpty)
+        : groups.where((name) => name.isNotEmpty).length > 1;
     final rows = <({String volume, int? chapter})>[];
     String? previous;
     for (final index in _indexes) {
@@ -141,11 +149,49 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final scaler = MediaQuery.textScalerOf(context);
-    final titleBudget = scaler.scale(15) * 1.35 * 2 + 16;
-    // Classic stacks the AI and cache markers; budget two lines of 11sp so a
-    // large text scale cannot ask for more height than a fixed row allows.
-    // Archive keeps exactly its previous extent.
-    final markerBudget = AppUiScope.isClassic(context)
+    // Keep one maximum extent for direct index/offset fast scrolling. Only
+    // the current row can stack progress, but variable extents would invalidate
+    // those offsets. Measure the same styles/line limits the rows actually use.
+    final titleBudget = widget.embedded
+        ? _measureEmbeddedText(
+                context,
+                '章节\n标题',
+                const TextStyle(fontSize: 15),
+                maxLines: 2,
+              ).height +
+              16 +
+              (widget.currentIndex >= 0 &&
+                      widget.currentIndex < widget.chapters.length
+                  ? _measureEmbeddedText(
+                      context,
+                      '读到100%',
+                      _embeddedMarkerStyle,
+                      maxLines: null,
+                      maxWidth: math.max(
+                        1.0,
+                        MediaQuery.sizeOf(context).width -
+                            32 -
+                            24 -
+                            8 -
+                            _embeddedTrailingWidth(context),
+                      ),
+                    ).height
+                  : 0)
+        : scaler.scale(15) * 1.35 * 2 + 16;
+    // AI and cache each occupy one line, with 14px icons and one 2px gap.
+    final markerBudget = widget.embedded
+        ? math.max(
+                    14.0,
+                    _measureEmbeddedText(
+                      context,
+                      'AI 校对失败',
+                      _embeddedMarkerStyle,
+                    ).height,
+                  ) *
+                  2 +
+              2 +
+              12
+        : AppUiScope.isClassic(context)
         ? scaler.scale(11) * 1.15 * 2 + 12
         : 0.0;
     final extent = math.max(60.0, math.max(titleBudget, markerBudget));
@@ -277,6 +323,90 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
     final currentValid =
         widget.currentIndex >= 0 &&
         widget.currentIndex < widget.chapters.length;
+    final body = LayoutBuilder(
+      builder: (context, constraints) => Column(
+        children: [
+          if (widget.embedded)
+            _embeddedHeader(preset, constraints, currentValid)
+          else if (classic)
+            _classicHeader(preset, constraints, currentValid)
+          else ...[
+            if (MediaQuery.disableAnimationsOf(context) || preset.isEink)
+              _searchField()
+            else
+              AnimatedSize(
+                duration: WenkuMotion.enter,
+                alignment: Alignment.topCenter,
+                child: _searchField(),
+              ),
+            if (currentValid && _query.isEmpty)
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 12, 2),
+                  child: TextButton.icon(
+                    onPressed: _locateCurrent,
+                    icon: const ArchiveIcon(
+                      CupertinoIcons.location_fill,
+                      size: 16,
+                    ),
+                    label: const Text(
+                      '定位当前章',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: preset.accentColor,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+          Expanded(
+            child: _indexes.isEmpty
+                ? Center(
+                    child: Text(
+                      widget.chapters.isEmpty ? '暂无章节' : '没有匹配的章节',
+                      style: TextStyle(color: preset.mutedTextColor),
+                    ),
+                  )
+                : ReaderDirectoryFastScroll(
+                    controller: _scrollController,
+                    chapters: widget.chapters,
+                    indexes: _rowAnchors,
+                    preset: preset,
+                    child: ListView.builder(
+                      key: const ValueKey('reader-directory-scroll'),
+                      controller: _scrollController,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: classic
+                          ? const EdgeInsets.symmetric(vertical: 8)
+                          : const EdgeInsets.fromLTRB(10, 4, 10, 12),
+                      itemExtent: _itemExtent,
+                      itemCount: _rows.length,
+                      itemBuilder: (context, position) =>
+                          switch (_rows[position].chapter) {
+                            final int index =>
+                              classic
+                                  ? _classicRow(context, index, preset)
+                                  : _row(context, index, preset),
+                            null =>
+                              classic
+                                  ? _classicVolumeRow(
+                                      _rows[position].volume,
+                                      preset,
+                                    )
+                                  : _volumeRow(_rows[position].volume, preset),
+                          },
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+    if (widget.embedded) return body;
     return ReaderSettingsSheetFrame(
       preset: preset,
       title: classic ? '目录 · ${widget.chapters.length} 章' : '目录',
@@ -294,92 +424,59 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
               ),
               _orderButton(preset, classic: false),
             ],
-      // 目录是长列表，用有界 body 让列表自己滚动：软键盘弹起时列表底边
-      // 停在键盘上沿，而不是把整块内容继续往下铺到键盘下面。
-      body: LayoutBuilder(
-        builder: (context, constraints) => Column(
-          children: [
-            if (classic)
-              _classicHeader(preset, constraints, currentValid)
-            else ...[
-              if (MediaQuery.disableAnimationsOf(context) || preset.isEink)
-                _searchField()
-              else
-                AnimatedSize(
-                  duration: WenkuMotion.enter,
-                  alignment: Alignment.topCenter,
-                  child: _searchField(),
+      body: body,
+    );
+  }
+
+  Widget _embeddedHeader(
+    ReaderThemePreset preset,
+    BoxConstraints bounds,
+    bool currentValid,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _query.isEmpty
+                      ? '共 ${widget.chapters.length} 章'
+                      : '找到 ${_indexes.length} 章',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: preset.mutedTextColor),
                 ),
-              if (currentValid && _query.isEmpty)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 12, 2),
-                    child: TextButton.icon(
-                      onPressed: _locateCurrent,
-                      icon: const ArchiveIcon(
-                        CupertinoIcons.location_fill,
-                        size: 16,
-                      ),
-                      label: const Text(
-                        '定位当前章',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      style: TextButton.styleFrom(
-                        foregroundColor: preset.accentColor,
-                      ),
-                    ),
-                  ),
-                ),
+              ),
+              IconButton(
+                key: const ValueKey('reader-catalogue-search-toggle'),
+                tooltip: _searchOpen ? '收起章节搜索' : '搜索章节',
+                onPressed: _toggleSearch,
+                icon: const Icon(LucideIcons.search, size: 20),
+              ),
+              IconButton(
+                tooltip: '定位当前章',
+                onPressed: currentValid ? _locateCurrent : null,
+                icon: const Icon(LucideIcons.locate_fixed, size: 20),
+              ),
+              TextButton(
+                key: const ValueKey('reader-catalogue-order'),
+                onPressed: _toggleOrder,
+                style: TextButton.styleFrom(foregroundColor: preset.textColor),
+                child: Text(_reversed ? '正序' : '倒序'),
+              ),
             ],
-            Expanded(
-              child: _indexes.isEmpty
-                  ? Center(
-                      child: Text(
-                        widget.chapters.isEmpty ? '暂无章节' : '没有匹配的章节',
-                        style: TextStyle(color: preset.mutedTextColor),
-                      ),
-                    )
-                  : ReaderDirectoryFastScroll(
-                      controller: _scrollController,
-                      chapters: widget.chapters,
-                      indexes: _rowAnchors,
-                      preset: preset,
-                      child: ListView.builder(
-                        key: const ValueKey('reader-directory-scroll'),
-                        controller: _scrollController,
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: classic
-                            ? const EdgeInsets.symmetric(vertical: 8)
-                            : const EdgeInsets.fromLTRB(10, 4, 10, 12),
-                        itemExtent: _itemExtent,
-                        itemCount: _rows.length,
-                        itemBuilder: (context, position) =>
-                            switch (_rows[position].chapter) {
-                              final int index =>
-                                classic
-                                    ? _classicRow(context, index, preset)
-                                    : _row(context, index, preset),
-                              null =>
-                                classic
-                                    ? _classicVolumeRow(
-                                        _rows[position].volume,
-                                        preset,
-                                      )
-                                    : _volumeRow(
-                                        _rows[position].volume,
-                                        preset,
-                                      ),
-                            },
-                      ),
-                    ),
-            ),
-          ],
+          ),
         ),
-      ),
+        if (_searchOpen && bounds.maxHeight > 140)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: _classicSearchField(preset),
+          ),
+        Divider(height: 1, color: preset.borderColor),
+      ],
     );
   }
 
@@ -535,6 +632,29 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
 
   Widget _classicVolumeRow(String name, ReaderThemePreset preset) {
     final expanded = _query.isNotEmpty || _expandedVolumes.contains(name);
+    if (widget.embedded) {
+      return ListTile(
+        key: ValueKey('reader-volume-$name'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        title: Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 14, color: preset.mutedTextColor),
+        ),
+        trailing: Icon(
+          expanded ? LucideIcons.chevron_down : LucideIcons.chevron_right,
+          size: 16,
+          color: preset.mutedTextColor,
+        ),
+        onTap: _query.isNotEmpty
+            ? null
+            : () => setState(() {
+                if (!_expandedVolumes.add(name)) _expandedVolumes.remove(name);
+                _rebuildRows();
+              }),
+      );
+    }
     final count = widget.chapters
         .where((chapter) => chapter.volumeName == name)
         .length;
@@ -607,6 +727,7 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
   ) {
     final chapter = widget.chapters[index];
     final current = index == widget.currentIndex;
+    if (widget.embedded) return _embeddedRow(index, preset);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: Material(
@@ -668,6 +789,180 @@ class _ReaderDirectorySheetState extends State<ReaderDirectorySheet> {
       ),
     );
   }
+
+  static const _embeddedMarkerStyle = TextStyle(fontSize: 11, height: 1.2);
+
+  Size _measureEmbeddedText(
+    BuildContext context,
+    String text,
+    TextStyle style, {
+    int? maxLines = 1,
+    double maxWidth = double.infinity,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
+      textScaler: MediaQuery.textScalerOf(context),
+      textDirection: Directionality.of(context),
+      maxLines: maxLines,
+    )..layout(maxWidth: maxWidth);
+    final size = painter.size;
+    painter.dispose();
+    return size;
+  }
+
+  Widget _embeddedRow(int index, ReaderThemePreset preset) {
+    final chapter = widget.chapters[index];
+    final current = index == widget.currentIndex;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: preset.borderColor, width: .5),
+          ),
+        ),
+        child: Semantics(
+          selected: current,
+          button: true,
+          child: InkWell(
+            key: ValueKey('reader-directory-row-$index'),
+            onTap: () => Navigator.pop(context, index),
+            child: SizedBox(
+              height: _itemExtent,
+              child: Row(
+                children: [
+                  if (current) ...[
+                    Icon(
+                      LucideIcons.locate_fixed,
+                      color: preset.accentColor,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, bounds) {
+                        final title = Text(
+                          chapter.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: current
+                                ? preset.accentColor
+                                : preset.textColor,
+                          ),
+                        );
+                        if (!current) return title;
+                        final progressLabel =
+                            '读到${(widget.currentProgress.clamp(0, 1) * 100).round()}%';
+                        final progress = Text(
+                          progressLabel,
+                          key: const ValueKey(
+                            'reader-directory-title-progress',
+                          ),
+                          style: _embeddedMarkerStyle.copyWith(
+                            color: preset.mutedTextColor,
+                          ),
+                        );
+                        final progressWidth = _measureEmbeddedText(
+                          context,
+                          progressLabel,
+                          _embeddedMarkerStyle,
+                        ).width;
+                        final readableTitleWidth =
+                            MediaQuery.textScalerOf(context).scale(15) * 6;
+                        if (bounds.maxWidth - progressWidth - 6 <
+                            readableTitleWidth) {
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [title, progress],
+                          );
+                        }
+                        return Row(
+                          children: [
+                            Flexible(child: title),
+                            const SizedBox(width: 6),
+                            progress,
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: _embeddedTrailingWidth(context),
+                    ),
+                    child: _embeddedMarkers(chapter, preset),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _embeddedMarkers(Chapter chapter, ReaderThemePreset preset) {
+    final status = _statusFor(chapter);
+    final cached = widget.cachedIds.contains(chapter.itemId);
+    final label = switch (status?.state) {
+      AiChapterCheckState.checked => 'AI 已校对',
+      AiChapterCheckState.failed => 'AI 校对失败',
+      AiChapterCheckState.running => 'AI 校对中',
+      AiChapterCheckState.unchecked => 'AI 未校对',
+      null => null,
+    };
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (label != null)
+          _embeddedLabel(label, switch (status!.state) {
+            AiChapterCheckState.checked => Icons.check_circle_outline,
+            AiChapterCheckState.failed => Icons.error_outline,
+            AiChapterCheckState.running => Icons.hourglass_top,
+            AiChapterCheckState.unchecked => Icons.circle_outlined,
+          }, preset),
+        if (label != null && cached) const SizedBox(height: 2),
+        if (cached) _embeddedLabel('已缓存', Icons.download_outlined, preset),
+      ],
+    );
+  }
+
+  Widget _embeddedLabel(
+    String label,
+    IconData icon,
+    ReaderThemePreset preset,
+  ) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      ExcludeSemantics(
+        child: Icon(icon, size: 14, color: preset.mutedTextColor),
+      ),
+      const SizedBox(width: 5),
+      Flexible(
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.end,
+          style: _embeddedMarkerStyle.copyWith(color: preset.mutedTextColor),
+        ),
+      ),
+    ],
+  );
+
+  double _embeddedTrailingWidth(BuildContext context) => math.min(
+    math.max(1, MediaQuery.sizeOf(context).width - 32) * .5,
+    MediaQuery.textScalerOf(context).scale(11) * 6 + 19,
+  );
 
   /// Width the classic trailing column may take: the widest marker label at
   /// the current text scale, capped to a third of the row so the chapter title

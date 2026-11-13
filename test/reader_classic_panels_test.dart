@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fqapp/models/book_detail.dart';
 import 'package:fqapp/models/media_item.dart';
 import 'package:fqapp/models/text_replacement_rule.dart';
 import 'package:fqapp/pages/reader_page.dart';
@@ -23,6 +24,7 @@ import 'package:fqapp/services/text_replacement_store.dart';
 import 'package:fqapp/widgets/app_ui/app_ui_scope.dart';
 import 'package:fqapp/widgets/reader/reader_appearance_sheet.dart';
 import 'package:fqapp/widgets/reader/reader_bookmarks_panel.dart';
+import 'package:fqapp/widgets/reader/reader_classic_chrome.dart';
 import 'package:fqapp/widgets/reader/reader_directory_sheet.dart';
 import 'package:fqapp/widgets/reader/reader_find_panel.dart';
 import 'package:fqapp/widgets/reader/reader_paged_view.dart';
@@ -379,8 +381,14 @@ void main() {
       final matchStart = body.start + body.text.indexOf(target);
       final expectedPage = layout.pageForOffset(matchStart);
 
+      // Chapter-local find remains an archive entry. Keep the same live route
+      // and result offsets while switching its renderer to classic.
+      await store.select(AppThemeStyle.archive);
+      await tester.pumpAndSettle();
       await _openControls(tester);
       await tester.tap(find.byKey(const ValueKey('reader-find-entry')));
+      await tester.pumpAndSettle();
+      await store.select(AppThemeStyle.classic);
       await tester.pumpAndSettle();
       expect(find.byType(ReaderSettingsSheetFrame), findsOneWidget);
       await tester.enterText(
@@ -1369,22 +1377,27 @@ void main() {
     await _mountReader(tester, store, marks);
     await _openControls(tester);
 
-    // Save a bookmark in chapter one.
-    await _openClassicBookmarks(tester);
-    await tester.tap(find.byKey(const ValueKey('reader-add-bookmark')));
+    // The more sheet adds immediately at the current source position.
+    await tester.tap(find.byKey(const ValueKey('reader-classic-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('classic-reader-add-bookmark')));
     await tester.pumpAndSettle();
     expect(marks.records, hasLength(1));
     expect(marks.records.single.chapterId, 'c1');
-    Navigator.of(
-      tester.element(find.byKey(const ValueKey('reader-bookmarks-scroll'))),
-    ).pop();
-    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reader-bookmarks-scroll')), findsNothing);
+    expect(find.text('已添加书签'), findsOneWidget);
 
-    // Move to chapter two through the classic directory.
+    // The unified book panel opens on its directory tab.
     await _openControls(tester);
     await tester.tap(find.byKey(const ValueKey('reader-catalogue-entry')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('第二章'));
+    expect(find.byKey(const ValueKey('reader-book-panel')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('reader-catalogue-search-toggle')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('reader-chapter-search')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reader-directory-row-1')));
     await tester.pumpAndSettle();
     expect(find.textContaining('c2 第 0 段'), findsOneWidget);
 
@@ -1397,7 +1410,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('c1 第 0 段'), findsOneWidget);
     await _openControls(tester);
-    expect(find.text('正在阅读 · 第 1 章'), findsOneWidget);
+    expect(
+      tester
+          .widget<ReaderClassicControls>(find.byType(ReaderClassicControls))
+          .chapterIndex,
+      0,
+    );
+    expect(
+      find.byKey(const ValueKey('reader-classic-chapter-label')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 }
@@ -1664,9 +1686,10 @@ Future<void> _closeSettings(WidgetTester tester) async {
 
 Future<void> _openControls(WidgetTester tester) async {
   if (find
-      .byKey(const ValueKey('reader-classic-toolbar'))
-      .evaluate()
-      .isNotEmpty) {
+          .byKey(const ValueKey('reader-classic-toolbar'))
+          .evaluate()
+          .isNotEmpty ||
+      find.byKey(const ValueKey('reader-toolbar')).evaluate().isNotEmpty) {
     return;
   }
   await tester.tapAt(
@@ -1675,13 +1698,15 @@ Future<void> _openControls(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// 经典主题的“书签”已移入顶栏“更多”二级菜单，必须先开菜单再点条目。
+/// 更多菜单分别提供添加书签和书签管理。
 Future<void> _openClassicBookmarks(WidgetTester tester) async {
+  await _openControls(tester);
   await tester.tap(find.byKey(const ValueKey('reader-classic-more')));
   await tester.pumpAndSettle();
-  await tester.tap(
-    find.byKey(const ValueKey('classic-reader-bookmarks-entry')),
-  );
+  final marks = find.byKey(const ValueKey('classic-reader-bookmarks'));
+  await tester.ensureVisible(marks);
+  await tester.pumpAndSettle();
+  await tester.tap(marks);
   await tester.pumpAndSettle();
 }
 
@@ -1707,6 +1732,12 @@ Future<void> _mountReader(
           child: ReaderPage(
             bookId: 'classic-panels',
             title: '经典面板测试',
+            bookDetail: const BookDetail(
+              bookId: 'classic-panels',
+              title: '经典面板测试',
+              author: BookAuthor(name: '测试作者', id: 'classic-panels-author'),
+              abstract: '用于经典阅读面板测试的本地书籍详情。',
+            ),
             chapters: [
               Chapter(itemId: 'c1', title: '第一章', volumeName: '正文'),
               Chapter(itemId: 'c2', title: '第二章', volumeName: '正文'),

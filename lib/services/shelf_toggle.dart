@@ -12,21 +12,31 @@ bool inShelf(MediaItem item) => ShelfStore.instance.containsItem(item);
 /// 切换 [item] 的书架状态并提示结果。
 ///
 /// 书架不可用（Hive 没起来）时只提示、不抛异常，也不假装成功。
-Future<void> toggleShelf(BuildContext context, MediaItem item) async {
+Future<void> toggleShelf(
+  BuildContext context,
+  MediaItem item, {
+  ValueChanged<String>? onMessage,
+}) async {
   if (!ShelfStore.instance.isReady) {
     if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
+      if (onMessage != null) {
+        onMessage('本地书架暂不可用，请重试');
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('本地书架暂不可用，请重试')));
+      }
     }
     return;
   }
   final added = await ShelfStore.instance.toggle(item);
   if (!context.mounted) return;
+  final message = added ? '已加入书架' : '已移出书架';
+  if (onMessage != null) {
+    onMessage(message);
+    return;
+  }
   ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(added ? '已加入书架' : '已移出书架'),
-      duration: const Duration(seconds: 2),
-    ),
+    SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
   );
 }

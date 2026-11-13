@@ -7,7 +7,7 @@ import '../models/shuqi_book.dart';
 import '../services/api_client.dart';
 import '../services/app_style_tokens.dart';
 import '../services/app_theme_style.dart';
-import '../services/library_store.dart';
+import '../services/shuqi_reader_source.dart';
 import '../services/user_facing_error.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/app_ui/content_anchor.dart';
@@ -26,9 +26,9 @@ part 'detail/shuqi_detail_classic.dart';
 /// 行内目录和底部玻璃操作坞；经典主题走 `detail/shuqi_detail_classic.dart`
 /// 的旧版式（Material AppBar、封面头部、简介与目录行），两者共用同一个
 /// `_ShuqiDetailPageState` 和同一批 loader。书旗只读取上游内容，支持加入本机
-/// 书架，但不写阅读历史、不下载。阅读器以 `localOnly: true` 打开，从而跳过
-/// 番茄那套目录同步与磁盘缓存；进度/阅读时长写入靠 [_ReadOnlyReaderStore]
-/// 丢弃。
+/// 书架，但不写阅读历史、不提供手动下载入口。阅读器以 `localOnly: true`
+/// 打开，使用书旗正文加载器，并以 `shuqi:` 作用域复用磁盘章节缓存；
+/// 进度/阅读时长写入靠 [ReadOnlyReaderStore] 丢弃。
 ///
 /// 书旗 bookId 与番茄同为纯数字，所以在阅读器里加 `shuqi:` 前缀，避免两套 id
 /// 在同一条进度/缓存键上相撞。
@@ -179,28 +179,17 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
       context,
       MaterialPageRoute<void>(
         builder: (_) => ReaderPage(
-          bookId: 'shuqi:${widget.bookId}',
+          bookId: shuqiReaderId(widget.bookId),
           title: book.name,
           cover: book.coverUrl,
           shelfItem: book.toMediaItem(),
           chapters: toc.toReaderChapters(),
           startIndex: start,
           localOnly: true,
-          // `localOnly` 只关掉目录同步与磁盘缓存；`_persistProgress` 仍会写
-          // 历史（kind=book, id=shuqi:<id>），污染本机历史与阅读统计。
-          readerStore: const _ReadOnlyReaderStore(),
-          chapterLoader: (chapter) async {
-            final payload = await ApiClient.instance.shuqiChapter(
-              widget.bookId,
-              chapter.itemId,
-            );
-            final data = payload['data'];
-            final text = data is Map ? data['content'] : null;
-            if (text is! String || text.isEmpty) {
-              throw StateError('这一章没有取到正文（${chapter.title}）');
-            }
-            return text;
-          },
+          // `localOnly` 关闭番茄在线功能，不禁止书旗独立作用域的自动缓存。
+          // 历史与时长仍须由只读 store 拦截，不能写入本机阅读统计。
+          readerStore: const ReadOnlyReaderStore(),
+          chapterLoader: (chapter) => loadShuqiChapter(widget.bookId, chapter),
         ),
       ),
     );
@@ -570,49 +559,4 @@ class _ShuqiDetailPageState extends State<ShuqiDetailPage> {
       ),
     );
   }
-}
-
-/// 只读阅读会话的存储：读取一律为空，写入一律丢弃。
-///
-/// 书旗是第三方只读源，`shuqi:<id>` 不该出现在本机历史、阅读统计或已看集合
-/// 里。`ReaderPage` 只有一个 [ReaderStore] 注入点，且进度保存不受 `localOnly`
-/// 控制，所以用这个空实现挡住 `_persistProgress` / `_settleReadTime` 的写入。
-class _ReadOnlyReaderStore implements ReaderStore {
-  const _ReadOnlyReaderStore();
-
-  @override
-  Future<Map<String, dynamic>?> historyEntry(String id) async => null;
-
-  @override
-  Future<void> addHistory(Map<String, dynamic> entry) async {}
-
-  @override
-  Future<void> updateProgress(
-    String id,
-    int episode,
-    double progress, {
-    String? chapterId,
-    double? position,
-    double? maxScroll,
-  }) async {}
-
-  @override
-  Future<void> accumulateReadTime(
-    String bookId,
-    String kind,
-    double seconds, {
-    DateTime? at,
-  }) async {}
-
-  @override
-  Future<Set<String>> watchedEpisodeIds(String id) async => const {};
-
-  @override
-  Future<void> markEpisodeWatched(
-    String id,
-    Iterable<String> episodeIds,
-  ) async {}
-
-  @override
-  Future<void> forgetWatchedEpisodes(String id) async {}
 }

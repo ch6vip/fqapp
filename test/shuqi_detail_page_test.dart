@@ -1,10 +1,31 @@
+import 'dart:convert';
+
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/pages/reader_page.dart';
 import 'package:fqapp/pages/shuqi_detail_page.dart';
+import 'package:fqapp/services/secure_key_provider.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const secureKeys = MethodChannel('fqapp/secure_keys');
+  setUp(() {
+    SecureKeyProvider.instance.resetForTest();
+    // Opening Shuqi now initializes the encrypted chapter catalogue. Resolve
+    // its platform dependency instead of leaving a native-key timeout pending.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(secureKeys, (call) async {
+          if (call.method == 'read') return base64Encode(List.filled(32, 7));
+          return null;
+        });
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(secureKeys, null);
+    SecureKeyProvider.instance.resetForTest();
+  });
   testWidgets('a toc failure keeps the book detail and offers a retry', (
     tester,
   ) async {

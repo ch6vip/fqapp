@@ -159,11 +159,16 @@ class _ReaderMoreSettingsSheetState
       widget.category == ReaderBehaviorCategory.all ||
       widget.category == category;
 
+  bool get _compactForm =>
+      AppUiScope.isClassic(context) &&
+      widget.category == ReaderBehaviorCategory.all &&
+      !widget.embedded;
+
   @override
   Widget build(BuildContext context) {
     final children = <Widget>[
       if (widget.category == ReaderBehaviorCategory.all) ...[
-        const ReaderSettingsSectionHeader(title: '排版'),
+        if (!_compactForm) const ReaderSettingsSectionHeader(title: '排版'),
         ReaderTypographySettings(
           value: value,
           onChanged: commitPreferences,
@@ -196,6 +201,7 @@ class _ReaderMoreSettingsSheetState
         ),
       ],
       if (_shows(ReaderBehaviorCategory.page)) ...[
+        if (_compactForm) const ReaderSettingsDivider(),
         const ReaderSettingsSectionHeader(title: '显示'),
         _infoModeRow(),
         ReaderSettingsSwitchRow(
@@ -231,7 +237,10 @@ class _ReaderMoreSettingsSheetState
       if (_shows(ReaderBehaviorCategory.theme) &&
           (widget.einkOverride || value.themePreset == ReaderThemePreset.eink))
         _einkRefreshRow(),
-      if (_shows(ReaderBehaviorCategory.listening)) _listeningSection(),
+      if (_shows(ReaderBehaviorCategory.listening)) ...[
+        if (_compactForm) const ReaderSettingsDivider(),
+        _listeningSection(),
+      ],
       if (_shows(ReaderBehaviorCategory.operations)) ...[
         if (!isLinuxDesktop) ...[
           const ReaderSettingsDivider(),
@@ -251,14 +260,17 @@ class _ReaderMoreSettingsSheetState
         children: children,
       );
     }
-    return ReaderSettingsSheetFrame(
-      preset: _displayPreset,
-      title: '更多设置',
-      closeTooltip: '关闭更多设置',
-      scrollKey: const ValueKey('reader-more-settings-scroll'),
-      maxHeightFactor: 0.75,
-      onClose: flushPreferences,
-      children: children,
+    return ReaderSettingsFormLayout(
+      compact: _compactForm,
+      child: ReaderSettingsSheetFrame(
+        preset: _displayPreset,
+        title: '更多设置',
+        closeTooltip: '关闭更多设置',
+        scrollKey: const ValueKey('reader-more-settings-scroll'),
+        maxHeightFactor: 0.75,
+        onClose: flushPreferences,
+        children: children,
+      ),
     );
   }
 
@@ -335,6 +347,27 @@ class _ReaderMoreSettingsSheetState
   Widget _highlightStylePicker() {
     final preset = ReaderSettingsTheme.of(context);
     final selected = value.narrationHighlightStyle;
+    if (_compactForm) {
+      return ReaderSettingsChipRow(
+        children: [
+          for (final (style, label) in const <(int?, String)>[
+            (null, '自动'),
+            (ReaderPreferences.narrationHighlightStyleWash, '背景'),
+            (ReaderPreferences.narrationHighlightStyleUnderline, '下划线'),
+          ])
+            ReaderSettingsChip(
+              key: ValueKey('reader-narration-style-${style ?? 'auto'}'),
+              label: label,
+              selected: selected == style,
+              onTap: () => _apply(
+                (current) => style == null
+                    ? current.copyWith(autoNarrationHighlightStyle: true)
+                    : current.copyWith(narrationHighlightStyle: style),
+              ),
+            ),
+        ],
+      );
+    }
 
     Widget chip(int? style, String label) {
       final active = selected == style;
@@ -395,35 +428,48 @@ class _ReaderMoreSettingsSheetState
               preset.panelColor,
             )
           : Color(argb);
-      return Padding(
-        padding: const EdgeInsets.only(right: 10),
-        child: InkWell(
-          key: ValueKey('reader-narration-color-${argb ?? 'auto'}'),
-          borderRadius: BorderRadius.circular(18),
-          onTap: () => _apply(
-            (current) => argb == null
-                ? current.copyWith(autoNarrationHighlightColor: true)
-                : current.copyWith(narrationHighlightColor: argb),
-          ),
-          child: Container(
-            width: 26,
-            height: 26,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: active
-                    ? preset.textColor
-                    : preset.textColor.withValues(alpha: 0.25),
-                width: active ? 2 : 1,
-              ),
-            ),
-            child: argb == null
-                ? Icon(Icons.auto_awesome, size: 13, color: preset.textColor)
-                : null,
+      final swatch = Container(
+        width: 26,
+        height: 26,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: active
+                ? preset.textColor
+                : preset.textColor.withValues(alpha: 0.25),
+            width: active ? 2 : 1,
           ),
         ),
+        child: argb == null
+            ? Icon(Icons.auto_awesome, size: 13, color: preset.textColor)
+            : null,
+      );
+      final target = InkWell(
+        key: ValueKey('reader-narration-color-${argb ?? 'auto'}'),
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _apply(
+          (current) => argb == null
+              ? current.copyWith(autoNarrationHighlightColor: true)
+              : current.copyWith(narrationHighlightColor: argb),
+        ),
+        child: _compactForm
+            ? SizedBox(width: 48, height: 48, child: Center(child: swatch))
+            : swatch,
+      );
+      return Padding(
+        padding: EdgeInsets.only(right: _compactForm ? 0 : 10),
+        child: _compactForm
+            ? Semantics(
+                button: true,
+                selected: active,
+                label: argb == null
+                    ? '自动高亮颜色'
+                    : '高亮颜色 ${ReaderPreferences.narrationHighlightPresets.indexOf(argb) + 1}',
+                child: target,
+              )
+            : target,
       );
     }
 

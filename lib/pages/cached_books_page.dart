@@ -23,7 +23,9 @@ import '../models/media_item.dart';
 import '../services/api_client.dart';
 import '../services/book_txt_export.dart';
 import '../services/chapter_cache_store.dart';
+import '../services/chapter_text_formatter.dart';
 import '../services/library_store.dart';
+import '../services/shuqi_reader_source.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/cache/cache_list_anchor.dart';
 import '../widgets/cache/cache_page_widgets.dart';
@@ -41,6 +43,13 @@ class CachedBooksPage extends StatefulWidget {
   /// 注入后测试可完全离线（与详情页的 loader 注入同一套路）。
   final Future<List<Chapter>> Function(String bookId)? exportDirectoryLoader;
   final Future<String> Function(Chapter chapter)? exportChapterLoader;
+
+  /// Shuqi exports have separate loaders so a missing override can never
+  /// dispatch a source-qualified cache ID through the Fanqie endpoints.
+  final Future<Map<String, dynamic>> Function(String bookId)?
+  exportShuqiTocLoader;
+  final Future<Map<String, dynamic>> Function(String bookId, String chapterId)?
+  exportShuqiChapterLoader;
   final TxtSink? exportSink;
 
   const CachedBooksPage({
@@ -49,6 +58,8 @@ class CachedBooksPage extends StatefulWidget {
     this.readerStore,
     this.exportDirectoryLoader,
     this.exportChapterLoader,
+    this.exportShuqiTocLoader,
+    this.exportShuqiChapterLoader,
     this.exportSink,
   });
 
@@ -194,16 +205,65 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
     return [for (final volume in volumes) ...volume];
   }
 
+  Future<String> _loadShuqiExportChapter(
+    CachedBook book,
+    String shuqiId,
+    Chapter chapter, {
+    required bool Function() isActive,
+  }) async {
+    try {
+      final cached = await _store.read(
+        bookId: book.id,
+        chapterId: chapter.itemId,
+      );
+      if (cached != null) {
+        final text = ChapterContent.fromCacheText(
+          cached,
+        ).withoutLeadingTitle(chapter.title).legacyText;
+        if (text.trim().isNotEmpty) return text;
+      }
+    } catch (_) {
+      // Damaged or unavailable cache falls back only to its original source.
+    }
+    // Cache reads may outlive cancellation. Do not start a missing chapter's
+    // network request after this export has been cancelled or replaced.
+    if (!isActive()) throw StateError('导出已取消');
+    return loadShuqiChapter(
+      shuqiId,
+      chapter,
+      loader: widget.exportShuqiChapterLoader,
+    );
+  }
+
   /// Starts one whole-book export at a time. Its row can cancel fetching, but
   /// must wait for the platform result once saving begins.
   void _startExport(CachedBook book) {
     if (_export != null) return;
-    final export = BookTxtExport(
-      directoryLoader: widget.exportDirectoryLoader ?? _loadExportDirectory,
-      // 取文只经 ApiClient：CRIT-005 要求业务请求都过它的 _get 漏斗。
-      chapterLoader:
-          widget.exportChapterLoader ??
-          (chapter) => ApiClient.instance.contentText(chapter.itemId),
+    final shuqiId = shuqiBookIdFromReaderId(book.id);
+    if (book.id.startsWith('shuqi:') && shuqiId == null) {
+      _snack('书旗缓存标识无效，请删除后重新缓存');
+      return;
+    }
+    late final BookTxtExport export;
+    export = BookTxtExport(
+      directoryLoader: shuqiId == null
+          ? widget.exportDirectoryLoader ?? _loadExportDirectory
+          : (_) => loadShuqiDirectory(
+              shuqiId,
+              loader: widget.exportShuqiTocLoader,
+            ),
+      // Both sources keep ApiClient's request funnel. Only Shuqi may reuse
+      // its namespaced cached body; the fresh TOC still covers the whole book.
+      chapterLoader: shuqiId == null
+          ? widget.exportChapterLoader ??
+                (chapter) => ApiClient.instance.contentText(chapter.itemId)
+          : (chapter) => _loadShuqiExportChapter(
+              book,
+              shuqiId,
+              chapter,
+              isActive: () =>
+                  identical(_export, export) && export.value.running,
+            ),
       sink: widget.exportSink ?? const PlatformTxtSink(),
     );
     export.addListener(_onExportChanged);
@@ -237,6 +297,9 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
       SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
     );
   }
+
+  String _sourceLabel(CachedBook book) =>
+      book.id.startsWith('shuqi:') ? '书旗' : '番茄';
 
   Color _deleteColor(BuildContext context) =>
       HomePalette.of(context).eink ? Colors.black : ShelfTokens.deleteRed;
@@ -359,6 +422,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
                       ),
                       const SizedBox(height: 7),
                       AppText(
+                        '${_sourceLabel(item.book)} · '
                         '${item.stats.chapterCount}/'
                         '${item.book.chapters.length} 章'
                         ' · ${formatCacheBytes(item.stats.byteCount)}',
@@ -412,6 +476,7 @@ class _CachedBooksPageState extends State<CachedBooksPage> {
             iconTile: true,
             title: item.book.title,
             subtitle:
+                '${_sourceLabel(item.book)} · '
                 '${item.stats.chapterCount}/'
                 '${item.book.chapters.length} 章'
                 ' · ${formatCacheBytes(item.stats.byteCount)}',

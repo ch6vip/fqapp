@@ -66,15 +66,43 @@ class ReaderTypographySettings extends StatelessWidget {
         apply: apply,
       );
     }
-    return ReaderValueSlider(
-      sliderKey: ValueKey(id),
-      label: label,
-      value: current,
-      min: min,
-      max: max,
-      divisions: divisions,
-      format: format,
-      onCommitted: (next) => _apply((prefs) => apply(prefs, next)),
+    return Builder(
+      builder: (context) {
+        final compact = ReaderSettingsFormLayout.isCompact(context);
+        final slider = ReaderValueSlider(
+          sliderKey: ValueKey(id),
+          label: label,
+          value: current,
+          min: min,
+          max: max,
+          divisions: divisions,
+          format: format,
+          inline: compact,
+          leading: compact
+              ? Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: ReaderSettingsTheme.of(context).textColor,
+                  ),
+                )
+              : null,
+          preset: compact ? ReaderSettingsTheme.of(context) : null,
+          onPreview: compact
+              ? (next) => _apply((prefs) => apply(prefs, next))
+              : null,
+          onCommitted: (next) => _apply((prefs) => apply(prefs, next)),
+        );
+        return compact
+            ? Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: ReaderSettingsFormLayout.gutterOf(context),
+                  vertical: 2,
+                ),
+                child: slider,
+              )
+            : slider;
+      },
     );
   }
 
@@ -82,90 +110,103 @@ class ReaderTypographySettings extends StatelessWidget {
       category == ReaderTypographyCategory.all || category == target;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      if (_shows(ReaderTypographyCategory.font)) ...[
-        _slider(
-          id: 'reader-font-size',
-          label: '字号',
-          current: value.fontSize,
-          min: 14,
-          max: 32,
-          divisions: 18,
-          format: (n) => '${n.round()} pt',
-          apply: (prefs, n) => prefs.copyWith(fontSize: n),
-        ),
-        _item(_weightRow()),
-        _slider(
-          id: 'reader-letter-spacing',
-          label: '字距',
-          current: value.letterSpacing,
-          min: -0.5,
-          max: 3,
-          divisions: 35,
-          format: (n) => n.toStringAsFixed(1),
-          apply: (prefs, n) => prefs.copyWith(letterSpacing: n),
-        ),
-        _slider(
-          id: 'reader-title-size',
-          label: '标题字号',
-          current: value.titleSize,
-          min: 16,
-          max: 40,
-          divisions: 24,
-          format: (n) => '${n.round()} pt',
-          apply: (prefs, n) => prefs.copyWith(titleSize: n),
-        ),
-        _item(_titleAlignmentRow()),
+  Widget build(BuildContext context) {
+    final compact = ReaderSettingsFormLayout.isCompact(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_shows(ReaderTypographyCategory.font)) ...[
+          if (compact) const ReaderSettingsSectionHeader(title: '文字与标题'),
+          _slider(
+            id: 'reader-font-size',
+            label: '字号',
+            current: value.fontSize,
+            min: 14,
+            max: 32,
+            divisions: 18,
+            format: (n) => '${n.round()} pt',
+            apply: (prefs, n) => prefs.copyWith(fontSize: n),
+          ),
+          _item(_weightRow()),
+          _slider(
+            id: 'reader-letter-spacing',
+            label: '字距',
+            current: value.letterSpacing,
+            min: -0.5,
+            max: 3,
+            divisions: 35,
+            format: (n) => n.toStringAsFixed(1),
+            apply: (prefs, n) => prefs.copyWith(letterSpacing: n),
+          ),
+          _slider(
+            id: 'reader-title-size',
+            label: '标题字号',
+            current: value.titleSize,
+            min: 16,
+            max: 40,
+            divisions: 24,
+            format: (n) => '${n.round()} pt',
+            apply: (prefs, n) => prefs.copyWith(titleSize: n),
+          ),
+          _item(_titleAlignmentRow()),
+        ],
+        if (_shows(ReaderTypographyCategory.paragraph)) ...[
+          if (compact) ...[
+            const ReaderSettingsDivider(),
+            const ReaderSettingsSectionHeader(title: '段落间距'),
+          ],
+          _slider(
+            id: 'reader-line-height',
+            label: '行距',
+            current: value.lineHeight,
+            min: 1.2,
+            max: 2.4,
+            divisions: 12,
+            format: (n) => '${n.toStringAsFixed(1)} 倍',
+            apply: (prefs, n) => prefs.copyWith(lineHeight: n),
+          ),
+          _slider(
+            id: 'reader-paragraph-spacing',
+            label: '段距',
+            current: value.paragraphSpacing,
+            min: 0,
+            max: 32,
+            divisions: 16,
+            format: (n) => n.round().toString(),
+            apply: (prefs, n) => prefs.copyWith(paragraphSpacing: n),
+          ),
+        ],
+        if (_shows(ReaderTypographyCategory.page)) ...[
+          if (compact) ...[
+            const ReaderSettingsDivider(),
+            const ReaderSettingsSectionHeader(title: '页面留白'),
+          ],
+          _slider(
+            id: 'reader-horizontal-padding',
+            label: '左右边距',
+            current: value.horizontalPadding,
+            min: 8,
+            max: 48,
+            divisions: 20,
+            format: (n) => n.round().toString(),
+            apply: (prefs, n) => prefs.copyWith(horizontalPadding: n),
+          ),
+          _slider(
+            id: 'reader-vertical-padding',
+            label: '上下边距',
+            current: value.verticalPadding,
+            min: 0,
+            max: 64,
+            divisions: 16,
+            format: (n) => n.round().toString(),
+            apply: (prefs, n) => prefs.copyWith(verticalPadding: n),
+          ),
+        ],
+        if (_shows(ReaderTypographyCategory.font))
+          _item(_restoreButton(context)),
       ],
-      if (_shows(ReaderTypographyCategory.paragraph)) ...[
-        _slider(
-          id: 'reader-line-height',
-          label: '行距',
-          current: value.lineHeight,
-          min: 1.2,
-          max: 2.4,
-          divisions: 12,
-          format: (n) => '${n.toStringAsFixed(1)} 倍',
-          apply: (prefs, n) => prefs.copyWith(lineHeight: n),
-        ),
-        _slider(
-          id: 'reader-paragraph-spacing',
-          label: '段距',
-          current: value.paragraphSpacing,
-          min: 0,
-          max: 32,
-          divisions: 16,
-          format: (n) => n.round().toString(),
-          apply: (prefs, n) => prefs.copyWith(paragraphSpacing: n),
-        ),
-      ],
-      if (_shows(ReaderTypographyCategory.page)) ...[
-        _slider(
-          id: 'reader-horizontal-padding',
-          label: '左右边距',
-          current: value.horizontalPadding,
-          min: 8,
-          max: 48,
-          divisions: 20,
-          format: (n) => n.round().toString(),
-          apply: (prefs, n) => prefs.copyWith(horizontalPadding: n),
-        ),
-        _slider(
-          id: 'reader-vertical-padding',
-          label: '上下边距',
-          current: value.verticalPadding,
-          min: 0,
-          max: 64,
-          divisions: 16,
-          format: (n) => n.round().toString(),
-          apply: (prefs, n) => prefs.copyWith(verticalPadding: n),
-        ),
-      ],
-      if (_shows(ReaderTypographyCategory.font)) _item(_restoreButton(context)),
-    ],
-  );
+    );
+  }
 
   Widget _weightRow() => ReaderSettingsRow(
     label: '字重',
@@ -207,15 +248,23 @@ class ReaderTypographySettings extends StatelessWidget {
 
   Widget _restoreButton(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    final compact = ReaderSettingsFormLayout.isCompact(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: compact
+          ? EdgeInsets.fromLTRB(
+              ReaderSettingsFormLayout.gutterOf(context),
+              4,
+              ReaderSettingsFormLayout.gutterOf(context),
+              4,
+            )
+          : const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Center(
         child: TextButton(
           key: const ValueKey('reader-restore-defaults'),
           style: TextButton.styleFrom(
             backgroundColor: preset.fieldColor,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            minimumSize: const Size(0, 32),
+            minimumSize: Size(compact ? 48 : 0, compact ? 48 : 32),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(30),
             ),

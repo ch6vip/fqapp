@@ -222,6 +222,31 @@ class ReaderSettingsSheetFrame extends StatelessWidget {
   }
 }
 
+/// Opt-in density for the classic reader's standalone more-settings form.
+/// Other readers of these shared widgets retain their existing geometry.
+class ReaderSettingsFormLayout extends InheritedWidget {
+  const ReaderSettingsFormLayout({
+    super.key,
+    required this.compact,
+    required super.child,
+  });
+
+  final bool compact;
+
+  static bool isCompact(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<ReaderSettingsFormLayout>()
+          ?.compact ??
+      false;
+
+  static double gutterOf(BuildContext context) =>
+      MediaQuery.sizeOf(context).width <= 360 ? 16 : 20;
+
+  @override
+  bool updateShouldNotify(ReaderSettingsFormLayout oldWidget) =>
+      compact != oldWidget.compact;
+}
+
 /// 一行设置：短标签 + 控件。标签允许换行，不截断。
 class ReaderSettingsRow extends StatelessWidget {
   const ReaderSettingsRow({
@@ -236,6 +261,43 @@ class ReaderSettingsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    if (ReaderSettingsFormLayout.isCompact(context)) {
+      final label = Text(
+        this.label,
+        style: TextStyle(color: preset.textColor, fontSize: 14),
+      );
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: ReaderSettingsFormLayout.gutterOf(context),
+          vertical: 4,
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final labelWidth =
+                MediaQuery.textScalerOf(context).scale(14) * 4 + 8;
+            final controlWidth = child is ReaderSettingsChipRow
+                ? (child as ReaderSettingsChipRow)._neededWidth(context)
+                : 168.0;
+            if (labelWidth + 12 + controlWidth > constraints.maxWidth) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [label, const SizedBox(height: 4), child],
+              );
+            }
+            return ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(
+                children: [
+                  SizedBox(width: labelWidth, child: label),
+                  const SizedBox(width: 12),
+                  Expanded(child: child),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    }
     // 标签列统一按四个字宽（「左右边距」）留位，各行控件起点对齐；
     // 大字号时最多占行宽 35%，超出部分换行而不是挤压控件。
     final labelWidth = MediaQuery.textScalerOf(context).scale(13) * 4 + 4;
@@ -277,12 +339,17 @@ class ReaderSettingsChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    final compact = ReaderSettingsFormLayout.isCompact(context);
     final label = Text(
       this.label,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: selected ? preset.accentColor : preset.mutedTextColor,
-        fontSize: 12,
+        color: selected
+            ? preset.accentColor
+            : compact
+            ? preset.textColor
+            : preset.mutedTextColor,
+        fontSize: compact ? 13 : 12,
         fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
       ),
     );
@@ -293,6 +360,48 @@ class ReaderSettingsChip extends StatelessWidget {
         onPressed: onTap,
         tint: preset.panelColor,
         child: label,
+      );
+    }
+    if (compact) {
+      return Semantics(
+        selected: selected,
+        button: true,
+        enabled: onTap != null,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? preset.accentColor.withValues(alpha: 0.14)
+                        : preset.fieldColor,
+                    borderRadius: BorderRadius.circular(10),
+                    border: selected
+                        ? Border.all(color: preset.accentColor)
+                        : null,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: Center(
+                      widthFactor: 1,
+                      heightFactor: 1,
+                      child: label,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
     }
     // Classic: the old flat Material chip, no lens or press morph.
@@ -336,15 +445,30 @@ class ReaderSettingsChipRow extends StatelessWidget {
         longest = child.label.length;
       }
     }
-    return MediaQuery.textScalerOf(context).scale(12) * longest + 24;
+    final compact = ReaderSettingsFormLayout.isCompact(context);
+    final width =
+        MediaQuery.textScalerOf(context).scale(compact ? 13 : 12) * longest +
+        24;
+    return compact ? width.clamp(48.0, double.infinity) : width;
   }
+
+  double _neededWidth(BuildContext context) =>
+      _minChipWidth(context) * children.length +
+      (ReaderSettingsFormLayout.isCompact(context) ? 8 : _gap) *
+          (children.length - 1);
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final needed =
-          _minChipWidth(context) * children.length +
-          _gap * (children.length - 1);
+      if (ReaderSettingsFormLayout.isCompact(context)) {
+        return Wrap(
+          spacing: 8,
+          runSpacing: 0,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: children,
+        );
+      }
+      final needed = _neededWidth(context);
       if (needed <= constraints.maxWidth) {
         return Row(
           children: [
@@ -381,6 +505,8 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    final compact = ReaderSettingsFormLayout.isCompact(context);
+
     void update(bool next) {
       if (next != value) onChanged(next);
     }
@@ -400,13 +526,20 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 52),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+            padding: compact
+                ? EdgeInsets.symmetric(
+                    horizontal: ReaderSettingsFormLayout.gutterOf(context),
+                  )
+                : const EdgeInsets.fromLTRB(16, 0, 8, 0),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
                     label,
-                    style: TextStyle(color: preset.textColor, fontSize: 13),
+                    style: TextStyle(
+                      color: preset.textColor,
+                      fontSize: compact ? 14 : 13,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -415,6 +548,9 @@ class ReaderSettingsSwitchRow extends StatelessWidget {
                       ? Switch(
                           value: value,
                           onChanged: update,
+                          materialTapTargetSize: compact
+                              ? MaterialTapTargetSize.padded
+                              : null,
                           thumbColor: WidgetStateProperty.resolveWith(
                             (states) => states.contains(WidgetState.selected)
                                 ? (preset.isDark
@@ -478,6 +614,7 @@ class ReaderSettingsStepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    final compact = ReaderSettingsFormLayout.isCompact(context);
     // 紧凑的胶囊步进器靠右放：− 值 + 挨在一起，不再横跨整行留大片空白。
     return Align(
       alignment: Alignment.centerRight,
@@ -493,7 +630,9 @@ class ReaderSettingsStepper extends StatelessWidget {
             children: [
               IconButton(
                 tooltip: decreaseTooltip,
-                visualDensity: VisualDensity.compact,
+                visualDensity: compact
+                    ? VisualDensity.standard
+                    : VisualDensity.compact,
                 onPressed: onDecrease,
                 icon: const Icon(LucideIcons.minus, size: 16),
               ),
@@ -514,7 +653,9 @@ class ReaderSettingsStepper extends StatelessWidget {
               ),
               IconButton(
                 tooltip: increaseTooltip,
-                visualDensity: VisualDensity.compact,
+                visualDensity: compact
+                    ? VisualDensity.standard
+                    : VisualDensity.compact,
                 onPressed: onIncrease,
                 icon: const Icon(LucideIcons.plus, size: 16),
               ),
@@ -542,28 +683,40 @@ class ReaderSettingsNavRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    final compact = ReaderSettingsFormLayout.isCompact(context);
     return InkWell(
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: Row(
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 18, color: preset.mutedTextColor),
-              const SizedBox(width: 8),
-            ],
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(color: preset.textColor, fontSize: 13),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: compact ? 48 : 0),
+        child: Padding(
+          padding: compact
+              ? EdgeInsets.symmetric(
+                  horizontal: ReaderSettingsFormLayout.gutterOf(context),
+                  vertical: 8,
+                )
+              : const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Row(
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 18, color: preset.mutedTextColor),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: preset.textColor,
+                    fontSize: compact ? 14 : 13,
+                  ),
+                ),
               ),
-            ),
-            Icon(
-              LucideIcons.chevron_right,
-              size: 18,
-              color: preset.mutedTextColor,
-            ),
-          ],
+              Icon(
+                LucideIcons.chevron_right,
+                size: 18,
+                color: preset.mutedTextColor,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -579,8 +732,16 @@ class ReaderSettingsSectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preset = ReaderSettingsTheme.of(context);
+    final compact = ReaderSettingsFormLayout.isCompact(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      padding: compact
+          ? EdgeInsets.fromLTRB(
+              ReaderSettingsFormLayout.gutterOf(context),
+              12,
+              ReaderSettingsFormLayout.gutterOf(context),
+              4,
+            )
+          : const EdgeInsets.fromLTRB(16, 14, 16, 6),
       child: Text(
         title,
         style: TextStyle(
@@ -599,7 +760,12 @@ class ReaderSettingsDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    padding: EdgeInsets.symmetric(
+      horizontal: ReaderSettingsFormLayout.isCompact(context)
+          ? ReaderSettingsFormLayout.gutterOf(context)
+          : 16,
+      vertical: 4,
+    ),
     child: Divider(
       height: 1,
       color: ReaderSettingsTheme.of(context).borderColor,

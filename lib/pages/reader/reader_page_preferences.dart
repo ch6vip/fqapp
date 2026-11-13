@@ -10,7 +10,10 @@ extension _ReaderPagePreferences on _ReaderPageState {
   MediaItem get _shelfEntry =>
       widget.shelfItem ??
       MediaItem(
-        id: widget.bookId,
+        id: shuqiBookIdFromReaderId(widget.bookId) ?? widget.bookId,
+        source: shuqiBookIdFromReaderId(widget.bookId) != null
+            ? shuqiSourceId
+            : 'fanqie',
         title: widget.title,
         cover: widget.cover,
         author: '',
@@ -194,9 +197,80 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    // Only the solid panel spans the viewport. The enclosing controls Column
+    // also contains the right-hand listen/video buttons and their empty space.
+    final classic = AppUiScope.isClassic(context);
+    if (classic) {
+      _readerNotice?.close();
+      _readerNotice = null;
+      _readerToastTimer?.cancel();
+      _readerNoticeClassic = true;
+      _setState(() {
+        _readerToastImmediateDismiss = false;
+        _readerToastMessage = message;
+      });
+      _readerToastTimer = Timer(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        _setState(() {
+          _readerToastMessage = null;
+          _readerNoticeClassic = null;
+        });
+      });
+      return;
+    }
+    final capsule = _readerCapsuleKey.currentContext?.findRenderObject();
+    final hasCapsule =
+        capsule is RenderBox && capsule.hasSize && capsule.size.height > 0;
+    final controls = (hasCapsule ? _bottomControlsKey : _classicControlsKey)
+        .currentContext
+        ?.findRenderObject();
+    final clearance =
+        classic && _controlsVisible && controls is RenderBox && controls.hasSize
+        ? math
+              .min(
+                controls.size.height + 12,
+                math.max(12, MediaQuery.sizeOf(context).height - 160),
+              )
+              .toDouble()
+        : 12.0;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    final notice = messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        // Keep the notice centered even when it overlaps the listen button.
+        margin: EdgeInsets.fromLTRB(16, 0, 16, clearance),
+      ),
+    );
+    _readerNotice = notice;
+    _readerNoticeClassic = AppUiScope.isClassic(context);
+    unawaited(
+      notice.closed.then((_) {
+        if (identical(_readerNotice, notice)) {
+          _readerNotice = null;
+          _readerNoticeClassic = null;
+        }
+      }),
+    );
+  }
+
+  // Clear only this reader's short notice; actionable AI snackbars are owned
+  // by their original flow and remain available.
+  void _dismissReaderNotice() {
+    _readerNotice?.close();
+    _readerNotice = null;
+    _readerToastTimer?.cancel();
+    _readerToastTimer = null;
+    final hadToast = !_readerToastImmediateDismiss;
+    _readerToastImmediateDismiss = true;
+    _readerToastMessage = null;
+    _readerNoticeClassic = null;
+    if (hadToast && mounted) {
+      // didChangeDependencies is also a caller. Its own rebuild already
+      // schedules this element; setState here only marks the changed overlay.
+      _setState(() {});
+    }
   }
 
   void _changeBrightness(double value, {bool followSystem = false}) {
@@ -229,6 +303,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   void _setControlsVisible(bool visible) {
+    if (visible != _controlsVisible) _dismissReaderNotice();
     if (!visible) {
       _cancelVideoOpen();
       _finishChapterPreview();
@@ -343,7 +418,9 @@ extension _ReaderPagePreferences on _ReaderPageState {
         onListeningSource: () => unawaited(_openListening()),
         initialSection: section,
         onPreviewChanged: _setSettingsPreview,
-        onMarks: () => unawaited(_showBookmarks()),
+        onMarks: AppUiScope.isClassic(context)
+            ? null
+            : () => unawaited(_showBookmarks()),
       );
     } finally {
       if (mounted) {
@@ -419,6 +496,7 @@ extension _ReaderPagePreferences on _ReaderPageState {
   }
 
   Future<void> _showDirectory() async {
+    if (AppUiScope.isClassic(context)) return _showClassicBookPanel();
     _readerPanelOpen = true;
     _setControlsVisible(false);
     Set<String> cachedIds = {};
