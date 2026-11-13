@@ -618,7 +618,7 @@ class GlassIconButton extends StatelessWidget {
       child: Tooltip(
         message: semanticLabel,
         triggerMode: TooltipTriggerMode.manual,
-        excludeFromSemantics: true,
+        excludeFromSemantics: false,
         child: _scaleCompactFace(
           compact: compact,
           scaleX: 40 / 48,
