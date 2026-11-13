@@ -30,7 +30,7 @@ source_root="$output/source/fqapp"
 export PATH="$FLUTTER_ROOT/bin:$PATH"
 python - "$FLUTTER_ROOT" <<'PY'
 import json, pathlib, sys
-assert json.loads((pathlib.Path(sys.argv[1])/'bin/cache/flutter.version.json').read_text())['frameworkRevision'] == 'c197ca5199e9ee5661e865596c9c07294dfab51c'
+assert json.loads((pathlib.Path(sys.argv[1])/'bin/cache/flutter.version.json').read_text())['frameworkRevision'] == 'ab2912035e160d9cad6306df307576da6128ebdb'
 PY
 [[ $(rustc --version) == 'rustc 1.99.1 '* ]]
 (cd "$source_root" && flutter pub get --offline --enforce-lockfile)
