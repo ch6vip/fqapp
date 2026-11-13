@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -409,29 +409,27 @@ void main() {
     );
   }
 
-  testWidgets(
-    'pagination previews show full lines and the mode selector',
-    (tester) async {
-      final oldShadows = debugDisableShadows;
-      try {
-        await _size(tester, const Size(390, 844));
-        await _loadPreviewFont(tester);
-        await tester.pumpWidget(_app());
-        await tester.pumpAndSettle();
-        await _capture(tester, 'paged-reading');
-        await _tapSide(tester, 1);
-        await _capture(tester, 'paged-second');
-        await _openAppearance(tester);
-        expect(find.text('翻页'), findsOneWidget);
-        await _capture(tester, 'mode-choice');
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
-      } finally {
-        debugDisableShadows = oldShadows;
-      }
-    },
-    skip: _previewFont.isEmpty,
-  );
+  testWidgets('pagination previews show full lines and the mode selector', (
+    tester,
+  ) async {
+    final oldShadows = debugDisableShadows;
+    try {
+      await _size(tester, const Size(390, 844));
+      await _loadPreviewFont(tester);
+      await tester.pumpWidget(_app());
+      await tester.pumpAndSettle();
+      await _capture(tester, 'paged-reading');
+      await _tapSide(tester, 1);
+      await _capture(tester, 'paged-second');
+      await _openAppearance(tester);
+      expect(find.text('翻页'), findsOneWidget);
+      await _capture(tester, 'mode-choice');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    } finally {
+      debugDisableShadows = oldShadows;
+    }
+  }, skip: _previewFont.isEmpty);
 }
 
 final _surface = find.byKey(const ValueKey('reader-page-surface'));

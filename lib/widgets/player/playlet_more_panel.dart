@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 // Note: 官方分支、档位动画和关闭边界见
 // .agents/notes/implemented/feature/2026-09-26-playlet-more-panel.md

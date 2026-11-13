@@ -15,9 +15,7 @@ List<Chapter> autoCacheEpisodes({
   if (ahead <= 0 || episodes.isEmpty) return const [];
   final start = currentIndex + 1;
   if (start <= 0 || start >= episodes.length) return const [];
-  final end = start + ahead > episodes.length
-      ? episodes.length
-      : start + ahead;
+  final end = start + ahead > episodes.length ? episodes.length : start + ahead;
   return episodes.sublist(start, end);
 }
 
@@ -71,9 +69,7 @@ class DramaCachePreferences {
     try {
       final sp = await SharedPreferences.getInstance();
       final stored = sp.getInt(_aheadKey);
-      ahead.value = stored == null
-          ? defaultAhead
-          : stored.clamp(0, 50);
+      ahead.value = stored == null ? defaultAhead : stored.clamp(0, 50);
       wifiOnly.value = sp.getBool(_wifiOnlyKey) ?? true;
       downloadHeight.value = sp.getInt(_heightKey) ?? 0;
     } catch (_) {

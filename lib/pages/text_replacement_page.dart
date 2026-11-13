@@ -10,8 +10,8 @@
 // behaviour are unchanged; `SettingsToggleRow` and the rule rows own the
 // classic presentation, so both styles share the same callbacks.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/text_replacement_rule.dart';

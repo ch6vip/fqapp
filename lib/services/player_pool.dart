@@ -5,8 +5,6 @@ import 'dart:async';
 
 import 'native_player.dart';
 
-
-
 /// A paused player parked in the [PlayerPool] together with the session state
 /// needed to resume it without rebuilding anything.
 class ParkedPlayer {
@@ -97,9 +95,7 @@ class PlayerPool {
   /// Drop and dispose every parked player
   /// (`gq3/b.java:47 h()` — `pause()` then `release()` on each).
   Future<void> releaseAll() async {
-    final players = [
-      for (final entry in _entries.values) entry.player,
-    ];
+    final players = [for (final entry in _entries.values) entry.player];
     _entries.clear();
     for (final player in players) {
       _queueDispose(player);

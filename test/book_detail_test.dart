@@ -84,11 +84,13 @@ void main() {
     // Live 漫画 payload: author_info is null and author_id carries the 1_
     // manga namespace prefix, which the user profile service cannot resolve.
     final detail = BookDetail.fromPayload(
-      payload(overrides: {
-        'author': '豆腐漫画',
-        'author_id': '1_7158731511213067298',
-        'author_info': null,
-      }),
+      payload(
+        overrides: {
+          'author': '豆腐漫画',
+          'author_id': '1_7158731511213067298',
+          'author_info': null,
+        },
+      ),
     );
     expect(detail.author.name, '豆腐漫画');
     expect(detail.author.id, isEmpty);
@@ -96,11 +98,13 @@ void main() {
 
   test('keeps the manju author name but drops the manga-namespace id', () {
     final detail = BookDetail.fromPayload(
-      payload(overrides: {
-        'author': '阅友',
-        'author_id': '1_7687438881070795800',
-        'author_info': null,
-      }),
+      payload(
+        overrides: {
+          'author': '阅友',
+          'author_id': '1_7687438881070795800',
+          'author_info': null,
+        },
+      ),
     );
     expect(detail.author.name, '阅友');
     expect(detail.author.id, isEmpty);

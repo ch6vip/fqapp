@@ -2,7 +2,7 @@
 // ReaderChromeLayer retains paint-only translation/scale (no opacity saveLayer).
 // NativeGlassGroup / NativeScrollEdgeGroup are replaced by the already-vendored
 // LiquidGlassBatch and EasyScrollEdge. fqapp retains its text viewport geometry.
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import '../wenku/src/easy_glass.dart';

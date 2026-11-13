@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/widgets/desktop_app_frame.dart';
 
@@ -9,9 +9,7 @@ void main() {
     desktopTab.value = 0;
     addTearDown(() => desktopTab.value = 0);
     await tester.pumpWidget(
-      const MaterialApp(
-        home: DesktopAppFrame(child: SizedBox.expand()),
-      ),
+      const MaterialApp(home: DesktopAppFrame(child: SizedBox.expand())),
     );
     await tester.pump();
 

@@ -4,7 +4,7 @@ import '../services/app_log.dart';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../models/audio_extra.dart' show RelatedWork;
 import '../models/media_item.dart';
@@ -30,7 +30,6 @@ import '../services/library_store.dart';
 import '../services/native_player.dart';
 import '../services/playback_issue.dart';
 import '../services/player_history.dart';
-import '../services/video_catalogue.dart';
 import '../services/player_layout_preferences.dart';
 import '../services/player_load_diagnostics.dart';
 import '../services/player_preferences.dart';
@@ -1476,7 +1475,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     };
     _loadTrace?.fail(errorCode: errorCode, httpStatusCode: httpStatusCode);
     _sources.invalidate(widget.eps[_index].itemId);
-    if (error is! OfflineEpisodeUnavailable && _retrySilently()) return;
+    if (_retrySilently()) return;
     _prefetchTimer?.cancel();
     _prefetchTimer = null;
     ++_loadGeneration;

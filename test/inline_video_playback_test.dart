@@ -151,9 +151,7 @@ void main() {
     final players = <ControlledNativePlayer>[];
     final session = InlineVideoPlayback(
       directoryLoader: (id, tab) async => [
-        [
-          Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集'),
-        ],
+        [Chapter(itemId: '$id-1', title: '第 1 集', volumeName: '剧集')],
       ],
       contentLoader: (itemId, tab) async => {
         'video_url': 'https://example.invalid/$itemId-720.mp4',
@@ -223,11 +221,7 @@ void main() {
 
     final next = session.activate(_series('a'), startEpisodeIndex: 1);
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(
-      players,
-      hasLength(1),
-      reason: '旧解码器还在释放中，新解码器不能开始创建',
-    );
+    expect(players, hasLength(1), reason: '旧解码器还在释放中，新解码器不能开始创建');
     expect(players.single.calls, contains('dispose'));
     expect(
       players.single.calls,
@@ -239,7 +233,10 @@ void main() {
     await next;
     expect(players, hasLength(2));
     expect(players[0].calls, contains('released'));
-    expect(players[1].calls, contains('create:https://example.invalid/a-2.mp4'));
+    expect(
+      players[1].calls,
+      contains('create:https://example.invalid/a-2.mp4'),
+    );
     expect(players[1].calls, contains('play'));
     expect(session.activeEpisodeIndex, 1);
     expect(session.activeVid.value, 'a-2');

@@ -54,7 +54,3 @@ Future<List<Chapter>> loadVideoCatalogue({
   }
   return fallback();
 }
-
-class OfflineEpisodeUnavailable extends ApiException {
-  const OfflineEpisodeUnavailable() : super('当前离线，此集尚未缓存，请联网后播放或缓存');
-}

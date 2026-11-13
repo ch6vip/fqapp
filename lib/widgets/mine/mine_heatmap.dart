@@ -21,7 +21,7 @@
 //   only history span fqapp stores; no upstream range picker is synthesised.
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../models/reading_stats.dart';
 import '../wenku/wenku_ui.dart';

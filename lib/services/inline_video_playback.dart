@@ -10,7 +10,6 @@ import 'package:flutter/foundation.dart';
 import '../models/media_item.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'api_client.dart';
-import 'connectivity_status.dart';
 import 'drama_download_store.dart';
 import 'drama_mute_preferences.dart';
 import 'episode_source_cache.dart';
@@ -761,9 +760,6 @@ class InlineVideoPlayback {
       } catch (_) {
         // 离线索引读不出来就当没有缓存。
       }
-    }
-    if (contentLoader == null && !(await currentConnectivity()).online) {
-      throw const OfflineEpisodeUnavailable();
     }
     return _sources.request(episode).future;
   }

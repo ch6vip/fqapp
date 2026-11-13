@@ -290,8 +290,7 @@ class AppLog with WidgetsBindingObserver {
   }
 
   /// `/_session/<capability>/…` — the per-launch loopback capability.
-  static final _sessionPathPattern =
-      RegExp(r'''/_session/[^/\s?#'"<>]+''');
+  static final _sessionPathPattern = RegExp(r'''/_session/[^/\s?#'"<>]+''');
 
   /// `Authorization: [Bearer ]<credential>` (case-insensitive).
   static final _authorizationPattern = RegExp(
@@ -299,9 +298,7 @@ class AppLog with WidgetsBindingObserver {
   );
 
   /// Bare `Bearer <credential>` without an `Authorization:` prefix.
-  static final _bareBearerPattern = RegExp(
-    r'''([Bb]earer\s+)[^\s"'\n,;]+''',
-  );
+  static final _bareBearerPattern = RegExp(r'''([Bb]earer\s+)[^\s"'\n,;]+''');
 
   /// `Cookie: <whole header value>` — redacted to end of line.
   static final _cookiePattern = RegExp(r'([Cc]ookie\s*[:=]\s*)[^\n]*');
@@ -444,7 +441,7 @@ class AppLog with WidgetsBindingObserver {
     'W' => LogLevel.warn,
     'I' => LogLevel.info,
     _ => LogLevel.debug,
-};
+  };
 
   /// 当前落盘日志文件路径（未开启持久化为 null）。
   String? get filePath => _file?.currentPath;

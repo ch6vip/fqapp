@@ -1,6 +1,6 @@
 import 'dart:ui' show PlatformDispatcher;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'app_style_tokens.dart';
 import 'app_theme_style.dart';

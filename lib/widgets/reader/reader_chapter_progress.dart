@@ -3,7 +3,7 @@
 // fraction; this is no longer a chapter-index slider. Engine and persistence
 // remain owned by ReaderPage. The source's hint, semantics and drag lifecycle
 // are retained through ReaderValueSlider.
-import 'package:flutter/cupertino.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
 
 import '../../services/reader_preferences.dart';
 import '../wenku/wenku_ui.dart';

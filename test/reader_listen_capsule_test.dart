@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fqapp/models/audio_extra.dart';
@@ -251,10 +251,7 @@ Future<_Harness> _mount(WidgetTester tester, {Widget? home}) async {
       navigatorObservers: [routes],
       builder: (_, child) => AudioFloatingRouteScope(
         routes: routes,
-        child: AudioPlaybackScope(
-          navigatorKey: app.navigator,
-          child: child!,
-        ),
+        child: AudioPlaybackScope(navigatorKey: app.navigator, child: child!),
       ),
       home:
           home ??
@@ -281,9 +278,7 @@ class _SwitcherHost extends StatelessWidget {
   Widget build(BuildContext context) => ReaderEngineSwitch(
     bookId: bookId,
     onSwitch: onSwitch,
-    child: Scaffold(
-      body: ReaderListenCapsuleHost(monochrome: false),
-    ),
+    child: Scaffold(body: ReaderListenCapsuleHost(monochrome: false)),
   );
 }
 

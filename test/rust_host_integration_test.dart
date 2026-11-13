@@ -102,8 +102,9 @@ void main() {
     File('${root.path}/config/config.json').writeAsStringSync(
       '{"algorithm_type":"8404","port":0,"anti_crawler":{"enabled":false,"redirect_url":""}}',
     );
-    File('${root.path}/config/device_pool.json')
-        .writeAsStringSync(pooledDevicesJson());
+    File(
+      '${root.path}/config/device_pool.json',
+    ).writeAsStringSync(pooledDevicesJson());
     File('${root.path}/src/ok.txt').writeAsStringSync('0123456789');
     File('${root.path}/outside.txt').writeAsStringSync('OFFLINE_TEST_MARKER');
     mockRequests.clear();
@@ -151,66 +152,71 @@ void main() {
     return ApiClient(transport: transport);
   }
 
-  test('the real FFI path initializes, serves static files and reaches upstream',
-      () async {
-    final started = await startCore();
-    expect(started, 'running');
-    expect(await rust.status(), 'running');
-    expect(await rust.baseUrl(), startsWith('http://127.0.0.1:'));
+  test(
+    'the real FFI path initializes, serves static files and reaches upstream',
+    () async {
+      final started = await startCore();
+      expect(started, 'running');
+      expect(await rust.status(), 'running');
+      expect(await rust.baseUrl(), startsWith('http://127.0.0.1:'));
 
-    // /health is answered by the Rust core with no upstream involvement.
-    final health = await rust.request(
-      requestId: 'host-health',
-      method: 'GET',
-      path: '/health',
-      query: '',
-      body: Uint8List(0),
-      timeoutMs: 0,
-    );
-    expect(health.status, 200);
-    expect(jsonDecode(bodyOf(health))['status'], 'ok');
+      // /health is answered by the Rust core with no upstream involvement.
+      final health = await rust.request(
+        requestId: 'host-health',
+        method: 'GET',
+        path: '/health',
+        query: '',
+        body: Uint8List(0),
+        timeoutMs: 0,
+      );
+      expect(health.status, 200);
+      expect(jsonDecode(bodyOf(health))['status'], 'ok');
 
-    // Static file served over FFI (the body is materialised by the core).
-    final file = await rust.request(
-      requestId: 'host-file',
-      method: 'GET',
-      path: '/src/ok.txt',
-      query: '',
-      body: Uint8List(0),
-      timeoutMs: 0,
-    );
-    expect(file.status, 200);
-    expect(bodyOf(file), '0123456789');
+      // Static file served over FFI (the body is materialised by the core).
+      final file = await rust.request(
+        requestId: 'host-file',
+        method: 'GET',
+        path: '/src/ok.txt',
+        query: '',
+        body: Uint8List(0),
+        timeoutMs: 0,
+      );
+      expect(file.status, 200);
+      expect(bodyOf(file), '0123456789');
 
-    // Path confinement holds on the FFI path too.
-    final escaped = await rust.request(
-      requestId: 'host-escape',
-      method: 'GET',
-      path: '/src/../outside.txt',
-      query: '',
-      body: Uint8List(0),
-      timeoutMs: 0,
-    );
-    expect(escaped.status, 404);
-    expect(bodyOf(escaped), isNot(contains('OFFLINE_TEST_MARKER')));
+      // Path confinement holds on the FFI path too.
+      final escaped = await rust.request(
+        requestId: 'host-escape',
+        method: 'GET',
+        path: '/src/../outside.txt',
+        query: '',
+        body: Uint8List(0),
+        timeoutMs: 0,
+      );
+      expect(escaped.status, 404);
+      expect(bodyOf(escaped), isNot(contains('OFFLINE_TEST_MARKER')));
 
-    // A business request really goes through the dispatcher to the upstream
-    // (redirected to the local mock by mockUpstreamOrigin).
-    final items = await rust.request(
-      requestId: 'host-items',
-      method: 'GET',
-      path: '/api/v1/items/7507512821328904729',
-      query: '',
-      body: Uint8List(0),
-      timeoutMs: 0,
-    );
-    expect(items.status, 200);
-    expect(jsonDecode(bodyOf(items))['data']['served_by'], 'mock-upstream');
-    expect(mockRequests, isNotEmpty);
-    expect(mockRequests.last.path, '/api/novel/book/directory/detail/v/');
-    expect(mockRequests.last.queryParameters['item_ids'],
-        '7507512821328904729');
-  }, skip: skipReason);
+      // A business request really goes through the dispatcher to the upstream
+      // (redirected to the local mock by mockUpstreamOrigin).
+      final items = await rust.request(
+        requestId: 'host-items',
+        method: 'GET',
+        path: '/api/v1/items/7507512821328904729',
+        query: '',
+        body: Uint8List(0),
+        timeoutMs: 0,
+      );
+      expect(items.status, 200);
+      expect(jsonDecode(bodyOf(items))['data']['served_by'], 'mock-upstream');
+      expect(mockRequests, isNotEmpty);
+      expect(mockRequests.last.path, '/api/novel/book/directory/detail/v/');
+      expect(
+        mockRequests.last.queryParameters['item_ids'],
+        '7507512821328904729',
+      );
+    },
+    skip: skipReason,
+  );
 
   test('cancelling an in-flight FFI request aborts it promptly', () async {
     await startCore();
@@ -289,66 +295,80 @@ void main() {
     expect(firstBase, isNotEmpty);
   }, skip: skipReason);
 
-  test('codec rejection cannot become a source through Dart legacy parsing',
-      () async {
-    mockPayload = jsonEncode(_videoPayload());
-    await startCore();
-    final response = await rust.request(
-      requestId: 'host-video-codec-rejected',
-      method: 'GET',
-      path: '/api/v1/videos/episode',
-      query: 'mode=stream',
-      body: Uint8List(0),
-      timeoutMs: 0,
-    );
-    final payload = jsonDecode(bodyOf(response)) as Map<String, dynamic>;
-    expect(
-      () => EpisodeSource.fromResponse(payload),
-      throwsA(isA<ApiException>()),
-    );
-    expect(response.status, 500);
-    expect(bodyOf(response), isNot(contains('https://example.invalid/')));
-  }, skip: skipReason);
+  test(
+    'codec rejection cannot become a source through Dart legacy parsing',
+    () async {
+      mockPayload = jsonEncode(_videoPayload());
+      await startCore();
+      final response = await rust.request(
+        requestId: 'host-video-codec-rejected',
+        method: 'GET',
+        path: '/api/v1/videos/episode',
+        query: 'mode=stream',
+        body: Uint8List(0),
+        timeoutMs: 0,
+      );
+      final payload = jsonDecode(bodyOf(response)) as Map<String, dynamic>;
+      expect(
+        () => EpisodeSource.fromResponse(payload),
+        throwsA(isA<ApiException>()),
+      );
+      expect(response.status, 500);
+      expect(bodyOf(response), isNot(contains('https://example.invalid/')));
+    },
+    skip: skipReason,
+  );
 
-  test('ApiClient reports codec rejection before creating an episode source',
-      () async {
-    mockPayload = jsonEncode(_videoPayload());
-    final api = await startApiClient();
-    await expectLater(
-      api.content('episode', tab: '短剧', mode: 'stream'),
-      throwsA(isA<ApiException>().having(
-        (error) => error.message,
-        'message',
-        '该视频暂不支持播放',
-      )),
-    );
-  }, skip: skipReason);
+  test(
+    'ApiClient reports codec rejection before creating an episode source',
+    () async {
+      mockPayload = jsonEncode(_videoPayload());
+      final api = await startApiClient();
+      await expectLater(
+        api.content('episode', tab: '短剧', mode: 'stream'),
+        throwsA(
+          isA<ApiException>().having(
+            (error) => error.message,
+            'message',
+            '该视频暂不支持播放',
+          ),
+        ),
+      );
+    },
+    skip: skipReason,
+  );
 
-  test('a mixed video response keeps the allowed URL and its content key',
-      () async {
-    mockPayload = jsonEncode(_videoPayload(includeH264: true));
-    final api = await startApiClient();
-    final payload = await api.content('episode', tab: '短剧', mode: 'stream');
-    final source = EpisodeSource.fromResponse(payload);
-    expect(source.url, 'https://example.invalid/h264.mp4');
-    expect(source.keyHex, '4990a92de837e29e18031a370ab744e6');
-    expect(jsonEncode(payload), isNot(contains('bytevc2.mp4')));
-  }, skip: skipReason);
+  test(
+    'a mixed video response keeps the allowed URL and its content key',
+    () async {
+      mockPayload = jsonEncode(_videoPayload(includeH264: true));
+      final api = await startApiClient();
+      final payload = await api.content('episode', tab: '短剧', mode: 'stream');
+      final source = EpisodeSource.fromResponse(payload);
+      expect(source.url, 'https://example.invalid/h264.mp4');
+      expect(source.keyHex, '4990a92de837e29e18031a370ab744e6');
+      expect(jsonEncode(payload), isNot(contains('bytevc2.mp4')));
+    },
+    skip: skipReason,
+  );
 
-  test('an unrecognized legacy video response still reaches Dart parsing',
-      () async {
-    mockPayload = jsonEncode({
-      'code': 0,
-      'data': {
-        'legacy': {'main_url': 'https://example.invalid/legacy.mp4'},
-      },
-    });
-    final api = await startApiClient();
-    final payload = await api.content('episode', tab: '短剧', mode: 'stream');
-    final source = EpisodeSource.fromResponse(payload);
-    expect(source.url, 'https://example.invalid/legacy.mp4');
-    expect(source.keyHex, isEmpty);
-  }, skip: skipReason);
+  test(
+    'an unrecognized legacy video response still reaches Dart parsing',
+    () async {
+      mockPayload = jsonEncode({
+        'code': 0,
+        'data': {
+          'legacy': {'main_url': 'https://example.invalid/legacy.mp4'},
+        },
+      });
+      final api = await startApiClient();
+      final payload = await api.content('episode', tab: '短剧', mode: 'stream');
+      final source = EpisodeSource.fromResponse(payload);
+      expect(source.url, 'https://example.invalid/legacy.mp4');
+      expect(source.keyHex, isEmpty);
+    },
+    skip: skipReason,
+  );
 
   test(
     'persisted proxy respects the host platform and restart restores direct mode',
@@ -399,58 +419,60 @@ void main() {
     skip: skipReason,
   );
 
-  test('BackendService and ApiClient work end to end over the real core',
-      () async {
-    mockPayload =
-        '{"code":0,"data":{"search_tabs":[{"title":"书籍","data":[]}]}}';
-    final backend = BackendService(
-      assets: _HostAssets(pooledDevicesJson()),
-      supportDirectory: () async => root,
-      transport: RustBackendTransport(mockUpstreamOrigin: mockOrigin),
-      startupTimeout: const Duration(seconds: 10),
-    );
-    await backend.start();
-    expect(backend.isRunning, isTrue);
-    expect(backend.usesRustTransport, isTrue);
+  test(
+    'BackendService and ApiClient work end to end over the real core',
+    () async {
+      mockPayload =
+          '{"code":0,"data":{"search_tabs":[{"title":"书籍","data":[]}]}}';
+      final backend = BackendService(
+        assets: _HostAssets(pooledDevicesJson()),
+        supportDirectory: () async => root,
+        transport: RustBackendTransport(mockUpstreamOrigin: mockOrigin),
+        startupTimeout: const Duration(seconds: 10),
+      );
+      await backend.start();
+      expect(backend.isRunning, isTrue);
+      expect(backend.usesRustTransport, isTrue);
 
-    final api = ApiClient(transport: backend.transport);
-    expect(await api.health(), isTrue);
+      final api = ApiClient(transport: backend.transport);
+      expect(await api.health(), isTrue);
 
-    final search = await api.search('测试');
-    // `search()` now talks to /api/v1/search, which answers with the REST
-    // envelope (code=0) rather than the removed Web bridge's code=200.
-    expect(search['code'], 0);
-    expect((search['data'] as Map)['search_tabs'], isA<List>());
-    expect(mockRequests, isNotEmpty);
+      final search = await api.search('测试');
+      // `search()` now talks to /api/v1/search, which answers with the REST
+      // envelope (code=0) rather than the removed Web bridge's code=200.
+      expect(search['code'], 0);
+      expect((search['data'] as Map)['search_tabs'], isA<List>());
+      expect(mockRequests, isNotEmpty);
 
-    await backend.stop();
-    expect(backend.isRunning, isFalse);
-  }, skip: skipReason);
+      await backend.stop();
+      expect(backend.isRunning, isFalse);
+    },
+    skip: skipReason,
+  );
 }
 
 Map<String, dynamic> _videoPayload({bool includeH264 = false}) => {
-      'code': 0,
-      'data': {
-        'video_model': {
-          'key_seed': 'AAAA',
-          'video_list': {
-            'video_1': {
-              'main_url': 'https://example.invalid/bytevc2.mp4',
-              'codec_type': 'bytevc2',
-              'vwidth': 1080,
-            },
-            if (includeH264)
-              'video_2': {
-                'main_url': 'https://example.invalid/h264.mp4',
-                'codec_type': 'h264',
-                'vwidth': 720,
-                'spade_a':
-                    'kbwf80+1N+V9nwHQSp431GWvLeBlqizTYJ0o5FOrHuZhqimysg==',
-              },
-          },
+  'code': 0,
+  'data': {
+    'video_model': {
+      'key_seed': 'AAAA',
+      'video_list': {
+        'video_1': {
+          'main_url': 'https://example.invalid/bytevc2.mp4',
+          'codec_type': 'bytevc2',
+          'vwidth': 1080,
         },
+        if (includeH264)
+          'video_2': {
+            'main_url': 'https://example.invalid/h264.mp4',
+            'codec_type': 'h264',
+            'vwidth': 720,
+            'spade_a': 'kbwf80+1N+V9nwHQSp431GWvLeBlqizTYJ0o5FOrHuZhqimysg==',
+          },
       },
-    };
+    },
+  },
+};
 
 /// Minimal bundle so BackendService's deployment step has real files to copy.
 class _HostAssets extends CachingAssetBundle {

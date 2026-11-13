@@ -52,10 +52,7 @@ void main() {
     'playback business failures are not hidden by outer code zero',
     () async {
       final transport = MockClient(
-        (_) async => _json({
-          'code': 403,
-          'message': 'invalid aid',
-        }),
+        (_) async => _json({'code': 403, 'message': 'invalid aid'}),
       );
       addTearDown(transport.close);
       await expectLater(
@@ -107,8 +104,11 @@ void main() {
       ).audioVoices(special);
       expect(sent.path, endsWith('/detail'));
       // The v1 route carries the book id in the path, so the query is empty.
-      expect(sent.pathSegments.sublist(sent.pathSegments.length - 3),
-          ['books', special, 'detail']);
+      expect(sent.pathSegments.sublist(sent.pathSegments.length - 3), [
+        'books',
+        special,
+        'detail',
+      ]);
       expect(sent.queryParameters, isEmpty);
       expect(voices.map((voice) => voice.id), ['0', '2', '3', '1']);
     },
@@ -163,8 +163,11 @@ void main() {
       ).comicImages(special);
       // Comics are their own v1 route; the id travels in the path, so the
       // encoded id must arrive as the last segment.
-      expect(sent.pathSegments.sublist(sent.pathSegments.length - 3),
-          ['v1', 'manga', special]);
+      expect(sent.pathSegments.sublist(sent.pathSegments.length - 3), [
+        'v1',
+        'manga',
+        special,
+      ]);
       expect(sent.queryParameters, isEmpty);
       expect(images.map((image) => image.url), [
         '$base/src/b.jpg',

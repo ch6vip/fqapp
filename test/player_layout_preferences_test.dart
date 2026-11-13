@@ -15,10 +15,7 @@ void main() {
     for (final mode in PlayerLayoutMode.values) {
       expect(PlayerLayoutPreferences.decode(mode.storageName), mode);
     }
-    expect(
-      PlayerLayoutPreferences.decode(null),
-      PlayerLayoutMode.immersive,
-    );
+    expect(PlayerLayoutPreferences.decode(null), PlayerLayoutMode.immersive);
     expect(PlayerLayoutPreferences.decode(''), PlayerLayoutMode.immersive);
     // 旧版本 / 手改过的未知值不能把启动卡在非法枚举上。
     expect(
@@ -32,19 +29,14 @@ void main() {
     final sp = await SharedPreferences.getInstance();
     expect(sp.getString(PlayerLayoutPreferences.key), 'split');
     // 内存态由调用方（设置页）自己维护，save 只负责落盘。
-    expect(
-      PlayerLayoutPreferences.mode.value,
-      PlayerLayoutMode.immersive,
-    );
+    expect(PlayerLayoutPreferences.mode.value, PlayerLayoutMode.immersive);
   });
 
   test('the mode notifier only reports real changes', () {
     var notifications = 0;
     void listener() => notifications++;
     PlayerLayoutPreferences.mode.addListener(listener);
-    addTearDown(
-      () => PlayerLayoutPreferences.mode.removeListener(listener),
-    );
+    addTearDown(() => PlayerLayoutPreferences.mode.removeListener(listener));
 
     PlayerLayoutPreferences.mode.value = PlayerLayoutMode.auto;
     PlayerLayoutPreferences.mode.value = PlayerLayoutMode.auto;
@@ -60,9 +52,10 @@ void main() {
       expect(mode.shortLabel, isNotEmpty);
       expect(mode.description, isNotEmpty);
     }
-    expect(
-      PlayerLayoutMode.values.map((mode) => mode.storageName).toList(),
-      ['immersive', 'auto', 'split'],
-    );
+    expect(PlayerLayoutMode.values.map((mode) => mode.storageName).toList(), [
+      'immersive',
+      'auto',
+      'split',
+    ]);
   });
 }

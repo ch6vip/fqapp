@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 下拉达到这个距离（逻辑像素）就进入「正在刷新内容」的就绪态。
 ///

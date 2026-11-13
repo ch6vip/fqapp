@@ -3,7 +3,7 @@
 // Wrapped in ProviderScope to mirror main() — HomePage is a ConsumerWidget,
 // so any future test that reaches it needs the provider scope present.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 

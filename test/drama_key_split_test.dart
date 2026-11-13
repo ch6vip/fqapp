@@ -94,10 +94,7 @@ void main() {
     expect(back, isNotNull);
     expect(back!.keyHex, 'aabbccddeeff00112233445566778899');
     final reopened = Hive.box<dynamic>('drama_download_v1_enc');
-    expect(
-      (reopened.get('episode:ep1') as Map).containsKey('keyHex'),
-      isFalse,
-    );
+    expect((reopened.get('episode:ep1') as Map).containsKey('keyHex'), isFalse);
     expect(reopened.get('key:ep1'), 'aabbccddeeff00112233445566778899');
   });
 

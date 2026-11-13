@@ -27,7 +27,10 @@ class SeriesPagerScrollPhysics extends PageScrollPhysics {
       SeriesPagerScrollPhysics(parent: buildParent(ancestor));
 
   @override
-  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
     if (position is! PageMetrics ||
         !position.hasPixels ||
         !position.hasContentDimensions ||
@@ -45,7 +48,9 @@ class SeriesPagerScrollPhysics extends PageScrollPhysics {
     if (velocity.abs() >= minFlingVelocity) {
       // 官方 ViewConfiguration 最小 fling 速度就是 50dp/s（与 Flutter 的
       // kMinFlingVelocity 一致）。上滑 offset 增大、velocity 为正 → 下一页。
-      target = velocity > 0 ? page.floorToDouble() + 1 : page.ceilToDouble() - 1;
+      target = velocity > 0
+          ? page.floorToDouble() + 1
+          : page.ceilToDouble() - 1;
     } else {
       target = page.roundToDouble();
     }

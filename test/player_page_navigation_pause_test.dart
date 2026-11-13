@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -111,59 +111,60 @@ void main() {
     expect(player.isPlaying, isTrue);
   });
 
-  testWidgets('selecting another episode from detail does not resume the old one', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(400, 800));
-    addTearDown(() async {
-      await tester.pumpWidget(const SizedBox.shrink());
+  testWidgets(
+    'selecting another episode from detail does not resume the old one',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 800));
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _flush(tester);
+        await tester.binding.setSurfaceSize(null);
+      });
+
+      final store = ControlledReaderStore();
+      final oldPlayer = ControlledNativePlayer()
+        ..totalDuration = const Duration(minutes: 10);
+      // 挡住旧播放器的释放：让续播守卫的判定发生在释放完成之前，
+      // 漏了守卫时旧播放器会多一次 play 调用。
+      oldPlayer.releaseGate = Completer<void>();
+      final newPlayer = ControlledNativePlayer()
+        ..totalDuration = const Duration(minutes: 10);
+      final created = <ControlledNativePlayer>[];
+      await tester.pumpWidget(
+        _app(
+          store: store,
+          player: oldPlayer,
+          detail: _detail(),
+          playerFactory: () {
+            final next = created.isEmpty ? oldPlayer : newPlayer;
+            created.add(next);
+            return next;
+          },
+        ),
+      );
       await _flush(tester);
-      await tester.binding.setSurfaceSize(null);
-    });
+      expect(oldPlayer.isPlaying, isTrue);
+      expect(oldPlayer.calls.where((c) => c == 'play').length, 1);
 
-    final store = ControlledReaderStore();
-    final oldPlayer = ControlledNativePlayer()
-      ..totalDuration = const Duration(minutes: 10);
-    // 挡住旧播放器的释放：让续播守卫的判定发生在释放完成之前，
-    // 漏了守卫时旧播放器会多一次 play 调用。
-    oldPlayer.releaseGate = Completer<void>();
-    final newPlayer = ControlledNativePlayer()
-      ..totalDuration = const Duration(minutes: 10);
-    final created = <ControlledNativePlayer>[];
-    await tester.pumpWidget(
-      _app(
-        store: store,
-        player: oldPlayer,
-        detail: _detail(),
-        playerFactory: () {
-          final next = created.isEmpty ? oldPlayer : newPlayer;
-          created.add(next);
-          return next;
-        },
-      ),
-    );
-    await _flush(tester);
-    expect(oldPlayer.isPlaying, isTrue);
-    expect(oldPlayer.calls.where((c) => c == 'play').length, 1);
+      await tester.tap(find.byKey(const ValueKey('player-series-title')));
+      await _settle(tester);
+      expect(find.byType(SeriesDetailPage), findsOneWidget);
+      expect(oldPlayer.isPlaying, isFalse);
 
-    await tester.tap(find.byKey(const ValueKey('player-series-title')));
-    await _settle(tester);
-    expect(find.byType(SeriesDetailPage), findsOneWidget);
-    expect(oldPlayer.isPlaying, isFalse);
+      // 详情页选第 2 集：pop + 切集，切集链路自己起新播放器；
+      // 续播守卫必须跳过旧播放器，不给它补一次 play。
+      final episodeTile = find.byKey(const ValueKey('series-episode-1'));
+      await tester.ensureVisible(episodeTile);
+      await tester.tap(episodeTile);
+      await _settle(tester);
+      await _flush(tester);
+      expect(find.byType(SeriesDetailPage), findsNothing);
+      expect(oldPlayer.calls.where((c) => c == 'play').length, 1);
 
-    // 详情页选第 2 集：pop + 切集，切集链路自己起新播放器；
-    // 续播守卫必须跳过旧播放器，不给它补一次 play。
-    final episodeTile = find.byKey(const ValueKey('series-episode-1'));
-    await tester.ensureVisible(episodeTile);
-    await tester.tap(episodeTile);
-    await _settle(tester);
-    await _flush(tester);
-    expect(find.byType(SeriesDetailPage), findsNothing);
-    expect(oldPlayer.calls.where((c) => c == 'play').length, 1);
-
-    oldPlayer.releaseGate?.complete();
-    await _flush(tester);
-  });
+      oldPlayer.releaseGate?.complete();
+      await _flush(tester);
+    },
+  );
 }
 
 SeriesDetail _detail() => SeriesDetail(
@@ -177,11 +178,7 @@ SeriesDetail _detail() => SeriesDetail(
   followerCount: 0,
   commentCount: 0,
   categories: const [],
-  originalBook: const SeriesRelateBook(
-    id: 'book-1',
-    title: '原著书名',
-    cover: '',
-  ),
+  originalBook: const SeriesRelateBook(id: 'book-1', title: '原著书名', cover: ''),
   status: 1,
   seriesColorHex: '',
 );
