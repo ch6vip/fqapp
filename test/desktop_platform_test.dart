@@ -355,6 +355,7 @@ void main() {
     },
   );
 
+  // These saves exercise Linux libc and /proc, not just the platform override.
   test('Linux backup selection saves bytes, reads and cancels', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -435,7 +436,7 @@ void main() {
         ),
       ),
     );
-  });
+  }, skip: !Platform.isLinux);
 
   test(
     'Linux TXT sink saves UTF-8 and reports cancellation and failures',
@@ -521,6 +522,7 @@ void main() {
         ),
       );
     },
+    skip: !Platform.isLinux,
   );
 
   for (final backup in [true, false]) {
@@ -696,6 +698,7 @@ void main() {
         );
       },
       variant: TargetPlatformVariant({TargetPlatform.linux}),
+      skip: !Platform.isLinux,
     );
   }
 
