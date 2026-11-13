@@ -51,8 +51,8 @@ jobs:
           persist-credentials: false
       - name: Fetch exact official Flutter SDK
         run: |
-          curl --fail --location --retry 3 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.9-stable.tar.xz -o /tmp/flutter.tar.xz
-          echo '25ed8c3c29d51a7353f2a944310b478af8214920639524b19c50a19e6c044c5a  /tmp/flutter.tar.xz' | sha256sum -c -
+          curl --fail --location --retry 3 https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.50.0-stable.tar.xz -o /tmp/flutter.tar.xz
+          echo '6ea2d806fd57269ae783e6788e2a81fc26eaad782f1e0d0ff38623bb765ff9f5  /tmp/flutter.tar.xz' | sha256sum -c -
           tar -xJf /tmp/flutter.tar.xz -C /opt
           chown -R builder:builder /opt/flutter "$GITHUB_WORKSPACE"
       - name: Resolve locked inputs and run automatic gates

@@ -3,7 +3,7 @@ import '../services/audio_floating_routes.dart';
 import '../widgets/desktop_chapter_sidebar.dart';
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../models/chapter_media.dart';

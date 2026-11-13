@@ -23,8 +23,8 @@
 //   (D-M4: never write a fallback category back to disk).
 // - Deleting the currently selected group returns `_all`.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../models/media_item.dart';
 import '../../models/shelf_categories.dart';

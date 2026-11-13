@@ -19,7 +19,7 @@
 // - `Navigator.maybePop` replaces `Navigator.pop` for the same reason: a stale
 //   tap on a surface that cannot pop is a no-op.
 
-import 'package:flutter/cupertino.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
 
 import '../app_ui/app_ui_scope.dart';
 import '../wenku/wenku_ui.dart';

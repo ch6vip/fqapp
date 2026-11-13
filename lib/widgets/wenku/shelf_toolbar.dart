@@ -14,7 +14,7 @@
 // - `app_ui.dart` AppText -> `src/app_text.dart`; ArchiveIcon/ArchiveCode ->
 //   `wenku_archive.dart`/`wenku_icons.dart`; GlassTextButton/GlassIconButton ->
 //   `wenku_glass.dart` (same APIs).
-// - `package:flutter/cupertino.dart` -> `package:flutter/material.dart` plus
+// - `package:cupertino_ui/cupertino_ui.dart` -> `package:material_ui/material_ui.dart` plus
 //   `CupertinoIcons`; these widgets only use members both libraries expose.
 //
 // fqapp additions:
@@ -25,8 +25,8 @@
 // - `ShelfTodayReadingPill` is the archive-styled replacement for the page's
 //   old HomeChip pill (same text, e-ink keeps a black outline).
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 import 'src/app_text.dart';

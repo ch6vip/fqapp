@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// A relative drag keeps pressing the track from jumping to that position.
 /// Semantics provides the same action to keyboard/accessibility users.

@@ -18,7 +18,7 @@
 //   full-width `GlassSettingMenu` cannot be expressed as a trailing widget.
 //   It renders exactly the upstream row shape inside the shared panel.
 
-import 'package:flutter/cupertino.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
 
 import '../services/app_style_tokens.dart';
 import '../widgets/settings/classic_settings_icons.dart';

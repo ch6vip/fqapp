@@ -4,7 +4,7 @@ import 'dart:math' show cos, exp, sin, sqrt;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/gestures.dart' show DragStartBehavior;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter_lucide/flutter_lucide.dart';
 

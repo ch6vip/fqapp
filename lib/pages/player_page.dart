@@ -4,7 +4,7 @@ import '../services/app_log.dart';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../models/audio_extra.dart' show RelatedWork;
 import '../models/media_item.dart';
