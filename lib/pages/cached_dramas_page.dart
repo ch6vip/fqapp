@@ -19,6 +19,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../services/chapter_cache_store.dart' show formatCacheBytes;
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
+import '../services/platform_capabilities.dart';
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/cache/cache_list_anchor.dart';
 import '../widgets/cache/cache_page_widgets.dart';
@@ -296,15 +297,19 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     required bool classic,
   }) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    final supportsPlayback = supportsVideoPlayback;
+    final emptyMessage = supportsPlayback
+        ? '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。'
+        : '当前平台暂不支持视频播放，可在此查看和删除已有缓存；缓存不会被自动清理。';
     if (classic) {
       if (_error case final error?) {
         return CacheErrorState(message: error, onRetry: _reload);
       }
       if (_dramas.isEmpty && tasks.isEmpty) {
-        return const CacheEmptyState(
+        return CacheEmptyState(
           icon: LucideIcons.clapperboard,
           title: '暂无离线缓存',
-          message: '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+          message: emptyMessage,
         );
       }
       final episodeCount = _dramas.fold(
@@ -320,7 +325,9 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
           CacheSummaryCard(
             icon: LucideIcons.clapperboard,
             title: '已缓存 ${_dramas.length} 部 · 共 $episodeCount 集',
-            subtitle: '占用空间：${formatCacheBytes(bytes)} · 加密离线播放',
+            subtitle:
+                '占用空间：${formatCacheBytes(bytes)}'
+                '${supportsPlayback ? ' · 加密离线播放' : ''}',
           ),
           const SizedBox(height: 12),
           for (final task in _looseTasks(tasks))
@@ -366,6 +373,9 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
       (sum, item) => sum + item.episodes.length,
     );
     final bytes = _dramas.fold(0, (sum, item) => sum + item.bytes);
+    final playbackDescription = supportsPlayback
+        ? '已下载的短剧可加密离线播放。'
+        : '已有缓存可在此查看和删除。';
     return ListView(
       key: const ValueKey('cached-dramas-scroll'),
       controller: _anchor.scroll,
@@ -381,7 +391,7 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
         ),
         const SizedBox(height: 14),
         AppText(
-          '已下载的短剧可加密离线播放。「全部暂停/继续」只影响在途下载，'
+          '$playbackDescription「全部暂停/继续」只影响在途下载，'
           '清理缓存不会删除书架里的剧集。',
           style: TextStyle(
             fontSize: 13,
@@ -423,7 +433,7 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
         if (_dramas.isEmpty && tasks.isEmpty) ...[
           const SizedBox(height: 10),
           AppText(
-            '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+            emptyMessage,
             style: TextStyle(
               fontSize: 13,
               height: 1.7,
