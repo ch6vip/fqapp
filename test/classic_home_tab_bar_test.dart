@@ -2,7 +2,7 @@
 // TabAlignment.center）的「选中即居中滚进视野」与「不足一屏整组居中」。
 // 测试字体为 Ahem（每字宽 = 字号），六分类均为两字，几何可精确断言：
 // 选中样式 17 → 单标签宽 34 + 2×6 padding = 46。
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fqapp/services/app_style_tokens.dart';

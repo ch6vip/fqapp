@@ -3,7 +3,7 @@
 // Mechanical substitution: upstream `app_ui.dart` `AppText` is fqapp's
 // `src/app_text.dart` `AppText` (Chinese input returned unchanged).
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'app_text.dart';
 

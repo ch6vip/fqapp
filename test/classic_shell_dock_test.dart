@@ -1,7 +1,7 @@
 // Classic dock regression: concentric geometry (outer capsule vs selection
 // backdrop), full icon+label coverage, and the draggable highlight that
 // follows the finger and switches pages on release.
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/semantics.dart'
     show SemanticsAction, SemanticsActionEvent;
 import 'package:flutter_lucide/flutter_lucide.dart';

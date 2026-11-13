@@ -1,7 +1,7 @@
 // Legacy presentation from issue #288, fqapp-backup@f329399.
 // Reads the current application stores; no legacy data or networking is copied.
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../models/media_item.dart';

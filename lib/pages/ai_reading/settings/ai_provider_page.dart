@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../../services/ai_reading/ai_client.dart';
 import '../../../services/ai_reading/ai_credentials.dart';

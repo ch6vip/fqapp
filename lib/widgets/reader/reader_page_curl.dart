@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 仿真卷页：直折线 + 镜像翻页 + 折线两侧渐变阴影。
 ///

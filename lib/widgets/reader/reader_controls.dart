@@ -2,8 +2,8 @@
 // _readerAction and lib/reader_chrome.dart. Six reader actions and an optional
 // AI action use the upstream dock; progress scrubs within the current chapter.
 // fqapp's listening/video controls remain separate, above this dock.
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../services/reader_preferences.dart';
 import '../wenku/wenku_ui.dart';

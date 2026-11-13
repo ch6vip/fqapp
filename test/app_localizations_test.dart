@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// issue #79：搜索框粘贴时系统文本菜单显示英文。
@@ -17,8 +16,8 @@ void main() {
     ).readAsStringSync().replaceAll(RegExp(r'\s+'), ' ');
     expect(
       source,
-      contains('package:flutter_localizations/flutter_localizations.dart'),
-      reason: '缺少 flutter_localizations 导入',
+      contains('package:material_ui/material_ui.dart'),
+      reason: '缺少 material_ui 导入',
     );
     expect(
       source,

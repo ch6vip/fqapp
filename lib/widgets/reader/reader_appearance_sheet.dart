@@ -2,8 +2,8 @@
 // fqapp remains authoritative for preferences, reading engines and device I/O.
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../services/linux_platform.dart';

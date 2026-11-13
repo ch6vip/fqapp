@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 官方旧栏 drawable/b2s.xml 的 28dp 清晰度图标：圆角框 + 「HD」字形。
 /// 路径坐标与官方 vector 逐点一致（viewport 28×28）。浅色更多面板的

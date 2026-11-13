@@ -19,7 +19,7 @@ Windows 10/11 x64：解压完整目录后运行 `fqapp.exe`，不要单独移动
 
 ## 构建和验证
 
-需要 Flutter 3.44.6 / Dart 3.12.2、Rust stable、Visual Studio C++ 桌面工具、NuGet CLI 和 FFmpeg。
+需要 Flutter 3.50.0 / Dart 3.14.0、Rust stable、Visual Studio C++ 桌面工具、NuGet CLI 和 FFmpeg。
 执行 `pwsh -File scripts/build_windows.ps1 -FlutterRoot <Flutter SDK 路径>`。
 原生 DLL 由 Windows CMake 构建自动调用 Cargo 编译；C 解密核心由 Rust build.rs 编译。
 构建脚本对中文工作区使用临时英文目录联接，不移动源码。
@@ -35,6 +35,18 @@ Flutter 插件需要开发者模式或符号链接权限；本机 `.tools/flutte
 `python scripts/verify_windows_media.py` 使用真实 Windows DLL、FFmpeg 生成的 CENC 夹具，
 核对视频和音频逐帧哈希、在线/离线随机 Range、访问限制和会话关闭。
 这些离线测试不代表上游在线内容或用户账号导入已通过真实验收。
+
+缓存路径的原生回归在生成上述夹具后运行：
+
+```powershell
+$env:FQAPP_TEST_ENCRYPTED_MEDIA = (Resolve-Path build/validation/windows-media/encrypted.mp4).Path
+$env:FQAPP_TEST_DECRYPTED_MEDIA = (Resolve-Path build/validation/windows-media/decoded.mp4).Path
+flutter test --no-pub test/desktop_cached_media_test.dart
+```
+
+该测试从 `CachedEpisode.toSource()` 进入真实 Rust/C 解密链路，核对 6 集缓存的
+乱序打开、重开和 Range 拖动，并覆盖含中文、空格、`#`、`%` 的 Windows 路径。
+Windows 缓存取流必须使用标准文件 URI，不能直接把盘符路径拼在 `file://` 后。
 
 `dart compile exe scripts/verify_windows_player.dart -o build/verify_windows_player.exe`
 后运行 `build/verify_windows_player.exe`，使用与产品一致的 AOT 模式和随包 libmpv，核对加密媒体的 H264 解码尺寸、
