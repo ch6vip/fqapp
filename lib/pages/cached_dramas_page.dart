@@ -19,6 +19,7 @@ import 'package:flutter_lucide/flutter_lucide.dart';
 import '../services/chapter_cache_store.dart' show formatCacheBytes;
 import '../services/drama_download_store.dart';
 import '../services/drama_downloader.dart';
+import '../services/linux_platform.dart' show isLinuxDesktop;
 import '../widgets/app_ui/app_ui_scope.dart';
 import '../widgets/cache/cache_list_anchor.dart';
 import '../widgets/cache/cache_page_widgets.dart';
@@ -296,15 +297,18 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
     required bool classic,
   }) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    final emptyMessage = isLinuxDesktop
+        ? 'Linux 暂不支持视频播放，可在此查看和删除已有缓存；缓存不会被自动清理。'
+        : '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。';
     if (classic) {
       if (_error case final error?) {
         return CacheErrorState(message: error, onRetry: _reload);
       }
       if (_dramas.isEmpty && tasks.isEmpty) {
-        return const CacheEmptyState(
+        return CacheEmptyState(
           icon: LucideIcons.clapperboard,
           title: '暂无离线缓存',
-          message: '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+          message: emptyMessage,
         );
       }
       final episodeCount = _dramas.fold(
@@ -423,7 +427,7 @@ class _CachedDramasPageState extends State<CachedDramasPage> {
         if (_dramas.isEmpty && tasks.isEmpty) ...[
           const SizedBox(height: 10),
           AppText(
-            '播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。',
+            emptyMessage,
             style: TextStyle(
               fontSize: 13,
               height: 1.7,

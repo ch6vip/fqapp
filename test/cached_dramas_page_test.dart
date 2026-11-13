@@ -129,22 +129,34 @@ void main() {
     expect(find.byKey(const ValueKey('drama-episode-ep1')), findsOneWidget);
   });
 
-  testWidgets('删除单集走确认弹窗并刷新列表', (tester) async {
-    await seed();
-    await pumpPage(tester);
-    await tester.tap(find.text('测试剧'));
-    await tester.pumpAndSettle();
+  for (final classic in [false, true]) {
+    testWidgets(
+      '经典=$classic：删除单集走确认弹窗并刷新列表',
+      (tester) async {
+        await seed();
+        await pumpDramaCacheWithStyle(tester, classic: classic);
+        expect(find.text('测试剧'), findsOneWidget);
+        await tester.tap(find.text('测试剧'));
+        await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('drama-episode-delete-ep0')));
-    await tester.pumpAndSettle();
-    expect(find.text('删除这一集'), findsOneWidget);
-    await tester.tap(find.text('删除'));
-    await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('drama-episode-delete-ep0')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('删除这一集'), findsOneWidget);
+        await tester.tap(find.text('删除'));
+        await tester.pumpAndSettle();
 
-    expect(await store.isDownloaded('ep0'), isFalse);
-    expect(find.byKey(const ValueKey('drama-episode-ep0')), findsNothing);
-    expect(find.byKey(const ValueKey('drama-episode-ep1')), findsOneWidget);
-  });
+        expect(await store.isDownloaded('ep0'), isFalse);
+        expect(find.byKey(const ValueKey('drama-episode-ep0')), findsNothing);
+        expect(find.byKey(const ValueKey('drama-episode-ep1')), findsOneWidget);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.linux,
+      }),
+    );
+  }
 
   testWidgets('缓存页标题与设置入口使用同一名称', (tester) async {
     await pumpPage(tester);
@@ -154,10 +166,27 @@ void main() {
     expect(find.byType(SettingsSectionHeader), findsNothing);
   });
 
-  testWidgets('空态文案可见', (tester) async {
-    await pumpPage(tester);
-    expect(find.textContaining('暂无离线缓存'), findsOneWidget);
-  });
+  for (final platform in TargetPlatform.values) {
+    for (final classic in [false, true]) {
+      testWidgets('$platform 经典=$classic：空态引导符合平台能力', (tester) async {
+        await pumpDramaCacheWithStyle(tester, classic: classic);
+
+        expect(find.textContaining('暂无离线缓存'), findsOneWidget);
+        if (platform == TargetPlatform.linux) {
+          expect(
+            find.text('Linux 暂不支持视频播放，可在此查看和删除已有缓存；缓存不会被自动清理。'),
+            findsOneWidget,
+          );
+          expect(find.textContaining('更多 → 离线缓存'), findsNothing);
+        } else {
+          expect(
+            find.text('播放页「更多 → 离线缓存」选择想下载的集；下载的内容不会被自动清理。'),
+            findsOneWidget,
+          );
+        }
+      }, variant: TargetPlatformVariant({platform}));
+    }
+  }
 
   testWidgets('下载中任务以进度行出现在卡片之外', (tester) async {
     // 未完成集不进 store：任务快照直接来自下载引擎。
