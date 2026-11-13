@@ -52,10 +52,10 @@ void main() {
 
   testWidgets('顶栏高度 = 搜索行 + 频道条（桌面端不含搜索行）', (tester) async {
     final normal = await readTopChrome(tester, TextScaler.noScaling);
-    expect(normal, isWindowsDesktop ? 38 : 89);
+    expect(normal, isWindowsDesktop ? 40 : 91);
 
-    // 2 倍字号：频道条 24×2×1.1+6 = 58.8 > 38 → 抬到 62.8。
+    // 与首页一致：2 倍字号下为 17×2 + 20 = 54dp。
     final large = await readTopChrome(tester, const TextScaler.linear(2));
-    expect(large, closeTo(isWindowsDesktop ? 62.8 : 113.8, .01));
+    expect(large, closeTo(isWindowsDesktop ? 54 : 105, .01));
   });
 }

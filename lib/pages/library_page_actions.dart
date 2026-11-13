@@ -4,7 +4,9 @@ part of 'library_page.dart';
 /// 移出书架 / 删除历史。原来都写在 `library_page.dart` 的状态类里，把那个
 /// 文件推过了行数预算，按职责挪到这里。
 mixin _LibraryPageActions on _LibraryPageStateBase {
-  ShelfTabScope get _scope => switch (_tab) {
+  ShelfTabScope get _scope => _scopeForTab(_tab);
+
+  ShelfTabScope _scopeForTab(int tab) => switch (tab) {
     1 => ShelfTabScope.history,
     2 => ShelfTabScope.collection,
     _ => ShelfTabScope.shelf,
@@ -17,8 +19,12 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
   /// 返回 null：此时必须降级成「全部」，否则持久化的组 id 在
   /// [ShelfGroupStore.matchesKey] 里永远匹配不到（未就绪时 `groupOfKey` 恒为
   /// `_unfiled`），书架 / 收藏 / 历史会整页为空（design D-M4）。
-  String get _category =>
-      ShelfGroupStore.instance.resolveCategory(_rawCategory) ??
+  String get _category => _categoryForTab(_tab);
+
+  String _categoryForTab(int tab) =>
+      ShelfGroupStore.instance.resolveCategory(
+        ShelfViewStore.instance.categoryOf(_scopeForTab(tab)),
+      ) ??
       ShelfCategory.all;
 
   /// 分类弹层的选中值：就绪时用解析后的分类（已删除的组回落到全部），
@@ -26,8 +32,10 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
   String get _categoryForSheet =>
       ShelfGroupStore.instance.resolveCategory(_rawCategory) ?? _rawCategory;
 
-  int get _activeFilters {
-    if (_tab == 1) return 0;
+  int get _activeFilters => _activeFiltersForTab(_tab);
+
+  int _activeFiltersForTab(int tab) {
+    if (tab == 1) return 0;
     final state = ShelfViewStore.instance.state;
     return (state.sort != ShelfSort.recentRead ? 1 : 0) +
         (state.filter != ShelfReadingFilter.all ? 1 : 0) +
@@ -327,16 +335,19 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
 
   /// 当前 tab 的可见条目：历史只按分类过滤、保持时间倒序；书架与收藏走
   /// 同一套排序 / 阅读状态 / 来源 / 分类投影（收藏先按 video/manju 过滤）。
-  List<_ShelfEntry> get _visibleEntries {
+  List<_ShelfEntry> get _visibleEntries => _visibleEntriesForTab(_tab);
+
+  /// 邻页预览只读取目标 tab 的投影，不提前切换当前索引或触发副作用。
+  List<_ShelfEntry> _visibleEntriesForTab(int tab) {
+    final category = _categoryForTab(tab);
     final view = ShelfViewStore.instance.state;
     final facts = ShelfFilterFacts(
       cachedContentKeys: _cachedContentKeys,
       cacheScanComplete: _cacheScanComplete,
     );
     final store = ShelfGroupStore.instance;
-    switch (_tab) {
+    switch (tab) {
       case 1:
-        final category = _category;
         return [
           for (final entry in _browseHistory)
             if (store.matchesKey(entry.contentKey, entry.author, category))
@@ -353,7 +364,7 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
           sort: view.sort,
           reading: view.filter,
           source: view.source,
-          category: _category,
+          category: category,
           facts: facts,
           categories: store,
         );
@@ -363,7 +374,7 @@ mixin _LibraryPageActions on _LibraryPageStateBase {
           sort: view.sort,
           reading: view.filter,
           source: view.source,
-          category: _category,
+          category: category,
           facts: facts,
           categories: store,
         );

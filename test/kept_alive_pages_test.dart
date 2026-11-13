@@ -46,7 +46,7 @@ void main() {
           builder: (context, value, child) => LazyIndexedStack(
             index: value,
             children: const [
-              LibraryPage(),
+              LibraryPage(shellIndex: 0),
               ReadingStatisticsPage(),
               SizedBox.expand(child: Text('其他页面')),
             ],

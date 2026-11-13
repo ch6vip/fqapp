@@ -3,10 +3,12 @@ part of 'library_page.dart';
 /// Restored from the pre-archive shelf chrome (f329399). Only action wiring and
 /// the compact access to newer filters/groups differ from the original UI.
 mixin _LibraryClassicChrome on _LibraryShelfViews {
-  bool get _classicHasFilters =>
-      _activeFilters > 0 ||
-      _category != ShelfCategory.all ||
-      (_tab == 2 && _collectionFilter != null);
+  bool get _classicHasFilters => _classicHasFiltersForTab(_tab);
+
+  bool _classicHasFiltersForTab(int tab) =>
+      _activeFiltersForTab(tab) > 0 ||
+      _categoryForTab(tab) != ShelfCategory.all ||
+      (tab == 2 && _collectionFilter != null);
 
   void _setClassicLayout(BookshelfLayout layout) {
     unawaited(
@@ -28,18 +30,59 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
           // can scroll the tabs without pushing search/more off screen.
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: Row(
-              key: const Key('library-tabs'),
+            child: Stack(
               children: [
-                for (var index = 0; index < _tabTitles.length; index++) ...[
-                  if (index > 0) const SizedBox(width: 20),
-                  _ClassicTabButton(
-                    label: _tabTitles[index],
-                    selected: _tab == index,
-                    palette: palette,
-                    onTap: () => _selectTab(index),
-                  ),
-                ],
+                Row(
+                  key: const Key('library-tabs'),
+                  children: [
+                    for (var index = 0; index < _tabTitles.length; index++) ...[
+                      if (index > 0) const SizedBox(width: 20),
+                      _ClassicTabButton(
+                        key: _classicTabKeys[index],
+                        label: _tabTitles[index],
+                        selected: _tab == index,
+                        palette: palette,
+                        width: _classicTabWidth(index),
+                        onTap: () => _selectTab(index),
+                      ),
+                    ],
+                  ],
+                ),
+                // The underline is drawn once for the row, so it slides
+                // between the tabs while a finger is down. It listens to the
+                // swipe progress, so it follows the finger frame by frame.
+                ValueListenableBuilder<double>(
+                  valueListenable: _tabProgress,
+                  builder: (context, progress, _) {
+                    final position = _classicFloatingPosition(progress);
+                    final indicatorWidth = _classicIndicatorWidth(position);
+                    final left = _classicUnderlineLeftForPosition(
+                      position,
+                      indicatorWidth,
+                    );
+                    if (left == null) return const SizedBox.shrink();
+                    // While a finger is down the underline tracks the content
+                    // exactly; an implicit animation here would lag behind the
+                    // gesture and then visibly catch up (a hop) at the end.
+                    return AnimatedPositioned(
+                      key: const Key('classic-tab-underline'),
+                      left: left,
+                      bottom: 0,
+                      width: indicatorWidth,
+                      height: 3,
+                      duration: progress == 0
+                          ? _classicUnderlineDuration
+                          : Duration.zero,
+                      curve: Curves.easeOutCubic,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: HomePalette.accent,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -146,7 +189,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
   /// 分段。分组胶囊把 `_category` 写成胶囊文案，也是分组入口（点开现有分类
   /// 弹层，选择 / 新建 / 重命名 / 删除都在那里）。窄屏或 2x 字号整行会放
   /// 不下，胶囊与「今日已读」一起横向滚动，版式分段固定不动，不出现 overflow。
-  Widget _classicToolbar(HomePalette palette) => Padding(
+  Widget _classicToolbar(HomePalette palette, int tab) => Padding(
     padding: const EdgeInsets.fromLTRB(
       ShelfTokens.screenPadding,
       ShelfTokens.spaceXS,
@@ -156,7 +199,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
     child: Row(
       children: [
         Expanded(
-          child: _tab == 0
+          child: tab == 0
               ? LayoutBuilder(
                   builder: (context, constraints) {
                     final compact =
@@ -172,7 +215,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
                           children: [
                             _classicTodayPill(palette),
                             const SizedBox(width: 8),
-                            _classicGroupChip(palette),
+                            _classicGroupChip(palette, tab),
                           ],
                         ),
                       );
@@ -186,7 +229,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
                             alignment: Alignment.centerRight,
                             child: Padding(
                               padding: const EdgeInsets.only(left: 8),
-                              child: _classicGroupChip(palette),
+                              child: _classicGroupChip(palette, tab),
                             ),
                           ),
                         ),
@@ -257,8 +300,8 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
   );
 
   /// 分组胶囊的宽度上限：长分组名只省略，不把工具栏推出去换行。
-  Widget _classicGroupChip(HomePalette palette) {
-    final category = _category;
+  Widget _classicGroupChip(HomePalette palette, int tab) {
+    final category = _categoryForTab(tab);
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 148),
       child: _ClassicGroupChip(
@@ -273,7 +316,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
 
   /// No permanent archive toolbar. Applied filters must nevertheless never be
   /// invisible, including a category selected while the archive was active.
-  Widget _classicFilterStatus(HomePalette palette) => SizedBox(
+  Widget _classicFilterStatus(HomePalette palette, int tab) => SizedBox(
     // 定高等于 M3 TextButton 默认 40：与 [ShelfTokens.filterStatusHeight]
     // 互为约定，空态锚点按它补偿。
     height: ShelfTokens.filterStatusHeight,
@@ -293,7 +336,7 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
             const SizedBox(width: 5),
             Expanded(
               child: Text(
-                '已筛选${_category == ShelfCategory.all ? '' : ' · ${ShelfGroupStore.instance.nameOf(_category)}'}',
+                '已筛选${_categoryForTab(tab) == ShelfCategory.all ? '' : ' · ${ShelfGroupStore.instance.nameOf(_categoryForTab(tab))}'}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

@@ -1,20 +1,24 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+
+import 'horizontal_drag_gesture_recognizer.dart';
 
 /// 横向手势切顶栏标签的外壳：首页书城分类、短剧频道、书架一级 tab 共用。
 ///
-/// **为什么不是横向 `PageView`。** 三页的「标签」都不是独立页面：
+/// [TabSwipeArea.pages] 使用真实 PageView，供首页、短剧、经典书架使用。
+/// 以下说明仅针对尚未迁移的单内容构造器：
 /// * 首页六个分类共用一个 feed，切分类要换 `tabIndex`、换 cells、重新请求，
 ///   分页游标和滚动位置都在 provider 里；
 /// * 短剧的频道决定整页形态（竖滑播放流 / 瀑布格 / 本地列表），换频道还要
 ///   释放内联播放器、换壳层 dock 配色；
 /// * 书架的三个 tab 共享编辑态与选中集合，切 tab 要一并复位。
 /// 按 tab 把三页拆成 `PageView` 的 children 等于把三份数据流重写一遍。所以这里
-/// 只做「手势 + 位移」：拖动时内容跟手横移，松手后把当前内容按方向送出、
-/// 调 [onSelect] 换标签、再把新内容从另一侧迎进来。
+/// 只做「手势 + 位移」：拖动时内容跟手横移。松手后，有邻页预览就把视口连续
+/// 推到相邻页边界，预览铺满整屏时换页。首页、短剧与经典书架采用这条路径，
+/// 没有「送出 → 迎入」两段之间的停顿和底色缺口；未提供预览时才退回三段式。
 ///
 /// **与既有手势的关系。** 本组件是页面内容的祖先，横向拖动与内部 `Scrollable`
 /// 在同一个手势竞技场里按方向裁决：竖直滑动归滚动组件（下拉刷新、短剧竖滑
@@ -40,7 +44,25 @@ class TabSwipeArea extends StatefulWidget {
     required this.child,
     this.enabled = true,
     this.previewBuilder,
-  });
+    this.onProgress,
+  }) : pageBuilder = null,
+       onScrollStateChanged = null;
+
+  /// 稳定分页：每个标签只有一棵真实子树，首次出现时惰性挂载，离屏后保活。
+  const TabSwipeArea.pages({
+    super.key,
+    required this.index,
+    required this.count,
+    required this.onSelect,
+    required this.pageBuilder,
+    this.enabled = true,
+    this.onProgress,
+    this.onScrollStateChanged,
+  }) : child = const SizedBox.shrink(),
+       previewBuilder = null;
+
+  final IndexedWidgetBuilder? pageBuilder;
+  final ValueChanged<bool>? onScrollStateChanged;
 
   /// 当前标签下标，由页面自己的状态驱动（页面是唯一事实来源）。
   final int index;
@@ -63,10 +85,21 @@ class TabSwipeArea extends StatefulWidget {
   ///
   /// 首页有六个分类，每个分类的内容都已经在 provider 里有一份（进过的分类
   /// 还能拿到上次渲染的 sliver 树），所以拖动时可以把邻页真正画出来，而不是
-  /// 露出一块背景色。短剧/书架没有可预渲染的邻页，传 null 退回底色即可。
+  /// 露出一块背景色。短剧和经典书架也提供目标频道内容；未接入的页面可传 null。
   ///
   /// 只会为「当前这次拖动」调用一次，不要在这里做重活。
   final Widget Function(int targetIndex)? previewBuilder;
+
+  /// 横向进度的回调，让顶栏那条指示条跟着手指走。
+  ///
+  /// 值的语义是「页进度」：`0` 是当前页，`-1` 是上一页，`1` 是下一页，取值
+  /// 连续。拖动时它是手指位置换算出来的实时值；松手后若是切过去了，它会继续
+  /// 补间到 `-1`/`1` 再归零（换页完成），若是弹回，它会回到 `0`。
+  ///
+  /// 顶栏在滑动区**外面**（它自己不跟着内容横移），所以它拿不到这里内部的
+  /// 位移；这个回调就是把位移递出去的唯一通道。没有它，标签栏只能在换页
+  /// 之后才动一下——点按有动画、拖动没有。
+  final ValueChanged<double>? onProgress;
 
   /// 位移超过屏宽的这个比例就认这次切换（不甩也能滑过去）。
   static const double commitFraction = 0.18;
@@ -74,12 +107,9 @@ class TabSwipeArea extends StatefulWidget {
   /// 位移不到阈值时，速度超过这个值（逻辑像素/秒）也算切换。
   static const double commitVelocity = 220;
 
-  /// 跟手阶段：屏宽的 [followFraction] 之内 1:1 跟随手指。
-  static const double followFraction = 0.28;
-
-  /// 越往后拖越贴近、但永远到不了的位移上限（屏宽比例）。
-  /// 留得住画面，也不会在某个宽度上「突然拖不动」。
-  static const double maxFollowFraction = 0.42;
+  /// 跟手上限（屏宽比例）：1:1 跟随手指直到相邻页边界（一屏宽），与 PiliPlus
+  /// 的 TabBarView 真页面滚动一致。旧版阻尼到 42% 会「不跟手」，已移除。
+  static const double maxFollowFraction = 1.0;
 
   /// 越界阻尼：位移按这个系数收缩，并封顶 [edgeLimit] 像素。
   static const double edgeDamping = 0.3;
@@ -93,6 +123,10 @@ class TabSwipeArea extends StatefulWidget {
   static const int exitMs = 110;
   static const int settleMs = 170;
   static const int enterMs = 190;
+
+  /// 有邻页预览时，松手后把视口连续推到相邻页边界的时长（毫秒）。这一段是真
+  /// 页面滚动：预览全程可见，到边界铺满整屏再无缝换页，没有两段式之间的停顿。
+  static const int commitMs = 220;
 
   @override
   State<TabSwipeArea> createState() => _TabSwipeAreaState();
@@ -117,6 +151,10 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   );
 
   Animation<double>? _tween;
+
+  /// The page-progress tween. It rides the same controller as [_tween],
+  /// so the header indicator and the content can never drift apart.
+  Animation<double>? _progressTween;
 
   /// 起手时量一次屏宽，动画期间不再读 `context.size`（那时可能已经不在树上）。
   ///
@@ -153,6 +191,14 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   Widget? _preview;
   int? _previewTarget;
 
+  /// 当前页进度（`-1` 上一页 / `0` 当前页 / `1` 下一页），递给顶栏的指示条。
+  ///
+  /// 拖动时按位移实时算；点标签的下划线由顶栏自身补间，进度保持 0。
+  double _progress = 0;
+
+  /// 丢弃已经被后续进度取代的帧后通知。
+  int _progressRevision = 0;
+
   @override
   void initState() {
     super.initState();
@@ -162,10 +208,17 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   @override
   void didUpdateWidget(TabSwipeArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 稳定分页由 [_TabPager] 自己跟着 PageController 走；这里若再补入场位移，
+    // 会每帧把顶栏进度写回 0，下划线和页面位置就对不上了。
+    if (widget.pageBuilder != null) return;
     if (widget.index != oldWidget.index) {
       // 邻页已经变成当前页：预览和真正的内容不能同屏，入场动画也不需要它。
       _preview = null;
       _previewTarget = null;
+      // 手势提交已在切换帧之前归零；外部切换也终止旧进度补间。
+      _progressTween = null;
+      _progress = 0;
+      _publishProgress(0);
     }
     if (widget.index == oldWidget.index) return;
     // 手势发起的切换由 [_commit] 自己接管动画，这里不插手。
@@ -183,9 +236,13 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     // 先停旧补间，否则它在下一帧还会继续写 _offset，把刚设好的入场位移抹掉。
     _anim.stop();
     _offset.value = direction * _width * TabSwipeArea.enterFraction;
+    // 点按的目标索引已经更新，顶栏自行从旧标签补间到新标签。
+    // 入场位移只作用于内容，不能再加到新索引上，否则下划线会越过目标。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(_to(0, TabSwipeArea.enterMs, Curves.easeOutCubic));
+      unawaited(
+        _to(0, TabSwipeArea.enterMs, Curves.easeOutCubic, progressTarget: 0),
+      );
     });
   }
 
@@ -201,6 +258,41 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   void _applyTween() {
     final tween = _tween;
     if (tween != null) _offset.value = tween.value;
+    final progressTween = _progressTween;
+    if (progressTween != null) {
+      _progress = progressTween.value;
+    }
+    _publishProgress(_progress);
+  }
+
+  /// 把当前手势/动画的进度递给顶栏：`-1` 是上一页，`0` 是当前页，`1` 是下一页。
+  ///
+  /// 进度仅描述手势及其收尾动画；点按后的内容入场位移不参与顶栏定位。
+  void _publishProgress(double progress) {
+    final revision = ++_progressRevision;
+    final callback = widget.onProgress;
+    if (callback == null) return;
+    final value = progress.clamp(-1.0, 1.0);
+    // 只有 build/layout/paint 阶段不能通知顶栏。动画 Future 完成后的
+    // midFrameMicrotasks 仍在 build 之前，必须立即发布：否则本帧会把
+    // 新 index 与旧 progress 叠加，下划线先越位一格、下一帧再回弹。
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || revision != _progressRevision) return;
+        widget.onProgress?.call(value);
+      });
+      return;
+    }
+    callback(value);
+  }
+
+  /// 拖动中的进度：位移一屏宽 = 走完一整页。
+  double _dragProgress() {
+    final width = _width;
+    if (width <= 0 || !width.isFinite) return 0;
+    // `_offset < 0` 是往下一个标签（内容左移），所以取反。
+    return (-_offset.value / width).clamp(-1.0, 1.0);
   }
 
   double _measureWidth() {
@@ -230,6 +322,10 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     if (!_dragging) return;
     _drag += details.delta.dx;
     _offset.value = _motionless ? 0 : _follow(_drag);
+    // The header indicator follows the finger: progress is the offset as a
+    // fraction of one page.
+    _progress = _dragProgress();
+    _publishProgress(_progress);
     // 预览在指针回调里构建：它会读渲染树的尺寸（邻页要对齐当前内容第一行），
     // 放到 build 里会踩 "Cannot get size during build"。
     _ensurePreview();
@@ -259,7 +355,10 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
       details.velocity.pixelsPerSecond.dx,
     );
     if (step == 0) {
-      unawaited(_to(0, TabSwipeArea.settleMs, Curves.easeOutCubic));
+      // Spring back to the current page; the indicator returns with it.
+      unawaited(
+        _to(0, TabSwipeArea.settleMs, Curves.easeOutCubic, progressTarget: 0),
+      );
       return;
     }
     unawaited(_commit(step));
@@ -268,15 +367,15 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   void _onDragCancel() {
     if (!_dragging) return;
     _dragging = false;
-    unawaited(_to(0, TabSwipeArea.settleMs, Curves.easeOutCubic));
+    unawaited(
+      _to(0, TabSwipeArea.settleMs, Curves.easeOutCubic, progressTarget: 0),
+    );
   }
 
-  /// 原始位移 → 实际位移：跟手、阻尼、越界回弹。
+  /// 原始位移 → 实际位移：1:1 跟手 + 越界回弹（PiliPlus TabBarView 同款）。
   ///
-  /// 越过 [TabSwipeArea.followFraction] 后按指数衰减：交界处的斜率仍是 1，
-  /// 之后一路平滑逼近 [TabSwipeArea.maxFollowFraction]，但永远到不了。以前
-  /// 这里是「两段直线 + 硬封顶」，手指匀速拖动时画面会在 28% 处突然变慢、
-  /// 42% 处彻底不动，真机上就是「拖到一定宽度卡一下」。
+  /// 内容跟手指 1:1 横移，到相邻页边界（一屏宽）封顶——真页面滚动的观感，
+  /// 不再有旧版「拖到一定宽度就拖不动」的阻尼。首尾越界仍给一段阻尼位移。
   double _follow(double dx) {
     final blocked =
         (widget.index == 0 && dx > 0) ||
@@ -288,14 +387,8 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
           .clamp(-TabSwipeArea.edgeLimit, TabSwipeArea.edgeLimit)
           .toDouble();
     }
-    final direct = _width * TabSwipeArea.followFraction;
     final limit = _width * TabSwipeArea.maxFollowFraction;
-    final magnitude = dx.abs();
-    if (magnitude <= direct) return dx;
-    final span = limit - direct;
-    if (span <= 0) return dx.clamp(-limit, limit).toDouble();
-    final total = direct + span * (1 - math.exp(-(magnitude - direct) / span));
-    return dx.isNegative ? -total : total;
+    return dx.clamp(-limit, limit).toDouble();
   }
 
   /// 松手后的方向判定。返回 `1` 表示去下一个标签、`-1` 表示上一个、`0` 表示
@@ -312,7 +405,9 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     return rightward ? -1 : 1;
   }
 
-  /// 送出 → 换标签 → 迎入。三段之间只隔一个「换标签」的同步回调。
+  /// 松手后的换页。有邻页预览时走「真页面滚动」：把视口连续推到相邻页边界，
+  /// 预览铺满整屏的那一刻再换标签、位移同帧归零——无缝接管，没有停顿。没有
+  /// 预览时退回「送出 → 换标签 → 迎入」三段式，系统关了动画则直接换页。
   Future<void> _commit(int step) async {
     final seq = ++_commitSeq;
     _busy = true;
@@ -320,7 +415,53 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
     // 系统开了「移除动画」：整条链都不该有位移。`_to` 会直接落位，但下面两处
     // 手工赋值不受它管，屏幕上就是一次 136px 的闪现（实测一帧 dx=136）。
     final motionless = _ms(TabSwipeArea.enterMs) <= 0;
+    // 预览必须正好是这次要切去的邻页，连续滚动才接得上；否则退回三段式。
+    final continuous =
+        !motionless &&
+        _preview != null &&
+        _previewTarget == widget.index + step;
     try {
+      if (continuous) {
+        // 连续推到边界（一屏宽）：当前内容滑出、预览滑入，全程 1:1 接续，
+        // 不再有「先送出 110ms、再换页、再迎入 190ms」之间的停顿和底色缺口。
+        final boundary = -step * width;
+        final startIndex = widget.index;
+        // 滚动期间不锁：再抓一次手能从当前位移接管，快速连滑不丢手势。
+        _busy = false;
+        // `step` is 1 for the next tab, -1 for the previous one; the
+        // indicator slides the same way the content does.
+        await _to(
+          boundary,
+          TabSwipeArea.commitMs,
+          Curves.easeOutCubic,
+          progressTarget: step.toDouble(),
+        );
+        // 被新一次抓手 / 新一次 commit / 外部点标签（index 已变）接管了就让位。
+        if (!mounted ||
+            _dragging ||
+            seq != _commitSeq ||
+            widget.index != startIndex) {
+          return;
+        }
+        // 到边界：预览此刻正好铺满整屏，换标签后真内容同帧接管位移 0，
+        // 视觉上就是同一张页面继续停在那里，没有横跳、没有露底色。
+        _busy = true;
+        final previous = widget.index;
+        widget.onSelect(previous + step);
+        _offset.value = 0;
+        // 立刻把 progress 归零并同步发布，**不能等 didUpdateWidget**。
+        // 一旦顶栏的 selected 也换成了新 tab，如果 progress 还停在
+        // step（比如 1.0），`_floatingPosition = newIndex + step` 会把
+        // 指示条瞬间跳到 newIndex + 1（弹一下），等 post-frame 回调
+        // 归零才跳回来。这里同步发 0 让顶栏同一帧 build 就拿到正确值。
+        _progress = 0;
+        _publishProgress(0);
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        // 父级不认账（越界/数据未就绪，三个调用方都同步认单，走不到）：
+        // 内容没换，位移已在 0，旧页照常满屏，无需再补动画。
+        return;
+      }
       // 1) 起势：把当前内容按方向送出去，切换才「看得见」。
       //
       // 已经拖过出场距离时不再往回缩：从 -42% 拉回 -34% 再切走，屏幕上就是
@@ -330,12 +471,23 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
           ? _offset.value <= exitTarget
           : _offset.value >= exitTarget;
       if (!motionless && !alreadyOut) {
-        await _to(exitTarget, TabSwipeArea.exitMs, Curves.easeOutCubic);
+        await _to(
+          exitTarget,
+          TabSwipeArea.exitMs,
+          Curves.easeOutCubic,
+          progressTarget: step.toDouble(),
+        );
         if (!mounted) return;
       }
       // 2) 立刻换标签：父级的请求/落盘从这一刻开始，动画不占它的时间。
       final previous = widget.index;
       widget.onSelect(previous + step);
+      // 进度必须和 index 同帧归零，理由与「已到边界」那条路相同：上面把
+      // progress 补到了 ±1，父级的 index 一换，`index + progress` 就变成
+      // 再下一个标签，下划线先窜过去一格、再被动画拉回来——用户看到的就是
+      // 「到位置后又弹一下」。
+      _progress = 0;
+      _publishProgress(0);
       // 3) 先把位移摆到「迎入」那一侧，再去等新内容挂上。
       //
       // 顺序不能反：位移只是个 ValueNotifier，改它只把 Transform 标脏，
@@ -369,17 +521,32 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
   /// 把位移补间到 [target]。中途被新的补间打断时静默收场（接管方接着走）。
   ///
   /// [milliseconds] 走 [_ms]：系统关掉动画时直接落位，不排空补间。
-  Future<void> _to(double target, int milliseconds, Curve curve) async {
+  Future<void> _to(
+    double target,
+    int milliseconds,
+    Curve curve, {
+    double? progressTarget,
+  }) async {
     if (!mounted) return;
     final from = _offset.value;
     final duration = _ms(milliseconds);
     if (duration <= 0 || from == target) {
       _offset.value = target;
+      if (progressTarget != null) {
+        _progress = progressTarget;
+        _publishProgress(_progress);
+      }
       return;
     }
     _anim.duration = Duration(milliseconds: duration);
     _curve.curve = curve;
     _tween = Tween<double>(begin: from, end: target).animate(_curve);
+    // The progress tween rides the same controller as the offset tween: the
+    // page progress is a ratio of the offset, so one curve drives both and the
+    // header indicator cannot drift away from the content.
+    _progressTween = progressTarget == null
+        ? null
+        : Tween<double>(begin: _progress, end: progressTarget).animate(_curve);
     try {
       await _anim.forward(from: 0);
     } catch (_) {
@@ -390,6 +557,19 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
 
   @override
   Widget build(BuildContext context) {
+    // 稳定分页模式拥有独立的手势与生命周期，整块交给 [_TabPager]。
+    final pages = widget.pageBuilder;
+    if (pages != null) {
+      return _TabPager(
+        index: widget.index,
+        count: widget.count,
+        enabled: widget.enabled,
+        onSelect: widget.onSelect,
+        onProgress: widget.onProgress,
+        onScrollStateChanged: widget.onScrollStateChanged,
+        pageBuilder: pages,
+      );
+    }
     final enabled = widget.enabled && widget.count > 1;
     // 用 LayoutBuilder 记宽度，而不是每次切换时读 context.size：这里的
     // constraints 在 layout 阶段就确定了，didUpdateWidget（build 阶段）也能
@@ -416,11 +596,11 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
                 behavior: HitTestBehavior.translucent,
                 gestures: enabled
                     ? <Type, GestureRecognizerFactory>{
-                        HorizontalDragGestureRecognizer:
+                        CustomHorizontalDragGestureRecognizer:
                             GestureRecognizerFactoryWithHandlers<
-                              HorizontalDragGestureRecognizer
+                              CustomHorizontalDragGestureRecognizer
                             >(
-                              HorizontalDragGestureRecognizer.new,
+                              CustomHorizontalDragGestureRecognizer.new,
                               (recognizer) => recognizer
                                 // 从按下点算起。默认的 start 行为会吃掉前
                                 // kTouchSlop 像素，跟手会晚半拍（阅读页竖滑踩过
@@ -470,6 +650,301 @@ class _TabSwipeAreaState extends State<TabSwipeArea>
         child: Transform.translate(
           offset: Offset(forward ? width + dx : dx - width, 0),
           child: preview,
+        ),
+      ),
+    );
+  }
+}
+
+/// 稳定分页：`PageView` 持有每个标签的真实子树，滚动物理自带手势接续。
+///
+/// 与旧的三段式相比，这里没有「先送出、再换标签、再迎入」的提交时机：页面
+/// 位置本身就是唯一事实来源，手指松开后由 [ScrollPosition] 吸附，动画中途
+/// 再次抓手会直接从当前位置接管，可以连续推进多个标签。
+class _TabPager extends StatefulWidget {
+  const _TabPager({
+    required this.index,
+    required this.count,
+    required this.enabled,
+    required this.onSelect,
+    required this.pageBuilder,
+    this.onProgress,
+    this.onScrollStateChanged,
+  });
+
+  final int index;
+  final int count;
+  final bool enabled;
+  final ValueChanged<int> onSelect;
+  final IndexedWidgetBuilder pageBuilder;
+  final ValueChanged<double>? onProgress;
+  final ValueChanged<bool>? onScrollStateChanged;
+
+  @override
+  State<_TabPager> createState() => _TabPagerState();
+}
+
+class _TabPagerState extends State<_TabPager> {
+  /// 在 initState 里建好：控制器拿到的 `initialPage` 必须是挂载时的真实下标，
+  /// 懒初始化会拖到 widget 已经换过下标之后才创建，首屏就停在第 0 页。
+  late final PageController _controller;
+  int _reportedIndex = 0;
+  int? _externalTarget;
+
+  /// 外部排程的代际：只有最后一次排程的动画有权收尾。
+  int _animRevision = 0;
+  int _revision = 0;
+  bool _scrolling = false;
+  double _motionlessDrag = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _reportedIndex = widget.index;
+    _controller = PageController(initialPage: widget.index, keepPage: false)
+      ..addListener(_positionChanged);
+  }
+
+  double get _page =>
+      _controller.hasClients && _controller.position.hasContentDimensions
+      ? _controller.page ?? _reportedIndex.toDouble()
+      : _reportedIndex.toDouble();
+
+  @override
+  void didUpdateWidget(_TabPager oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 目标又回到当前页（快速连点同一个 tab、或 A→B→A）：把进行中的
+    // 外部位移动画收回来，否则它会一路跑到上一次的目标页。
+    //
+    // 已经指向同一目标时**不再重排**：父级在回程的 260ms 里再 build 一次
+    // 就会重复 arm，第二个 `animateToPage` 挤掉第一个，被挤掉的 future 立刻
+    // 完成并提前清闩，此时页面还在半路 → `round()` 会报出错误下标、回调
+    // `onSelect` 把页面闪回上一个 tab。
+    if (widget.index == _reportedIndex) {
+      if (_externalTarget != null && _externalTarget != widget.index) {
+        _externalTarget = widget.index;
+        _scheduleExternal(widget.index);
+      }
+      return;
+    }
+    // `_reportedIndex` 只跟随真实页面位置：外部点选期间它不动，由滚动的
+    // 收尾把它落到新下标。这样即使控制器还没 attach，进度也不会与页错位。
+    if (widget.index != _reportedIndex && widget.index != _externalTarget) {
+      _externalTarget = widget.index;
+      _publishProgress(0);
+      _scheduleExternal(widget.index);
+    }
+  }
+
+  /// 把视口滚到外部点选的目标页。
+  ///
+  /// 首帧里 PageView 可能还没 attach（`hasClients` 为假），此时不能把
+  /// [_externalTarget] 永远挂着：那会挡住后续所有进度上报。重试几次等布局。
+  ///
+  /// 每次排程都领一个 [_animRevision]：被新一次排程挤掉的动画**无权收尾**
+  /// （只比较目标值不够——两次目标相同时旧动画会提前清闩）。
+  void _scheduleExternal(int target, [int attempt = 0]) {
+    final revision = ++_animRevision;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || revision != _animRevision || _externalTarget != target) {
+        return;
+      }
+      if (!_controller.hasClients) {
+        if (attempt < 3) {
+          _scheduleExternal(target, attempt + 1);
+        } else {
+          _externalTarget = null;
+          _positionChanged();
+          // 放弃滚动了就不会有 ScrollEnd：补发一次「横滑结束」，否则外面
+          // 预置的「横滑中」闩永远等不到复位，播放器再也不起播。
+          widget.onScrollStateChanged?.call(false);
+        }
+        return;
+      }
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _controller.jumpToPage(target);
+        _externalTarget = null;
+        _positionChanged();
+      } else {
+        unawaited(_animateTo(target, revision));
+      }
+    });
+  }
+
+  Future<void> _animateTo(int target, int revision) async {
+    await _controller.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+    if (!mounted || revision != _animRevision || _externalTarget != target) {
+      return;
+    }
+    _externalTarget = null;
+    _positionChanged();
+  }
+
+  void _positionChanged() {
+    if (_externalTarget != null || widget.count < 1) return;
+    final page = _page.clamp(0.0, (widget.count - 1).toDouble());
+    final next = page.round();
+    if (next != _reportedIndex) {
+      _reportedIndex = next;
+      widget.onSelect(next);
+    }
+    // 索引越过半页时立即换基准，不能把新 index 与旧 progress 叠加。
+    _publishProgress(page - _reportedIndex);
+  }
+
+  void _publishProgress(double value) {
+    final revision = ++_revision;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && revision == _revision) widget.onProgress?.call(value);
+      });
+    } else {
+      widget.onProgress?.call(value);
+    }
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    if (notification.depth != 0 ||
+        notification.metrics.axis != Axis.horizontal) {
+      return false;
+    }
+    if (notification is ScrollStartNotification) {
+      if (notification.dragDetails != null && _externalTarget != null) {
+        _externalTarget = null;
+        _positionChanged();
+      }
+      if (!_scrolling) {
+        _scrolling = true;
+        widget.onScrollStateChanged?.call(true);
+      }
+    } else if (notification is ScrollEndNotification) {
+      if (_scrolling) {
+        _scrolling = false;
+        widget.onScrollStateChanged?.call(false);
+      }
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    // 频道表回包会换 key、整个 pager 重建：滚动中的状态拿不到 ScrollEnd，
+    // 帧后补发一次「横滑结束」，避免外面的闩永久挂住（真机表现为推荐流
+    // 不再起播、旧解码器不释放）。
+    //
+    // 契约：回调可能在 pager 已经销毁之后的帧里到达，接的人必须自己检查
+    // `mounted`（现有唯一消费者 `DramaPage._onChannelScroll` 首行就查）。
+    if (_scrolling) {
+      _scrolling = false;
+      final notify = widget.onScrollStateChanged;
+      if (notify != null) {
+        SchedulerBinding.instance.addPostFrameCallback((_) => notify(false));
+      }
+    }
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final motionless = MediaQuery.disableAnimationsOf(context);
+    final enabled = widget.enabled && widget.count > 1;
+    final pager = NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: PageView.builder(
+        controller: _controller,
+        // 从按下点起算：默认的 `start` 会把越过 slop 的那一段位移吃掉，
+        // 起手先顿一下再跟手，快速轻扫还会整段丢失。
+        dragStartBehavior: DragStartBehavior.down,
+        // 不复制参考仓库的 SDK 补丁，使用框架原生分页与手势接续。
+        physics: enabled && !motionless
+            ? const ClampingScrollPhysics()
+            : const NeverScrollableScrollPhysics(),
+        itemCount: widget.count,
+        itemBuilder: (context, index) => _KeptAliveTab(
+          key: ValueKey(index),
+          active: index == widget.index,
+          child: widget.pageBuilder(context, index),
+        ),
+      ),
+    );
+    if (!motionless || !enabled) return pager;
+    // 减少动态效果时仍支持手势切换，但不显示跟手位移或收尾动画。
+    return LayoutBuilder(
+      builder: (context, constraints) => RawGestureDetector(
+        behavior: HitTestBehavior.translucent,
+        gestures: {
+          CustomHorizontalDragGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<
+                CustomHorizontalDragGestureRecognizer
+              >(
+                CustomHorizontalDragGestureRecognizer.new,
+                (recognizer) => recognizer
+                  ..dragStartBehavior = DragStartBehavior.down
+                  ..onStart = (_) {
+                    _motionlessDrag = 0;
+                  }
+                  ..onUpdate = (details) {
+                    _motionlessDrag += details.delta.dx;
+                  }
+                  ..onEnd = (details) {
+                    final velocity = details.velocity.pixelsPerSecond.dx;
+                    if (_motionlessDrag.abs() <
+                            constraints.maxWidth *
+                                TabSwipeArea.commitFraction &&
+                        velocity.abs() < TabSwipeArea.commitVelocity) {
+                      return;
+                    }
+                    final direction = _motionlessDrag == 0
+                        ? velocity
+                        : _motionlessDrag;
+                    final next = (widget.index + (direction < 0 ? 1 : -1))
+                        .clamp(0, widget.count - 1);
+                    if (next != widget.index) widget.onSelect(next);
+                  }
+                  ..onCancel = () {
+                    _motionlessDrag = 0;
+                  },
+              ),
+        },
+        child: pager,
+      ),
+    );
+  }
+}
+
+class _KeptAliveTab extends StatefulWidget {
+  const _KeptAliveTab({super.key, required this.active, required this.child});
+  final bool active;
+  final Widget child;
+
+  @override
+  State<_KeptAliveTab> createState() => _KeptAliveTabState();
+}
+
+class _KeptAliveTabState extends State<_KeptAliveTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return TickerMode(
+      enabled: widget.active,
+      child: ExcludeSemantics(
+        excluding: !widget.active,
+        child: ExcludeFocus(
+          excluding: !widget.active,
+          child: IgnorePointer(
+            ignoring: !widget.active,
+            child: PrimaryScrollController.none(child: widget.child),
+          ),
         ),
       ),
     );

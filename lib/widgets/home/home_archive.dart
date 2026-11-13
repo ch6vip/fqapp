@@ -113,6 +113,7 @@ class HomeSectionLabel extends StatelessWidget {
     required this.title,
     this.action,
     this.gutter = 16,
+    this.topPadding = 16,
   });
 
   final String code;
@@ -120,11 +121,16 @@ class HomeSectionLabel extends StatelessWidget {
   final Widget? action;
   final double gutter;
 
+  /// 与上一段内容的间距。默认 16；紧跟分类条的第一段传小值。
+  final double topPadding;
+
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(gutter, 16, gutter, 8),
+      // 上边距同时是「与上一段内容」的间隔。首页分类条下面那第一段会把
+      // [topPadding] 传小一点：标签条本身已经留了白，再叠 16 就空了近 38dp。
+      padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
