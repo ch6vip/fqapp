@@ -251,7 +251,7 @@ extension _PlayerPagePreload on _PlayerPageState {
       trace?.source = 'offline';
       return (offline, null);
     }
-    if (widget.contentLoader == null && !(await currentConnectivity()).online) {
+    if (widget.contentLoader == null && await videoNetworkIsOffline()) {
       throw const OfflineEpisodeUnavailable();
     }
     final request = _sources.request(episode, refresh: refresh);

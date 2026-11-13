@@ -762,7 +762,7 @@ class InlineVideoPlayback {
         // 离线索引读不出来就当没有缓存。
       }
     }
-    if (contentLoader == null && !(await currentConnectivity()).online) {
+    if (contentLoader == null && await videoNetworkIsOffline()) {
       throw const OfflineEpisodeUnavailable();
     }
     return _sources.request(episode).future;
