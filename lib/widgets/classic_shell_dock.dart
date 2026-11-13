@@ -494,8 +494,10 @@ class _ClassicDockDestination extends StatelessWidget {
         : unselectedColor;
     return Semantics(
       container: true,
+      label: label,
       button: true,
       selected: selected,
+      excludeSemantics: true,
       // 无障碍激活动作：手势在子级 GestureDetector 上，不注册语义动作时
       // TalkBack 能读出「按钮/已选择」但双击无法激活，须显式补 onTap。
       onTap: onTap,

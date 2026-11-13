@@ -87,18 +87,16 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
             ),
           ),
         ),
-        Tooltip(
-          message: '搜索',
-          child: IconButton(
-            key: const Key('library-search-button'),
-            onPressed: _openSearch,
-            style: IconButton.styleFrom(
-              foregroundColor: palette.ink,
-              padding: const EdgeInsets.all(8),
-              minimumSize: const Size(38, 38),
-            ),
-            icon: const Icon(LucideIcons.search, size: 21),
+        IconButton(
+          key: const Key('library-search-button'),
+          tooltip: '搜索',
+          onPressed: _openSearch,
+          style: IconButton.styleFrom(
+            foregroundColor: palette.ink,
+            padding: const EdgeInsets.all(8),
+            minimumSize: const Size(48, 48),
           ),
+          icon: const Icon(LucideIcons.search, size: 21),
         ),
         const SizedBox(width: 6),
         PopupMenuButton<_ClassicMenuAction>(
@@ -187,8 +185,8 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
 
   /// L2 工具栏：左「今日已读」胶囊，中间分组筛选胶囊（书架 tab），右侧版式
   /// 分段。分组胶囊把 `_category` 写成胶囊文案，也是分组入口（点开现有分类
-  /// 弹层，选择 / 新建 / 重命名 / 删除都在那里）。窄屏或 2x 字号整行会放
-  /// 不下，胶囊与「今日已读」一起横向滚动，版式分段固定不动，不出现 overflow。
+  /// 弹层，选择 / 新建 / 重命名 / 删除都在那里）。窄屏或大字号固定两行：
+  /// 统计独占第一行，分组与版式共享第二行；宽屏恢复单行。
   Widget _classicToolbar(HomePalette palette, int tab) => Padding(
     padding: const EdgeInsets.fromLTRB(
       ShelfTokens.screenPadding,
@@ -196,78 +194,86 @@ mixin _LibraryClassicChrome on _LibraryShelfViews {
       ShelfTokens.screenPadding,
       ShelfTokens.spaceS,
     ),
-    child: Row(
-      children: [
-        Expanded(
-          child: tab == 0
-              ? LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact =
-                        constraints.maxWidth < 260 ||
-                        MediaQuery.textScalerOf(context).scale(1) > 1.4;
-                    if (compact) {
-                      // Narrow or large-text: keep both controls reachable by
-                      // scrolling instead of pushing the layout segments off.
-                      return SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _classicTodayPill(palette),
-                            const SizedBox(width: 8),
-                            _classicGroupChip(palette, tab),
-                          ],
-                        ),
-                      );
-                    }
-                    return Row(
-                      children: [
-                        _classicTodayPill(palette),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Align(
-                            alignment: Alignment.centerRight,
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 8),
-                              child: _classicGroupChip(palette, tab),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                )
-              : SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final (value, label) in const [
-                        (null, '全部'),
-                        ('video', '短剧'),
-                        ('manju', '漫剧'),
-                      ]) ...[
-                        if (value != null) const SizedBox(width: 8),
-                        HomeChip(
-                          key: Key(
-                            'library-collection-filter-${value ?? 'all'}',
-                          ),
-                          label: label,
-                          selected: _collectionFilter == value,
-                          onTap: () =>
-                              setState(() => _collectionFilter = value),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-        ),
-        const SizedBox(width: 8),
-        _ClassicLayoutSegments(
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final stacked =
+            constraints.maxWidth < 480 ||
+            MediaQuery.textScalerOf(context).scale(1) > 1.4;
+        final collectionFilters = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (value, label) in const [
+              (null, '全部'),
+              ('video', '短剧'),
+              ('manju', '漫剧'),
+            ])
+              HomeChip(
+                key: Key('library-collection-filter-${value ?? 'all'}'),
+                label: label,
+                selected: _collectionFilter == value,
+                onTap: () => setState(() => _collectionFilter = value),
+              ),
+          ],
+        );
+        final shelfFilters = Row(
+          children: [
+            _classicTodayPill(palette),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: _classicGroupChip(palette, tab),
+              ),
+            ),
+          ],
+        );
+        final layouts = _ClassicLayoutSegments(
           current: _classicLayout.value,
           palette: palette,
           onChanged: _setClassicLayout,
-        ),
-      ],
+        );
+        if (!stacked) {
+          return Row(
+            children: [
+              Expanded(child: tab == 0 ? shelfFilters : collectionFilters),
+              const SizedBox(width: 8),
+              layouts,
+            ],
+          );
+        }
+        if (tab == 0) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _classicTodayPill(palette),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _classicGroupChip(palette, tab),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  layouts,
+                ],
+              ),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            collectionFilters,
+            const SizedBox(height: 4),
+            Align(alignment: Alignment.centerRight, child: layouts),
+          ],
+        );
+      },
     ),
   );
 

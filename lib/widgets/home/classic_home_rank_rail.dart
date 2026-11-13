@@ -52,6 +52,7 @@ class ClassicHomeRankRail extends StatelessWidget {
           // 首页分类条下面的第一段：标签条已经有下缘留白，这里再叠 20 会让
           // 「标签 → 排行榜」空出三十多个像素，中间一片空白。
           topPadding: 8,
+          alignActionToTop: true,
         ),
         if (names.length > 1)
           _BoardNames(
@@ -113,19 +114,35 @@ class ClassicHomeBlockMore extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
-    return GestureDetector(
+    return Semantics(
+      button: true,
+      label: label,
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, height: 1.2, color: palette.muted),
+      excludeSemantics: true,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.2,
+                    color: palette.muted,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(LucideIcons.chevron_right, size: 13, color: palette.muted),
+              ],
+            ),
           ),
-          const SizedBox(width: 2),
-          Icon(LucideIcons.chevron_right, size: 13, color: palette.muted),
-        ],
+        ),
       ),
     );
   }
@@ -153,41 +170,58 @@ class _BoardNames extends StatelessWidget {
         children: [
           for (var index = 0; index < names.length; index++)
             Padding(
-              padding: EdgeInsets.only(left: index == 0 ? 0 : 20),
-              child: GestureDetector(
+              padding: EdgeInsets.only(left: index == 0 ? 0 : 4),
+              child: Semantics(
+                button: true,
+                selected: index == selectedIndex,
+                label: names[index],
                 onTap: () => onSelect(index),
-                behavior: HitTestBehavior.opaque,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Text(
-                        names[index],
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.2,
-                          fontWeight: index == selectedIndex
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: index == selectedIndex
-                              ? palette.ink
-                              : palette.muted,
-                        ),
+                excludeSemantics: true,
+                child: InkWell(
+                  onTap: () => onSelect(index),
+                  borderRadius: BorderRadius.circular(10),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 48,
+                      minHeight: 48,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 5),
+                            child: Text(
+                              names[index],
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.2,
+                                fontWeight: index == selectedIndex
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: index == selectedIndex
+                                    ? palette.ink
+                                    : palette.muted,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            width: 16,
+                            height: 2,
+                            decoration: BoxDecoration(
+                              color: index == selectedIndex
+                                  ? palette.ink
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(1),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    Container(
-                      width: 16,
-                      height: 2,
-                      decoration: BoxDecoration(
-                        color: index == selectedIndex
-                            ? palette.ink
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(1),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

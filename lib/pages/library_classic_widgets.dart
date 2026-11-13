@@ -1,5 +1,7 @@
 part of 'library_page.dart';
 
+const double _classicTouchTarget = 48;
+
 /// Three-layout controls ported from f329399's library_shelf_widgets.dart.
 enum _ClassicMenuAction {
   importBook('导入图书', LucideIcons.plus),
@@ -107,29 +109,41 @@ class _ClassicLayoutSegments extends StatelessWidget {
         for (final layout in BookshelfLayout.values)
           Tooltip(
             message: layout.menuLabel,
+            excludeFromSemantics: true,
             child: Semantics(
               button: true,
               selected: layout == current,
+              label: layout.menuLabel,
+              onTap: () => onChanged(layout),
+              excludeSemantics: true,
               child: InkWell(
                 key: Key('shelf-layout-${layout.segmentKey}'),
                 onTap: () => onChanged(layout),
                 borderRadius: BorderRadius.circular(9),
-                child: Container(
-                  width: 34,
-                  height: 30,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: layout == current
-                        ? HomePalette.accent.withValues(alpha: .15)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(9),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minWidth: _classicTouchTarget,
+                    minHeight: _classicTouchTarget,
                   ),
-                  child: Icon(
-                    layout.menuIcon,
-                    size: 17,
-                    color: layout == current
-                        ? HomePalette.accent
-                        : palette.muted,
+                  child: Center(
+                    child: Container(
+                      width: 34,
+                      height: 30,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: layout == current
+                            ? HomePalette.accent.withValues(alpha: .15)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Icon(
+                        layout.menuIcon,
+                        size: 17,
+                        color: layout == current
+                            ? HomePalette.accent
+                            : palette.muted,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -167,41 +181,53 @@ class _ClassicGroupChip extends StatelessWidget {
       button: true,
       selected: active,
       label: '书架分组：$label',
+      onTap: onTap,
+      excludeSemantics: true,
       child: Tooltip(
         message: '书架分组：$label',
+        excludeFromSemantics: true,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
-          child: Container(
-            height: 30,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: palette.soft,
-              borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
-              border: border,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  LucideIcons.folder,
-                  size: ShelfTokens.iconInline,
-                  color: accent ? HomePalette.accent : palette.muted,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: _classicTouchTarget),
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
                 ),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: ShelfTokens.subtitle,
-                      fontWeight: FontWeight.w500,
-                      color: accent ? HomePalette.accent : palette.ink,
+                decoration: BoxDecoration(
+                  color: palette.soft,
+                  borderRadius: BorderRadius.circular(ShelfTokens.radiusChip),
+                  border: border,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      LucideIcons.folder,
+                      size: ShelfTokens.iconInline,
+                      color: accent ? HomePalette.accent : palette.muted,
                     ),
-                  ),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: ShelfTokens.subtitle,
+                          fontWeight: FontWeight.w500,
+                          color: accent ? HomePalette.accent : palette.ink,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -241,6 +267,14 @@ class _ClassicEmptyNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
+    final sectionPadding = largeText ? 8.0 : ShelfTokens.screenPadding;
+    final iconSize = largeText ? 24.0 : 48.0;
+    final iconPadding = largeText ? 8.0 : 20.0;
+    final titleGap = largeText ? 6.0 : 18.0;
+    final messageGap = largeText ? 2.0 : 6.0;
+    final actionGap = largeText ? 6.0 : 20.0;
+    final cachedBooksGap = largeText ? 2.0 : 10.0;
     // Slightly above the geometric center: the header (tabs + toolbar) already
     // occupies ~110dp, so a plain Center would sink the notice below the
     // screen's visual center.
@@ -255,29 +289,29 @@ class _ClassicEmptyNotice extends StatelessWidget {
       alignment: const Alignment(0, -0.2),
       child: Padding(
         padding: EdgeInsets.fromLTRB(
-          ShelfTokens.screenPadding,
-          ShelfTokens.screenPadding,
-          ShelfTokens.screenPadding,
-          ShelfTokens.screenPadding + 1.5 * headerHeight,
+          sectionPadding,
+          sectionPadding,
+          sectionPadding,
+          sectionPadding + 1.5 * headerHeight,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: EdgeInsets.all(iconPadding),
               decoration: BoxDecoration(
                 color: palette.soft,
                 borderRadius: BorderRadius.circular(ShelfTokens.radiusCard),
               ),
               child: Icon(
                 icon,
-                size: 48,
+                size: iconSize,
                 color: palette.eink
                     ? Colors.black
                     : palette.muted.withValues(alpha: .65),
               ),
             ),
-            const SizedBox(height: 18),
+            SizedBox(height: titleGap),
             Text(
               title,
               textAlign: TextAlign.center,
@@ -288,7 +322,7 @@ class _ClassicEmptyNotice extends StatelessWidget {
               ),
             ),
             if (message != null) ...[
-              const SizedBox(height: 6),
+              SizedBox(height: messageGap),
               Text(
                 message!,
                 textAlign: TextAlign.center,
@@ -296,7 +330,7 @@ class _ClassicEmptyNotice extends StatelessWidget {
               ),
             ],
             if (actionLabel != null) ...[
-              const SizedBox(height: 20),
+              SizedBox(height: actionGap),
               FilledButton(
                 key: actionKey,
                 onPressed: onAction,
@@ -305,9 +339,9 @@ class _ClassicEmptyNotice extends StatelessWidget {
                       ? palette.ink
                       : HomePalette.accent,
                   foregroundColor: palette.eink ? palette.canvas : Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: largeText ? 20 : 24,
+                    vertical: largeText ? 8 : 12,
                   ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(24),
@@ -317,7 +351,7 @@ class _ClassicEmptyNotice extends StatelessWidget {
               ),
             ],
             if (onCachedBooks != null) ...[
-              const SizedBox(height: 10),
+              SizedBox(height: cachedBooksGap),
               TextButton.icon(
                 key: const Key('shelf-cached-books-button'),
                 onPressed: onCachedBooks,
