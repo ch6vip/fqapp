@@ -5,7 +5,7 @@ import 'package:fqapp/widgets/video_player_chrome.dart';
 import 'package:fqapp/models/playlet_comment.dart';
 
 import 'support/fakes.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 播放页热评行的接入用例：仅在有热评、竖屏、未清屏/锁定时出现，
 /// 点击回调带上当前那条。

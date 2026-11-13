@@ -25,9 +25,9 @@ sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
 
 build() {
   cd "$srcdir/fqapp"
-  : "${FLUTTER_ROOT:?Set FLUTTER_ROOT to the official Flutter 3.47.9 SDK}"
+  : "${FLUTTER_ROOT:?Set FLUTTER_ROOT to the official Flutter 3.50.0 SDK}"
   export PATH="$FLUTTER_ROOT/bin:$PATH"
-  python -c 'import json,os; assert json.load(open(os.environ["FLUTTER_ROOT"] + "/bin/cache/flutter.version.json"))["frameworkRevision"] == "c197ca5199e9ee5661e865596c9c07294dfab51c"'
+  python -c 'import json,os; assert json.load(open(os.environ["FLUTTER_ROOT"] + "/bin/cache/flutter.version.json"))["frameworkRevision"] == "ab2912035e160d9cad6306df307576da6128ebdb"'
   [[ $(rustc --version) == 'rustc 1.99.1 '* ]]
   # Fetch pinned dependencies separately; building the archive is offline.
   flutter pub get --offline --enforce-lockfile

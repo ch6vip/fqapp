@@ -12,7 +12,7 @@
 // - fqapp keeps its own second slot: the reading progress percentage, the
 //   paged page number and the floating player pill are existing product
 //   features and stay in this footer.
-import 'package:flutter/cupertino.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
 
 import '../../services/reader_device.dart';
 import '../../services/reader_preferences.dart';

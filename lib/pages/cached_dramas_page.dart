@@ -12,8 +12,8 @@
 //   AppBar buttons. Both presentations share this page's State and downloader.
 // - Loading/error retain fqapp's store semantics; archive uses the shared
 //   `FeatureError` treatment and classic uses the original CacheErrorState.
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../services/chapter_cache_store.dart' show formatCacheBytes;

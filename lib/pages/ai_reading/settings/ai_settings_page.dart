@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
 import '../../../services/ai_reading/ai_budget.dart';
@@ -254,8 +254,9 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
   }
 
   Future<void> _openProviders() async {
-    await Navigator.of(context)
-        .push<bool>(MaterialPageRoute(builder: (_) => const AiProviderPage()));
+    await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (_) => const AiProviderPage()));
     if (!mounted) return;
     final global = _settings.global;
     var profile = _settings.provider(global.providerId);

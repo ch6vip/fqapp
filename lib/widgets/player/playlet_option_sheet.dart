@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../services/episode_source_cache.dart';
 import '../../services/playback_format.dart';

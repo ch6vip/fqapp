@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../../widgets/wenku/wenku_ui.dart';
 import 'ai_sandbox_widgets.dart';

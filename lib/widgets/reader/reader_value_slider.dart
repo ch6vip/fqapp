@@ -2,7 +2,7 @@
 // The shared glass adapter is muted: this control owns semantic/detent haptics.
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../services/reader_preferences.dart';
 import '../wenku/wenku_ui.dart';

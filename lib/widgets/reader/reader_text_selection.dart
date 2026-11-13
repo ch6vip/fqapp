@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' show BoxHeightStyle, TextBox;
 
 import 'package:flutter/foundation.dart' show listEquals;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../services/reader_underline_store.dart';
 import 'reader_chapter_layout.dart';
