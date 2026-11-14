@@ -62,6 +62,7 @@ import 'services/swipe_guide_store.dart';
 import 'services/third_party_licenses.dart';
 import 'widgets/lazy_indexed_stack.dart';
 import 'widgets/app_ui/app_ui_scope.dart';
+import 'widgets/dock_auto_hide.dart';
 import 'widgets/shell_dock.dart';
 import 'widgets/unsupported_feature_page.dart';
 import 'widgets/home/home_design.dart';
@@ -583,6 +584,25 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   /// 首页 feed 的滚动控制器，由壳层持有以便底部栏触发回顶部。
   final ScrollController _homeScroll = ScrollController();
 
+  /// 底栏滚动自动隐藏状态（对齐 PiliPlus）：body 的用户拖动驱动，
+  /// bottomNavigationBar 经 [DockAutoHideSlide] 滑入滑出，切 tab 强制露出。
+  ///
+  /// 短路探针：
+  /// - 桌面平台（Windows/Linux）：Flutter 会把 PointerScrollEvent 走
+  ///   beginUserScroll 转成 UserScrollNotification，鼠标滚轮每格都会让
+  ///   dock 抖一下；PiliPlus 只有 Android/iOS，滚轮语义不同，直接禁用。
+  /// - 墨水屏：局部刷新代价高，dock 显隐跳变会看到明显残影，完全禁用。
+  final DockAutoHide _dockAutoHide = DockAutoHide(
+    disabledProbe: () =>
+        isWindowsDesktop || isLinuxDesktop || einkModeNotifier.value,
+  );
+
+  /// 盖在 RootShell 之上的路由的动画监听：子路由 pop 回 RootShell 时把
+  /// dock 强制露出（对齐 PiliPlus 的 didPopNext）。
+  /// 约定与 [Widgets.video_player_chrome] 一致：不引入全局 RouteObserver，
+  /// 而是订阅本页的 secondaryAnimation，测试里裸 MaterialApp 也能生效。
+  late final DockRouteReveal _dockReveal = DockRouteReveal(_dockAutoHide);
+
   /// 上一次「重复点击底部首页 tab」的时间，用于 800ms 防抖。
   ///
   /// 官方对重复点击用 `throttleFirst(800L, MILLISECONDS)`
@@ -598,6 +618,8 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   void _selectTab(int index) {
     if (index != _index) {
       FrameStats.mark('shell tab $index');
+      // 换页一律把 dock 带回：收起态下入口够不到，落点必须可见。
+      _dockAutoHide.reveal();
       // 先广播可见性：页面据此暂停/恢复播放器与定时器，不靠 TickerMode 翻转
       // 触发整页重建。
       shellVisibleTab.value = index;
@@ -641,6 +663,8 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     final last = _lastHomeTabRepeatAt;
     if (last != null && now.difference(last).inMilliseconds < 800) return;
     _lastHomeTabRepeatAt = now;
+    // jumpTo 回顶不产生用户拖动通知，显式把 dock 露出来。
+    _dockAutoHide.reveal();
     if (!_homeScroll.hasClients) return;
     // 官方是瞬间跳转（scrollToPosition(0)），没有动画。
     _homeScroll.jumpTo(_homeScroll.position.minScrollExtent);
@@ -657,6 +681,15 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     }
     _pageFrom = from;
     _pageMotion.forward(from: 0);
+  }
+
+  /// 壳层 body 冒泡上来的用户拖动 → 底栏收起/露出。横轴（频道 pager、
+  /// 卡片横排、TabSwipeArea）在控制器里被忽略；平台与墨水屏的短路在
+  /// [DockAutoHide.disabledProbe] 里处理。返回 false 让通知继续上冒，
+  /// 不影响既有消费者。
+  bool _onShellUserScroll(UserScrollNotification notification) {
+    _dockAutoHide.handleUserScroll(notification);
+    return false;
   }
 
   /// 当前显示的连续页码（动画中为小数，静止时等于 [_index]）。
@@ -704,6 +737,11 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
     // 短剧频道在推荐（视频流）与浅色页之间切换时，悬浮 dock 和系统导航栏
     // 要跟着换肤，所以停在壳层的 build 里监听。
     dramaLightPageNotifier.addListener(_onDramaChromeChanged);
+    // 墨水屏开启时 dock 必须常驻（见 _onShellUserScroll 的短路）：若切换
+    // 前 dock 正处于收起态，不主动 reveal 的话它会永远停在屏幕外。同时
+    // 需要 rebuild 把新的 einkModeNotifier.value 刷到 DockAutoHideSlide
+    // 的 reduceMotion，否则 reveal 过渡仍会跑 500ms。
+    einkModeNotifier.addListener(_onEinkModeChanged);
     // 初始可见页：页面据此决定是否暂停播放器/定时器。
     shellVisibleTab.value = _index;
     _pageMotion.addStatusListener(_onPageMotionStatus);
@@ -712,6 +750,23 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
 
   void _onDramaChromeChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onEinkModeChanged() {
+    if (einkModeNotifier.value) _dockAutoHide.reveal();
+    // build 里读取 einkModeNotifier.value 作为 DockAutoHideSlide 的
+    // reduceMotion；不 setState 就沿用旧 widget 的 reduceMotion，
+    // reveal 过渡会跑 500ms 平移，墨水屏下会看到残影。
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 子路由（SeriesDetailPage、BookDetailPage 等）pop 回 RootShell 时把
+    // dock 强制露出——离开前 dock 可能已被滚动手势收起，但用户直觉上认为
+    // 「回到入口页 dock 应该可见」（对齐 PiliPlus 的 didPopNext）。
+    _dockReveal.attach(context);
   }
 
   /// 页面滑动动画结束时触发一次 rebuild：让 dock 恢复 BackdropFilter
@@ -795,8 +850,11 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
   @override
   void dispose() {
     dramaLightPageNotifier.removeListener(_onDramaChromeChanged);
+    einkModeNotifier.removeListener(_onEinkModeChanged);
+    _dockReveal.detach();
     _pageMotion.removeStatusListener(_onPageMotionStatus);
     _homeScroll.dispose();
+    _dockAutoHide.dispose();
     _pageMotion.dispose();
     super.dispose();
   }
@@ -920,60 +978,72 @@ class _RootShellState extends State<RootShell> with TickerProviderStateMixin {
                       ? Brightness.light
                       : Brightness.dark,
                 ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            return AnimatedBuilder(
-              animation: _pageMotion,
-              builder: (context, _) {
-                final page = _currentPage();
-                return Stack(
-                  key: const ValueKey('root-page-stack'),
-                  fit: StackFit.expand,
-                  children: [
-                    for (var i = 0; i < 4; i++)
-                      if (_visitedTabs.contains(i))
-                        KeyedSubtree(
-                          key: ValueKey('root-tab-$i'),
-                          child: Offstage(
-                            key: ValueKey('root-tab-offstage-$i'),
-                            // 静止时只显示当前页；预挂载帧额外显示目标页
-                            // （Transform 放在屏外，完成 layout 但不显示）；
-                            // 动画中显示视口范围内的页（旧页滑出 + 新页滑入）。
-                            offstage:
-                                !(i == _index ||
-                                    i == _premount ||
-                                    (_pageMotion.isAnimating &&
-                                        (i - page).abs() < 1)),
-                            child: Transform.translate(
-                              offset: Offset((i - page) * width, 0),
-                              // RepaintBoundary 把页面内容缓存为独立图层：
-                              // 动画期间 Transform 只移动图层（GPU 合成），
-                              // 不触发页面内容的逐帧 repaint。
-                              child: RepaintBoundary(
-                                child: TickerMode(
-                                  enabled: i == _index,
-                                  child: _tabChild(i),
+        child: NotificationListener<UserScrollNotification>(
+          // 底栏滚动自动隐藏（对齐 PiliPlus）：把用户拖动方向递送给控制器。
+          // 弹层与上层路由不在本壳层子树、通知不会经过这里，不会被误触发。
+          onNotification: _onShellUserScroll,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              return AnimatedBuilder(
+                animation: _pageMotion,
+                builder: (context, _) {
+                  final page = _currentPage();
+                  return Stack(
+                    key: const ValueKey('root-page-stack'),
+                    fit: StackFit.expand,
+                    children: [
+                      for (var i = 0; i < 4; i++)
+                        if (_visitedTabs.contains(i))
+                          KeyedSubtree(
+                            key: ValueKey('root-tab-$i'),
+                            child: Offstage(
+                              key: ValueKey('root-tab-offstage-$i'),
+                              // 静止时只显示当前页；预挂载帧额外显示目标页
+                              // （Transform 放在屏外，完成 layout 但不显示）；
+                              // 动画中显示视口范围内的页（旧页滑出 + 新页滑入）。
+                              offstage:
+                                  !(i == _index ||
+                                      i == _premount ||
+                                      (_pageMotion.isAnimating &&
+                                          (i - page).abs() < 1)),
+                              child: Transform.translate(
+                                offset: Offset((i - page) * width, 0),
+                                // RepaintBoundary 把页面内容缓存为独立图层：
+                                // 动画期间 Transform 只移动图层（GPU 合成），
+                                // 不触发页面内容的逐帧 repaint。
+                                child: RepaintBoundary(
+                                  child: TickerMode(
+                                    enabled: i == _index,
+                                    child: _tabChild(i),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                  ],
-                );
-              },
-            );
-          },
+                    ],
+                  );
+                },
+              );
+            },
+          ),
         ),
       ),
       // 上游 Wenku8 GlassDock：胶囊、拖动预览和液态玻璃选中区；短剧视频流
       // 与 OLED 纯黑下改用同色静态底板，不对每帧变化的画面做实时折射。
-      bottomNavigationBar: ShellDock(
-        selectedIndex: _index,
-        onSelected: _selectTab,
-        overVideo: dramaOnVideo,
-        staticMaterial: shellDockStaticMaterial(overVideo: dramaOnVideo),
-        animating: _pageMotion.isAnimating,
+      bottomNavigationBar: DockAutoHideSlide(
+        // 下滚收起 / 上滑露出（PiliPlus 同参：500ms、强调三段曲线）。
+        hide: _dockAutoHide,
+        // 墨水屏已通过 disabledProbe 完全禁用收起；此处仅保证进入 eink 时
+        // reveal 回正过渡零帧落位（与 _startPageMotion 降级约定一致）。
+        reduceMotion: einkModeNotifier.value,
+        child: ShellDock(
+          selectedIndex: _index,
+          onSelected: _selectTab,
+          overVideo: dramaOnVideo,
+          staticMaterial: shellDockStaticMaterial(overVideo: dramaOnVideo),
+          animating: _pageMotion.isAnimating,
+        ),
       ),
     );
   }

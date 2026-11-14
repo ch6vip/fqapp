@@ -33,6 +33,7 @@ import 'package:fqapp/services/digg_store.dart';
 import 'package:fqapp/widgets/tab_swipe_area.dart';
 import 'package:fqapp/widgets/home/classic_home_tab_bar.dart';
 import 'package:fqapp/widgets/video_player_chrome.dart';
+import 'package:fqapp/widgets/dock_auto_hide.dart';
 import 'package:fqapp/widgets/shell_dock.dart';
 import 'package:fqapp/widgets/wenku/wenku_ui.dart';
 import 'support/controlled_player.dart';
@@ -1250,6 +1251,9 @@ void main() {
   });
 
   testWidgets('the bottom bar lists 短剧 right after 首页', (tester) async {
+    // 显式钉住 Android：接线守卫需要 disabledProbe 返回 false，
+    // 若 CI 将来复用本文件跑桌面平台则 disabledProbe 会短路、拖拽不翻转。
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
     await tester.binding.setSurfaceSize(const Size(400, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     addTearDown(() => dramaLightPageNotifier.value = false);
@@ -1276,6 +1280,27 @@ void main() {
 
     // The destination is lazy: nothing of the 短剧 feed is built before a tap.
     expect(find.byType(DramaPage), findsNothing);
+
+    // 底栏自动隐藏的壳层接线守卫：在首页 feed 上真滚一把，body 的
+    // UserScrollNotification 监听 → 控制器 → DockAutoHideSlide 三段任一被拆
+    // 掉，dock 都会停在原位（其它断言测不到这件事）。
+    final Finder shellSlide = find.ancestor(
+      of: find.byType(ShellDock),
+      matching: find.byType(DockAutoHideSlide),
+    );
+    Offset dockOffset() => tester
+        .widget<AnimatedSlide>(
+          find.descendant(of: shellSlide, matching: find.byType(AnimatedSlide)),
+        )
+        .offset;
+    expect(dockOffset(), Offset.zero);
+    await tester.dragFrom(const Offset(200, 300), const Offset(0, -200));
+    await tester.pump();
+    expect(dockOffset(), const Offset(0, 1));
+    await tester.dragFrom(const Offset(200, 300), const Offset(0, 200));
+    await tester.pumpAndSettle();
+    expect(dockOffset(), Offset.zero);
+
     await tester.tap(navLabel('短剧'));
     await tester.pumpAndSettle();
     expect(find.byType(DramaPage), findsOneWidget);
@@ -1305,6 +1330,7 @@ void main() {
     await tester.pump(const Duration(seconds: 25));
     await tester.pump();
     expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets(
