@@ -34,6 +34,7 @@
 import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:liquid_glass_easy/liquid_glass_easy.dart' as easy;
 
 /// A collection's presentation is independent from its current device budget.

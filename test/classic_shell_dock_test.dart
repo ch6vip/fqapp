@@ -1,6 +1,7 @@
 // Classic dock regression: concentric geometry (outer capsule vs selection
-// backdrop), full icon+label coverage, and the draggable highlight that
-// follows the finger and switches pages on release.
+// backdrop, both continuous-curvature squircles), full icon+label coverage,
+// and the draggable highlight that follows the finger and switches pages on
+// release.
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/semantics.dart'
     show SemanticsAction, SemanticsActionEvent;
@@ -106,24 +107,29 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  BoxDecoration selectionDecoration(WidgetTester tester) =>
+  ShapeDecoration selectionDecoration(WidgetTester tester) =>
       tester
               .widget<DecoratedBox>(
                 find.byKey(const ValueKey('classic-dock-selection')),
               )
               .decoration
-          as BoxDecoration;
+          as ShapeDecoration;
 
-  BoxDecoration surfaceDecoration(WidgetTester tester) =>
+  ShapeDecoration surfaceDecoration(WidgetTester tester) =>
       tester
               .widget<Container>(
                 find.byKey(const ValueKey('classic-dock-surface')),
               )
               .decoration!
-          as BoxDecoration;
+          as ShapeDecoration;
 
-  double radiusOf(BoxDecoration decoration) =>
-      decoration.borderRadius!.resolve(TextDirection.ltr).topLeft.x;
+  // 圆角必须挂在连续曲率形状上：普通 RoundedRectangleBorder 也算「有
+  // 圆角」，断言收紧到 RoundedSuperellipseBorder 才能守住 squircle 回归。
+  double radiusOf(ShapeDecoration decoration) =>
+      (decoration.shape as RoundedSuperellipseBorder).borderRadius
+          .resolve(TextDirection.ltr)
+          .topLeft
+          .x;
 
   Rect selectionRect(WidgetTester tester) =>
       tester.getRect(find.byKey(const ValueKey('classic-dock-selection')));
@@ -166,6 +172,15 @@ void main() {
     // 背景不溢出 dock。
     expect(dockRect.contains(bgRect.topLeft), isTrue);
     expect(dockRect.contains(bgRect.bottomRight), isTrue);
+
+    // clip 必须与 ShapeDecoration 形状一致（连续曲率），防止退化为 ClipRRect。
+    expect(
+      find.ancestor(
+        of: find.byKey(const ValueKey('classic-dock-surface')),
+        matching: find.byType(ClipRSuperellipse),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('selection backdrop wraps the icon and the label', (

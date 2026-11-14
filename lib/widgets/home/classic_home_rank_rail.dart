@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -9,6 +11,18 @@ import 'home_shelf.dart';
 const double _rankCardWidth = 100;
 const double _rankCoverHeight = 140;
 const double _rankCardGap = 12;
+
+/// 最小触控尺寸（Material 48dp）：「更多」与榜单标签共用。
+const double _minTapSize = 48;
+
+/// 标签文字在 48dp 热区里的水平内缩上限。列表两端按 `min(它, gutter)`
+/// 抵消，让首尾标签的文字与标题、卡片的 gutter 对齐；gutter 小于它时
+/// 内缩跟着收窄，文字左/右缘仍落在 gutter 上。
+const double _boardTextInset = 10;
+
+/// 选中态下划线的尺寸与到文字的间距（Stack 总高 = 文字 + 两者之和）。
+const double _boardIndicatorHeight = 2;
+const double _boardIndicatorGap = 5;
 
 /// f329399's horizontal TOP-cover rail. Only presentation lives here:
 /// HomeRankCell retains the selected board, loader and request generation.
@@ -23,6 +37,7 @@ class ClassicHomeRankRail extends StatelessWidget {
     required this.onSelect,
     required this.onOpen,
     required this.onMore,
+    this.gutter = homeGutter,
   });
 
   final String title;
@@ -34,67 +49,108 @@ class ClassicHomeRankRail extends StatelessWidget {
   final ValueChanged<MediaItem> onOpen;
   final VoidCallback onMore;
 
+  /// 标题、「更多」、标签行、卡片行共用的左右留白；默认 [homeGutter]。
+  /// 测试可传入更小的值覆盖「gutter < 内缩」分支。
+  final double gutter;
+
   @override
   Widget build(BuildContext context) {
     final scaler = MediaQuery.textScalerOf(context);
+    // 标题行高（HomeSectionHeader：19sp × 1.25）；单榜单没有标签行借
+    // 热区时，用它算出让位高度。
+    final titleHeight = scaler.scale(19) * 1.25;
     final railHeight =
         _rankCoverHeight +
         8 +
         scaler.scale(13) * 1.35 * 2 +
         4 +
         scaler.scale(11) * 1.3;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: [
-        HomeSectionHeader(
-          title: title,
-          action: ClassicHomeBlockMore(onTap: onMore),
-          // 首页分类条下面的第一段：标签条已经有下缘留白，这里再叠 20 会让
-          // 「标签 → 排行榜」空出三十多个像素，中间一片空白。
-          topPadding: 8,
-          alignActionToTop: true,
+        // 层级：「更多」在下、内容在上。热区（y 8~56）与标签行（从标题
+        // 行底部起）纵向重叠 24dp：标签在上层，标签自己的 InkWell 优先；
+        // 标签行本身是 translucent，重叠区里没有标签的空隙放行给下层
+        // 「更多」，点击不再丢失到滚动层。注意内容溢出时，3 字榜名的热区
+        // 横向范围会被单个标签完全覆盖，点热区下半会切换榜单——这是
+        // 「标签优先」的取舍，热区并未因此恢复完整的 48dp；要全高可点
+        // 得把热区移出标签行，会牺牲 #384 的 12.7dp 间距。
+        // 另一条隐式依赖：上层标题是 HomeSectionHeader 的 Expanded(Text)，
+        // 它的命中矩形右缘止于右侧 48dp 占位，恰好不进入「更多」的 x 范围。
+        // 标题行若改成全宽可点控件，必须先把右侧 48dp 让出来，否则「更多」
+        // 会被整块吞掉，且现有没有用例会报警。
+        Positioned(
+          top: 8,
+          right: gutter,
+          child: ClassicHomeBlockMore(onTap: onMore),
         ),
-        if (names.length > 1)
-          _BoardNames(
-            names: names,
-            selectedIndex: selectedIndex,
-            onSelect: onSelect,
-          ),
-        const SizedBox(height: 12),
-        if (loading)
-          SizedBox(
-            height: railHeight,
-            child: const Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: HomePalette.accent,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            HomeSectionHeader(
+              title: title,
+              gutter: gutter,
+              // 零高占位，只给「更多」留水平空间；按钮本体浮在下面的
+              // 覆盖层里。若把 48 高的按钮当 action 传进来，标题行会被撑高
+              // 到 48dp，标题底部到榜单标签空出近 50dp（#372 回归，#384）。
+              action: const SizedBox(width: _minTapSize),
+              // 首页分类条下面的第一段：标签条已经有下缘留白，这里再叠 20 会让
+              // 「标签 → 排行榜」空出三十多个像素，中间一片空白。
+              topPadding: 8,
+              // 标签行自带的 48dp 热区上下各留 12.7dp 空白，标题下方不再
+              // 叠 12；下划线到卡片的间距也由热区下缘承担（不再加 SizedBox）。
+              bottomPadding: 0,
+            ),
+            if (names.length > 1)
+              _BoardNames(
+                names: names,
+                selectedIndex: selectedIndex,
+                onSelect: onSelect,
+                gutter: gutter,
+              )
+            else
+              // 没有标签行时热区不存在，自己补回标题到卡片的间距；但卡片
+              // 必须落在「更多」热区（top 8 + 48）下方：否则卡片横向排到
+              // 右缘时，最后一张卡片顶部的点击会落到热区里。
+              SizedBox(
+                height: math.max(homeHeaderGap, _minTapSize - titleHeight + 1),
+              ),
+            if (loading)
+              SizedBox(
+                height: railHeight,
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: HomePalette.accent,
+                    ),
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: railHeight,
+                child: ListView.separated(
+                  key: const Key('classic_home_rank_rail'),
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.symmetric(horizontal: gutter),
+                  itemCount: books.length,
+                  separatorBuilder: (_, _) =>
+                      const SizedBox(width: _rankCardGap),
+                  itemBuilder: (context, index) {
+                    final item = books[index];
+                    return _RankCard(
+                      key: ValueKey('rank:${item.kind}:${item.id}'),
+                      item: item,
+                      rank: index + 1,
+                      onTap: () => onOpen(item),
+                    );
+                  },
                 ),
               ),
-            ),
-          )
-        else
-          SizedBox(
-            height: railHeight,
-            child: ListView.separated(
-              key: const Key('classic_home_rank_rail'),
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-              itemCount: books.length,
-              separatorBuilder: (_, _) => const SizedBox(width: _rankCardGap),
-              itemBuilder: (context, index) {
-                final item = books[index];
-                return _RankCard(
-                  key: ValueKey('rank:${item.kind}:${item.id}'),
-                  item: item,
-                  rank: index + 1,
-                  onTap: () => onOpen(item),
-                );
-              },
-            ),
-          ),
+          ],
+        ),
       ],
     );
   }
@@ -154,18 +210,33 @@ class _BoardNames extends StatelessWidget {
     required this.names,
     required this.selectedIndex,
     required this.onSelect,
+    required this.gutter,
   });
 
   final List<String> names;
   final int selectedIndex;
   final ValueChanged<int> onSelect;
+  final double gutter;
 
   @override
   Widget build(BuildContext context) {
     final palette = HomePalette.of(context);
+    // 两端补偿与标签内缩共用同一个 inset：gutter 小于内缩时收窄内缩，
+    // 让首尾文字的左右缘始终落在 gutter 上，而不是被内缩值顶到
+    // 10dp（那样会与标题错位且没有任何断言失败）。
+    final inset = math.min(_boardTextInset, gutter);
+    final sidePadding = gutter - inset;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+      // 默认 opaque 会让整个视口矩形在命中测试时返回 true，挡住下层
+      // 「更多」：两者纵向重叠 24dp，热区只剩标题行的 23.75dp 可点。
+      // translucent 下空白处返回 false 放行「更多」，标签自己的 InkWell
+      // 仍是 opaque、照常优先；水平拖动也照常进入竞技场，不影响滚动
+      // （translucent 仍会把自身放进命中结果，见 rendering/proxy_box）。
+      // 内容不足一屏时视口 shrink-wrap 到内容宽，右侧空白不在视口内，
+      // 「更多」本来就不受影响。
+      hitTestBehavior: HitTestBehavior.translucent,
+      padding: EdgeInsets.symmetric(horizontal: sidePadding),
       child: Row(
         children: [
           for (var index = 0; index < names.length; index++)
@@ -182,41 +253,83 @@ class _BoardNames extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(
-                      minWidth: 48,
-                      minHeight: 48,
+                      minWidth: _minTapSize,
+                      minHeight: _minTapSize,
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      padding: EdgeInsets.symmetric(horizontal: inset),
                       child: Column(
+                        // 盒子至少 48dp 宽；内容更窄（短榜名）时首/末标签
+                        // 分别贴向列表两端，让文字 gutter 精确对齐（居中
+                        // 会把单字标签推离 7.5dp）。这里只移动「文字 + 指示
+                        // 条」这个整体，指示条在下面的 Stack 里单独以文字
+                        // 居中，不会被一起推到边缘。内容 ≥ 48dp 时该设置
+                        // 没有视觉效果；只有 2 个榜名时没有居中项。
+                        crossAxisAlignment: index == 0
+                            ? CrossAxisAlignment.start
+                            : index == names.length - 1
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.center,
+                        // 48dp 热区高于内容（文字 + 下划线 ≈ 23dp）：内容垂直
+                        // 居中，上下各留 12.7dp。标题下方的 padding 和卡片的
+                        // SizedBox 已置 0，这两段空白正好被热区溢出借走，
+                        // 标题→标签、下划线→卡片都是 12.7dp（#384）。
                         mainAxisAlignment: MainAxisAlignment.center,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 5),
-                            child: Text(
-                              names[index],
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 13,
-                                height: 1.2,
-                                fontWeight: index == selectedIndex
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: index == selectedIndex
-                                    ? palette.ink
-                                    : palette.muted,
+                          Stack(
+                            children: [
+                              Padding(
+                                // Stack 总高 = 文字 + 间距 + 指示条高，与
+                                // 原来的「文字 + 间距 + 指示条」一致，#384
+                                // 的垂直间距不变。
+                                padding: const EdgeInsets.only(
+                                  bottom:
+                                      _boardIndicatorGap +
+                                      _boardIndicatorHeight,
+                                ),
+                                child: Text(
+                                  names[index],
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.2,
+                                    fontWeight: index == selectedIndex
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: index == selectedIndex
+                                        ? palette.ink
+                                        : palette.muted,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                          Container(
-                            width: 16,
-                            height: 2,
-                            decoration: BoxDecoration(
-                              color: index == selectedIndex
-                                  ? palette.ink
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(1),
-                            ),
+                              // 指示条横跨文字宽后居中，天然与文字同中心。
+                              // 若让它跟 Column 的 crossAxisAlignment 走，
+                              // 首/末标签会偏离文字中心最多 11.9dp（设备实测
+                              // 字体；flutter_test 默认字体约 11.5dp）——首屏
+                              // 默认选中第 0 个，这是默认视图的视觉回归。单字
+                              // 榜名（文字 13dp < 16dp）会被夹成文字宽，是
+                              // 「文字贴 gutter」与「指示条固定 16dp」之间
+                              // 唯一的取舍。
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                child: Center(
+                                  child: Container(
+                                    key: const Key('rank_board_indicator'),
+                                    width: 16,
+                                    height: _boardIndicatorHeight,
+                                    decoration: BoxDecoration(
+                                      color: index == selectedIndex
+                                          ? palette.ink
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(1),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
