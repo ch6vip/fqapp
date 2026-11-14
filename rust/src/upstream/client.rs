@@ -236,7 +236,7 @@ impl UpstreamClient {
             })?;
 
         if resp.status != 200 {
-            if is_auth_fail_status(resp.status) {
+            if is_auth_fail_status(resp.status) && !req.no_sign {
                 return Err(ClientError::DeviceFailed(format!("HTTP {}", resp.status)));
             }
             if is_retryable_status(resp.status) {

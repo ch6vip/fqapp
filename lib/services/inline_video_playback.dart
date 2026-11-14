@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import '../models/media_item.dart';
 import '../widgets/player/player_video_layout.dart';
 import 'api_client.dart';
+import 'app_log.dart';
 import 'drama_download_store.dart';
 import 'drama_mute_preferences.dart';
 import 'episode_source_cache.dart';
@@ -1056,6 +1057,7 @@ class InlineVideoPlayback {
   Future<void> _fail(Object failure) async {
     if (_disposed) return;
     ++_generation;
+    AppLog.e('drama', '内联短剧取流或播放失败', error: failure);
     error.value = failure is NativePlaybackException
         ? PlaybackIssue.fromError(failure).title
         : userFacingError(failure);

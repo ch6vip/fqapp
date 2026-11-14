@@ -12,6 +12,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.Proxy
+import java.net.UnknownHostException
 import java.nio.file.NoSuchFileException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -494,6 +495,11 @@ internal class HttpRangeClient(
     private companion object {
         const val SIZE_CACHE_ENTRIES = 16
         const val SIZE_CACHE_TTL_MS = 60_000L
+        // Android 的 DNS 在 Wi-Fi/蜂窝切换、代理重启或上游抖动时会短暂失败。
+        // OkHttp 不会自动重试 UnknownHostException，一次失败就会让当前
+        // ExoPlayer open 直接结束；默认加载策略只留约 3 秒窗口。
+        const val DNS_RETRY_ATTEMPTS = 3
+        const val DNS_RETRY_DELAY_MS = 300L
     }
 
     // A read timeout runs only while an actual read is blocked. Pausing the
@@ -501,6 +507,15 @@ internal class HttpRangeClient(
     // leave response headers and stalled downloads waiting forever. Streaming
     // has no whole-call deadline because playback can legitimately take hours.
     private val streamClient = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
+
+    private fun isDnsFailure(t: Throwable): Boolean {
+        var cause: Throwable? = t
+        repeat(8) {
+            if (cause is UnknownHostException) return true
+            cause = cause?.cause
+        }
+        return false
+    }
 
     private fun responseRange(resp: okhttp3.Response, start: Long, end: Long?): ResponseRange? {
         val body = resp.body ?: return null
@@ -568,30 +583,43 @@ internal class HttpRangeClient(
     }
 
     private fun probeSize(url: String): Long {
-        return try {
-            val req = okhttp3.Request.Builder()
-                .url(url)
-                .header("Range", "bytes=0-0")
-                .header("Accept-Encoding", "identity")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                onHttpStatus(url, resp.code)
-                val range = responseRange(resp, 0, 0)
-                val total = range?.total
-                if (resp.code != 206 || range == null || range.length != 1L || total == null ||
-                    total <= 0L
-                ) {
-                    logError("httpSize requires a complete byte-range size in HTTP 206")
-                    return -1L
+        var attempt = 0
+        while (true) {
+            try {
+                val req = okhttp3.Request.Builder()
+                    .url(url)
+                    .header("Range", "bytes=0-0")
+                    .header("Accept-Encoding", "identity")
+                    .build()
+                return client.newCall(req).execute().use { resp ->
+                    onHttpStatus(url, resp.code)
+                    val range = responseRange(resp, 0, 0)
+                    val total = range?.total
+                    if (resp.code != 206 || range == null || range.length != 1L || total == null ||
+                        total <= 0L
+                    ) {
+                        logError("httpSize requires a complete byte-range size in HTTP 206")
+                        return@use -1L
+                    }
+                    // A Content-Range header alone is not proof of an actual byte.
+                    // readByte throws for truncated responses and use closes every path.
+                    resp.body!!.source().readByte()
+                    total
                 }
-                // A Content-Range header alone is not proof of an actual byte.
-                // readByte throws for truncated responses and use closes every path.
-                resp.body!!.source().readByte()
-                total
+            } catch (t: Throwable) {
+                if (isDnsFailure(t) && attempt + 1 < DNS_RETRY_ATTEMPTS) {
+                    ++attempt
+                    try {
+                        Thread.sleep(DNS_RETRY_DELAY_MS * attempt)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return -1L
+                    }
+                    continue
+                }
+                logError("httpSize threw: ${t.javaClass.simpleName}")
+                return -1L
             }
-        } catch (t: Throwable) {
-            logError("httpSize threw: ${t.javaClass.simpleName}")
-            -1L
         }
     }
 
@@ -601,27 +629,48 @@ internal class HttpRangeClient(
     fun httpRange(url: String, start: Long, end: Long): ByteArray? {
         if (start < 0 || end < start || end - start >= Int.MAX_VALUE) return null
         val requestedLength = end - start + 1
-        return try {
+        val req = try {
             val req = okhttp3.Request.Builder()
                 .url(url)
                 .header("Range", "bytes=$start-$end")
                 .header("Accept-Encoding", "identity")
                 .build()
-            client.newCall(req).execute().use { resp ->
-                onHttpStatus(url, resp.code)
-                val range = responseRange(resp, start, end)
-                if (range == null) {
-                    logError("httpRange invalid HTTP ${resp.code} response for [$start-$end]")
-                    return null
-                }
-                // Bound the allocation even when a server ignores Range and
-                // returns the complete movie with HTTP 200.
-                val length = if (range.length < 0) requestedLength else minOf(requestedLength, range.length)
-                resp.body!!.source().readByteArray(length)
-            }
+            req
         } catch (t: Throwable) {
             logError("httpRange threw for [$start-$end]: ${t.javaClass.simpleName}")
-            null
+            return null
+        }
+        var attempt = 0
+        while (true) {
+            try {
+                return client.newCall(req).execute().use { resp ->
+                    onHttpStatus(url, resp.code)
+                    val range = responseRange(resp, start, end)
+                    if (range == null) {
+                        logError("httpRange invalid HTTP ${resp.code} response for [$start-$end]")
+                        return null
+                    }
+                    // Bound the allocation even when a server ignores Range and
+                    // returns the complete movie with HTTP 200.
+                    val length =
+                        if (range.length < 0) requestedLength
+                        else minOf(requestedLength, range.length)
+                    resp.body!!.source().readByteArray(length)
+                }
+            } catch (t: Throwable) {
+                if (isDnsFailure(t) && attempt + 1 < DNS_RETRY_ATTEMPTS) {
+                    ++attempt
+                    try {
+                        Thread.sleep(DNS_RETRY_DELAY_MS * attempt)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return null
+                    }
+                    continue
+                }
+                logError("httpRange threw for [$start-$end]: ${t.javaClass.simpleName}")
+                return null
+            }
         }
     }
 
@@ -629,12 +678,18 @@ internal class HttpRangeClient(
     // An open-ended `Range: bytes=start-` request whose body is read chunk by
     // chunk, so the native producer can hand each arriving TCP segment to the
     // player immediately.
-    private class Stream(val url: String, val call: okhttp3.Call, val start: Long, val expectedSize: Long) {
+    private class Stream(
+        val request: okhttp3.Request,
+        val start: Long,
+        val expectedSize: Long,
+    ) {
+        val url: String = request.url.toString()
         // Close only takes the short state monitor. It never waits for the
         // readLock, so it can interrupt a thread blocked in read/execute.
         val readLock = Any()
         var connecting = false
         var closed = false
+        var call: okhttp3.Call? = null
         var resp: okhttp3.Response? = null
         var input: InputStream? = null
         var remaining = -1L
@@ -655,10 +710,9 @@ internal class HttpRangeClient(
                 .header("Range", "bytes=$start-")
                 .header("Accept-Encoding", "identity")
                 .build()
-            val call = streamClient.newCall(req)
             val id = nextId.getAndIncrement()
             if (id <= 0L) return 0L
-            streams[id] = Stream(url, call, start, expectedSize)
+            streams[id] = Stream(req, start, expectedSize)
             id
         } catch (t: Throwable) {
             logError("streamPrepare threw @$start: ${t.javaClass.simpleName}")
@@ -677,27 +731,52 @@ internal class HttpRangeClient(
         }
         var resp: okhttp3.Response? = null
         var retained = false
-        return try {
-            val response = s.call.execute()
-            resp = response
-            onHttpStatus(s.url, response.code)
-            val range = responseRange(response, s.start, null)
-            if (range == null || (s.expectedSize >= 0 && range.total != s.expectedSize)) {
-                logError("streamConnect invalid HTTP ${response.code} response @${s.start}")
-                return false
-            }
-            synchronized(s) {
-                if (!s.closed) {
-                    s.resp = response
-                    s.input = response.body!!.byteStream()
-                    s.remaining = range.length
-                    retained = true
+        try {
+            var attempt = 0
+            while (true) {
+                val call = streamClient.newCall(s.request)
+                synchronized(s) {
+                    if (s.closed) {
+                        call.cancel()
+                        return false
+                    }
+                    s.call = call
+                }
+                try {
+                    val response = call.execute()
+                    resp = response
+                    onHttpStatus(s.url, response.code)
+                    val range = responseRange(response, s.start, null)
+                    if (range == null || (s.expectedSize >= 0 && range.total != s.expectedSize)) {
+                        logError("streamConnect invalid HTTP ${response.code} response @${s.start}")
+                        return false
+                    }
+                    synchronized(s) {
+                        if (!s.closed) {
+                            s.resp = response
+                            s.input = response.body!!.byteStream()
+                            s.remaining = range.length
+                            retained = true
+                        }
+                    }
+                    return retained
+                } catch (t: Throwable) {
+                    if (isDnsFailure(t) && attempt + 1 < DNS_RETRY_ATTEMPTS && !s.closed) {
+                        ++attempt
+                        try {
+                            Thread.sleep(DNS_RETRY_DELAY_MS * attempt)
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            return false
+                        }
+                        if (!s.closed) continue
+                    }
+                    throw t
                 }
             }
-            retained
         } catch (t: Throwable) {
             logError("streamConnect threw @${s.start}: ${t.javaClass.simpleName}")
-            false
+            return false
         } finally {
             if (!retained) {
                 streamClose(id)
@@ -707,6 +786,7 @@ internal class HttpRangeClient(
                 }
             }
         }
+        return false
     }
 
     /** Open a streamed GET at [start]. Returns a stream id, or 0 on failure. */
@@ -767,11 +847,11 @@ internal class HttpRangeClient(
     /** Close and release a stream opened by [streamOpen]. */
     fun streamClose(id: Long) {
         val s = streams.remove(id) ?: return
-        val response = synchronized(s) {
+        val (call, response) = synchronized(s) {
             s.closed = true
-            s.resp
+            s.call to s.resp
         }
-        s.call.cancel() // Interrupt an in-flight read before closing its body.
+        call?.cancel() // Interrupt an in-flight read before closing its body.
         try {
             response?.close() // also closes the body / underlying stream
         } catch (_: Throwable) {

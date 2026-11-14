@@ -12,10 +12,12 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha512};
 use tokio::io::AsyncWriteExt;
+use tokio::time::Instant;
 
 use crate::endpoints::base::{
-    dragon_read_json_headers, phoenix_player_headers, phoenix_player_url, Upstream, UpstreamMode,
-    UpstreamRequestSpec, UA_ANDROID_BROWSER, UA_WINDOWS_BROWSER,
+    dragon_batch_player_headers, dragon_batch_player_url, dragon_read_json_headers,
+    phoenix_player_headers, phoenix_player_url, Upstream, UpstreamMode, UpstreamRequestSpec,
+    UA_ANDROID_BROWSER, UA_WINDOWS_BROWSER,
 };
 use crate::endpoints::util::{default_val, go_query_escape, int_default, user_agent_headers};
 use crate::endpoints::{Ctx, Params, Server};
@@ -31,6 +33,20 @@ const SPADE_CONSTANTS: [u8; 64] = [
 ];
 
 const FALLBACK_USER_AGENT: &str = "com.xs.fm/632 (Linux; U; Android 15; zh_CN; 23049RAD8C; Build/AQ3A.250226.002; Cronet/TTNetVersion:fc4cebd3 2024-12-10 QuicVersion:d9628e3d 2024-10-11)";
+
+const VIDEO_FETCH_BUDGET: Duration = Duration::from_secs(12);
+const VIDEO_AUXILIARY_BUDGET: Duration = Duration::from_secs(8);
+const VIDEO_RESOLUTION_BUDGET: Duration = Duration::from_secs(14);
+const VIDEO_RESOLUTION_RESERVE: Duration = Duration::from_secs(2);
+const VIDEO_WORK_BUDGET: Duration = Duration::from_secs(18);
+const VIDEO_VARIANT_BUDGET: Duration = Duration::from_secs(4);
+const VIDEO_RESPONSE_RESERVE: Duration = Duration::from_secs(1);
+const VIDEO_SOURCE_RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(2)];
+const VIDEO_RETRY_MIN_BUDGET: Duration = Duration::from_millis(250);
+
+fn retry_has_budget(at: Instant, deadline: Instant) -> bool {
+    at + VIDEO_RETRY_MIN_BUDGET < deadline
+}
 
 /// The shortplay video_model URL from fetchShortplayVideoModel.
 const SHORTPLAY_VIDEO_MODEL_URL: &str = "https://api3-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/?iid={install_id}&device_id={device_id}&aid=1967&app_name=novelapp&version_code=72132&version_name=7.2.1.32&device_platform=android&device_brand=Xiaomi&os_version=13&cdid={cdid}";
@@ -91,6 +107,77 @@ impl ParsedVideoResponse {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamVideoSource {
+    Shortplay,
+    DragonBatch,
+    Phoenix,
+}
+
+impl StreamVideoSource {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Shortplay => "shortplay",
+            Self::DragonBatch => "dragon-batch",
+            Self::Phoenix => "phoenix",
+        }
+    }
+
+    fn deadline(self, fetch_deadline: Instant, auxiliary_deadline: Instant) -> Instant {
+        match self {
+            Self::DragonBatch => auxiliary_deadline,
+            Self::Shortplay | Self::Phoenix => fetch_deadline,
+        }
+    }
+
+    async fn fetch(self, ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+        match self {
+            Self::Shortplay => fetch_shortplay_video_model(ctx, video_id).await,
+            Self::DragonBatch => fetch_dragon_batch_video_model(ctx, video_id).await,
+            Self::Phoenix => fetch_phoenix_video_model(ctx, video_id).await,
+        }
+    }
+}
+
+struct FetchedVideoSource {
+    source: StreamVideoSource,
+    parsed: Option<ParsedVideoResponse>,
+    retryable: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectVideoSourceStatus {
+    Missing,
+    CodecRejected,
+    NotFound,
+}
+
+enum FallbackResolution {
+    Found(String, Vec<u8>),
+    CodecRejected,
+    NotFound { retryable: bool, conclusive: bool },
+}
+
+struct StreamVideoResolution {
+    resolution: VideoSourceResolution,
+    resolved_source: Option<StreamVideoSource>,
+}
+
+impl StreamVideoResolution {
+    fn found(source: StreamVideoSource, url: String, key: Vec<u8>) -> Self {
+        Self {
+            resolution: VideoSourceResolution::Found(url, key),
+            resolved_source: Some(source),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FallbackFetchFailure {
+    Retryable,
+    Permanent,
+}
+
 // ---------------------------------------------------------------------------
 // video.go
 // ---------------------------------------------------------------------------
@@ -103,69 +190,165 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
         }
 
         let stream_mode = params.get_str("mode") == "stream";
-        // 短剧 stream 仍以 shortplay 模型选流，但清晰度列表要合并两条接口：
-        // 顶档（1080p）只出现在 phoenix 模型的 `fallback_api` 列表里，而两条
+        // 短剧 stream 仍以 shortplay 模型选流，但清晰度列表要合并官方接口：
+        // 顶档（1080p）只出现在 phoenix 模型的 `fallback_api` 列表里，而两路
         // 接口的编码分布并不相同——shortplay 各档是 h265，phoenix 的低档是解不
-        // 了的 bytevc2（实测 2026-10-12 同一集对拍）。二选一必然少档：只信
-        // shortplay 会丢 1080P，只信 phoenix 会让低档被编码门整片丢掉。
-        // 两个请求互不依赖，并发发出，不额外占用一个往返。
-        let (parsed, phoenix_parsed, resolved) = if stream_mode {
-            // Resolve the primary source while quality metadata is loading.
-            // A primary failure cancels the auxiliary work, but auxiliary
-            // failure remains non-fatal and successful tiers are never cut off.
-            let primary = async {
-                let parsed = ParsedVideoResponse::parse(
-                    &fetch_shortplay_video_model(ctx, &video_id).await?,
-                )?;
-                let resolved = resolve_video_source(ctx, &parsed).await;
-                if resolved == VideoSourceResolution::CodecRejected {
-                    return Err(ApiError::Internal("该视频暂不支持播放".to_string()));
+        // 了的 bytevc2（实测 2026-10-12 同一集对拍）。2026-11-14 的 HAR 又
+        // 增加了 aid=1967 的批量接口；三路互不依赖，并发发出，任何一路失败
+        // 都不能取消其余已经返回的结果。
+        let work_started = Instant::now();
+        let work_budget = crate::upstream::budget::remaining()
+            .map(|left| left.saturating_sub(VIDEO_RESPONSE_RESERVE))
+            .unwrap_or(VIDEO_WORK_BUDGET)
+            .min(VIDEO_WORK_BUDGET);
+        let variant_budget = VIDEO_VARIANT_BUDGET.min(work_budget / 4);
+        let resolution_reserve = VIDEO_RESOLUTION_RESERVE.min(work_budget / 8);
+        let fetch_budget = VIDEO_FETCH_BUDGET
+            .min(work_budget.saturating_sub(variant_budget.saturating_add(resolution_reserve)));
+        let resolution_budget =
+            VIDEO_RESOLUTION_BUDGET.min(work_budget.saturating_sub(variant_budget));
+        let work_deadline = work_started + work_budget;
+        let fetch_deadline = work_started + fetch_budget;
+        let resolution_deadline = work_started + resolution_budget;
+        let (bodies, resolved) = if stream_mode {
+            // The three official sources are independent. A zero-length body
+            // from one (the observed failure: HTTP 200 + empty JSON body) must
+            // not cancel the others, so this is `join!`, never `try_join!`.
+            let auxiliary_deadline = work_started + VIDEO_AUXILIARY_BUDGET.min(fetch_budget);
+            let mut sources =
+                fetch_stream_video_sources(ctx, &video_id, fetch_deadline, auxiliary_deadline)
+                    .await;
+
+            let mut stream_resolution =
+                resolve_stream_video_sources(ctx, &video_id, &mut sources, resolution_deadline)
+                    .await;
+            for (retry_index, retry_delay) in VIDEO_SOURCE_RETRY_DELAYS.into_iter().enumerate() {
+                let has_legacy_raw = parsed_stream_bodies(&sources)
+                    .iter()
+                    .any(|body| legacy_raw_response_has_playable_url(body));
+                if matches!(
+                    &stream_resolution.resolution,
+                    VideoSourceResolution::Found(_, _)
+                ) || has_legacy_raw
+                {
+                    break;
                 }
-                Ok((parsed, resolved))
-            };
-            let auxiliary = async {
-                let response = fetch_phoenix_video_model(ctx, &video_id)
-                    .await
-                    .and_then(|raw| ParsedVideoResponse::parse(&raw));
-                Ok::<_, ApiError>(response)
-            };
-            let ((parsed, resolved), phoenix) = tokio::try_join!(primary, auxiliary)?;
-            // 凤凰那条失败原先被 `.ok()` 静默吃掉，而 1080P 只可能来自它那条
-            // 列表（短剧专用接口自带列表与其 `fallback_api` 都只到 720P）——
-            // 失败即面板少一档且毫无痕迹。**HTTP 成功不等于业务成功**：实测
-            // 2026-10-14 三集全部回火山错误封包
-            // `{BaseResp, Code:110001, Message:未知异常}`（无 `data`），上游只给
-            // 通用码、不给原因，所以这里把外壳与剧集 id 一起留在核心日志里。
-            // Note: 为什么静默会丢一整档、以及日志里刻意不记什么 —
-            // 见 .agents/notes/implemented/bug-fix/2026-10-14-phoenix-reject-silent-quality-loss.md
-            match &phoenix {
-                Ok(body) if body.root.get("data").is_some_and(Value::is_object) => {}
-                Ok(body) => log::warn!(
-                    "video {video_id}: phoenix body unusable (quality tiers lost): {}",
-                    body_envelope(&body.root)
-                ),
-                Err(error) => log::warn!(
-                    "video {video_id}: phoenix request failed (quality tiers lost): {}",
-                    error.message()
-                ),
+                let retry_at = Instant::now() + retry_delay;
+                let retryable: Vec<_> = sources
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, fetched)| {
+                        let deadline = fetched
+                            .source
+                            .deadline(fetch_deadline, auxiliary_deadline)
+                            .min(resolution_deadline);
+                        (fetched.retryable && retry_has_budget(retry_at, deadline)).then_some((
+                            index,
+                            fetched.source,
+                            deadline,
+                        ))
+                    })
+                    .collect();
+                if retryable.is_empty() {
+                    break;
+                }
+                tokio::time::sleep_until(retry_at).await;
+                let now = Instant::now();
+                let retryable: Vec<_> = retryable
+                    .into_iter()
+                    .filter(|(_, _, deadline)| retry_has_budget(now, *deadline))
+                    .collect();
+                if retryable.is_empty() {
+                    log::warn!(
+                        "video {video_id}: source retry skipped; insufficient deadline remaining"
+                    );
+                    break;
+                }
+                let source_names = retryable
+                    .iter()
+                    .map(|(_, source, _)| source.name())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                log::warn!(
+                    "video {video_id}: no playable stream resolved; retrying sources={source_names} attempt={}",
+                    retry_index + 1
+                );
+                let video_id_ref = video_id.as_str();
+                let retries = retryable
+                    .into_iter()
+                    .map(|(index, source, deadline)| async move {
+                        (
+                            index,
+                            fetch_stream_video_source(source, ctx, video_id_ref, deadline).await,
+                        )
+                    });
+                for (index, fetched) in futures::future::join_all(retries).await {
+                    sources[index] = fetched;
+                }
+                stream_resolution =
+                    resolve_stream_video_sources(ctx, &video_id, &mut sources, resolution_deadline)
+                        .await;
+                if matches!(
+                    &stream_resolution.resolution,
+                    VideoSourceResolution::Found(_, _)
+                ) {
+                    let recovered_source = stream_resolution
+                        .resolved_source
+                        .map(StreamVideoSource::name)
+                        .unwrap_or("unknown");
+                    log::info!(
+                        "video {video_id}: playable stream recovered after retry; source={recovered_source}"
+                    );
+                    break;
+                }
             }
-            (parsed, phoenix.ok(), resolved)
+
+            let bodies = sources
+                .into_iter()
+                .filter_map(|source| source.parsed)
+                .collect::<Vec<_>>();
+            if bodies.is_empty() {
+                return Err(ApiError::Internal("视频取流失败，请稍后重试".to_string()));
+            }
+
+            (bodies, stream_resolution.resolution)
         } else {
-            let parsed =
-                ParsedVideoResponse::parse(&fetch_phoenix_video_model(ctx, &video_id).await?)?;
-            let resolved = resolve_video_source(ctx, &parsed).await;
-            (parsed, None, resolved)
+            let parsed = fetch_parsed_video_response(
+                "phoenix",
+                &video_id,
+                fetch_deadline,
+                fetch_phoenix_video_model(ctx, &video_id),
+            )
+            .await
+            .ok_or_else(|| ApiError::Internal("视频取流失败，请稍后重试".to_string()))?;
+            let resolved = resolve_video_source_until(
+                ctx,
+                &video_id,
+                StreamVideoSource::Phoenix,
+                &parsed,
+                resolution_deadline,
+            )
+            .await;
+            (vec![parsed], resolved)
         };
 
         // 官方 `wp3/o1.java:301-347` 的 `isSupportShowLandIcon` 按服务端
         // `vertical` 决定竖屏剧集是否给「全屏观看」（竖屏不给）。该字段随
         // 每集的 `VideoInfo.vertical` 下发，合成的取流响应原先把它丢了；
         // 这里透传出去，缺字段时为 null（Dart 侧保持旧行为，见 player_page）。
-        let vertical = episode_vertical_value(&parsed.root).or_else(|| {
-            phoenix_parsed
-                .as_ref()
-                .and_then(|extra| episode_vertical_value(&extra.root))
-        });
+        let vertical = bodies
+            .iter()
+            .find_map(|body| episode_vertical_value(&body.root));
+
+        if matches!(resolved, VideoSourceResolution::NotFound) {
+            if let Some(raw) = bodies
+                .iter()
+                .find(|body| legacy_raw_response_has_playable_url(body))
+                .map(|body| body.root.clone())
+            {
+                return Ok(raw);
+            }
+        }
 
         let (video_url, content_key) = match resolved {
             VideoSourceResolution::Found(url, key) => (url, key),
@@ -173,9 +356,11 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
                 return Err(ApiError::Internal("该视频暂不支持播放".to_string()));
             }
             VideoSourceResolution::NotFound => {
-                return Ok(parsed.root);
+                return Err(ApiError::Internal("视频取流失败，请稍后重试".to_string()));
             }
         };
+        let variant_deadline = (Instant::now() + variant_budget).min(work_deadline);
+        let variants = extract_stream_variants(ctx, &video_id, &bodies, variant_deadline).await;
 
         let source = json!({
             "video_url": video_url,
@@ -186,7 +371,7 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
             "vertical": vertical,
             // 全量兼容档（高→低）。官方面板按该列表渲染清晰度行；空数组
             // 表示单流，客户端隐藏清晰度入口。
-            "variants": extract_stream_variants(ctx, &parsed, phoenix_parsed.as_ref()).await,
+            "variants": variants,
         });
         if stream_mode {
             return Ok(source);
@@ -215,9 +400,8 @@ fn handle_video<'a>(ctx: &'a Ctx, params: &'a Params) -> BoxFuture<'a, ApiResult
     })
 }
 
-/// Queries the phoenix multi_video_model endpoint.
-async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
-    let post_body = serde_json::to_vec(&json!({
+fn multi_video_model_body(video_id: &str) -> ApiResult<Vec<u8>> {
+    serde_json::to_vec(&json!({
         "biz_param": {
             "detail_page_version": 0,
             "device_level": 3,
@@ -232,8 +416,12 @@ async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u
             "1004": [video_id],
         },
     }))
-    .map_err(|e| ApiError::Internal(format!("marshal phoenix video body: {e}")))?;
+    .map_err(|e| ApiError::Internal(format!("marshal multi_video_model body: {e}")))
+}
 
+/// Queries the phoenix multi_video_model endpoint.
+async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+    let post_body = multi_video_model_body(video_id)?;
     Upstream::new(ctx.up.clone())
         .raw(&UpstreamRequestSpec {
             mode: UpstreamMode::DeviceSigned,
@@ -243,6 +431,387 @@ async fn fetch_phoenix_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u
             ..Default::default()
         })
         .await
+}
+
+async fn fetch_parsed_video_response(
+    source: &str,
+    video_id: &str,
+    deadline: Instant,
+    request: impl std::future::Future<Output = ApiResult<Vec<u8>>>,
+) -> Option<ParsedVideoResponse> {
+    let raw = match tokio::time::timeout_at(deadline, request).await {
+        Ok(Ok(raw)) => raw,
+        Ok(Err(error)) => {
+            log::warn!(
+                "video {video_id}: {source} request failed: {}",
+                error.message()
+            );
+            return None;
+        }
+        Err(_) => {
+            log::warn!("video {video_id}: {source} request deadline exceeded");
+            return None;
+        }
+    };
+    let parsed = match ParsedVideoResponse::parse(&raw) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            log::warn!(
+                "video {video_id}: {source} response unusable: {}",
+                error.message()
+            );
+            return None;
+        }
+    };
+    if upstream_response_is_failure(&parsed.root) {
+        log::warn!(
+            "video {video_id}: {source} business rejection: {}",
+            body_envelope(&parsed.root)
+        );
+        return None;
+    }
+    if !video_data_is_usable(&parsed.root) {
+        log::warn!(
+            "video {video_id}: {source} body has no video payload: {}",
+            body_envelope(&parsed.root)
+        );
+    }
+    Some(parsed)
+}
+
+async fn fetch_stream_video_sources(
+    ctx: &Ctx,
+    video_id: &str,
+    fetch_deadline: Instant,
+    auxiliary_deadline: Instant,
+) -> Vec<FetchedVideoSource> {
+    let shortplay =
+        fetch_stream_video_source(StreamVideoSource::Shortplay, ctx, video_id, fetch_deadline);
+    let batch = fetch_stream_video_source(
+        StreamVideoSource::DragonBatch,
+        ctx,
+        video_id,
+        auxiliary_deadline,
+    );
+    let phoenix =
+        fetch_stream_video_source(StreamVideoSource::Phoenix, ctx, video_id, fetch_deadline);
+    let (shortplay, batch, phoenix) = tokio::join!(shortplay, batch, phoenix);
+    vec![shortplay, batch, phoenix]
+}
+
+async fn fetch_stream_video_source(
+    source: StreamVideoSource,
+    ctx: &Ctx,
+    video_id: &str,
+    deadline: Instant,
+) -> FetchedVideoSource {
+    let source_name = source.name();
+    let raw = match tokio::time::timeout_at(deadline, source.fetch(ctx, video_id)).await {
+        Ok(Ok(raw)) => raw,
+        Ok(Err(error)) => {
+            log::warn!(
+                "video {video_id}: {source_name} request failed: {}",
+                error.message()
+            );
+            return FetchedVideoSource {
+                source,
+                parsed: None,
+                retryable: true,
+            };
+        }
+        Err(_) => {
+            log::warn!("video {video_id}: {source_name} request deadline exceeded");
+            return FetchedVideoSource {
+                source,
+                parsed: None,
+                retryable: true,
+            };
+        }
+    };
+    if raw.is_empty() {
+        log::warn!("video {video_id}: {source_name} empty response body; body_len=0");
+        return FetchedVideoSource {
+            source,
+            parsed: None,
+            retryable: true,
+        };
+    }
+    let parsed = match ParsedVideoResponse::parse(&raw) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            log::warn!(
+                "video {video_id}: {source_name} response unusable: {}; body_len={}",
+                error.message(),
+                raw.len()
+            );
+            return FetchedVideoSource {
+                source,
+                parsed: None,
+                retryable: true,
+            };
+        }
+    };
+    if upstream_response_is_failure(&parsed.root) {
+        log::warn!(
+            "video {video_id}: {source_name} business rejection: {}",
+            body_envelope(&parsed.root)
+        );
+        return FetchedVideoSource {
+            source,
+            parsed: None,
+            retryable: false,
+        };
+    }
+    if !video_data_is_usable(&parsed.root) {
+        log::warn!(
+            "video {video_id}: {source_name} body has no video payload: {}",
+            body_envelope(&parsed.root)
+        );
+    }
+    FetchedVideoSource {
+        source,
+        parsed: Some(parsed),
+        retryable: false,
+    }
+}
+
+fn parsed_stream_bodies(sources: &[FetchedVideoSource]) -> Vec<&ParsedVideoResponse> {
+    sources
+        .iter()
+        .filter_map(|fetched| fetched.parsed.as_ref())
+        .collect()
+}
+
+async fn resolve_stream_video_sources(
+    ctx: &Ctx,
+    video_id: &str,
+    sources: &mut [FetchedVideoSource],
+    deadline: Instant,
+) -> StreamVideoResolution {
+    let mut direct_statuses = Vec::with_capacity(sources.len());
+    for fetched in sources.iter() {
+        let status = match fetched.parsed.as_ref() {
+            None => DirectVideoSourceStatus::Missing,
+            Some(parsed) => match resolve_video_source_direct(parsed) {
+                VideoSourceResolution::Found(url, key) => {
+                    return StreamVideoResolution::found(fetched.source, url, key);
+                }
+                VideoSourceResolution::CodecRejected => DirectVideoSourceStatus::CodecRejected,
+                VideoSourceResolution::NotFound => DirectVideoSourceStatus::NotFound,
+            },
+        };
+        direct_statuses.push(status);
+    }
+
+    let mut all_codecs_rejected = sources.iter().all(|source| source.parsed.is_some());
+    for (index, fetched) in sources.iter_mut().enumerate() {
+        let Some(parsed) = fetched.parsed.as_ref() else {
+            continue;
+        };
+        let fallback =
+            resolve_video_source_fallback_status(ctx, video_id, fetched.source, parsed, deadline)
+                .await;
+        let no_payload = !video_data_is_usable(&parsed.root);
+        match fallback {
+            FallbackResolution::Found(url, key) => {
+                return StreamVideoResolution::found(fetched.source, url, key);
+            }
+            FallbackResolution::CodecRejected => {
+                fetched.retryable = false;
+            }
+            FallbackResolution::NotFound {
+                retryable,
+                conclusive,
+            } => {
+                if retryable || !conclusive {
+                    fetched.retryable = retryable;
+                    all_codecs_rejected = false;
+                    continue;
+                }
+                match direct_statuses[index] {
+                    DirectVideoSourceStatus::CodecRejected => {
+                        fetched.retryable = false;
+                    }
+                    DirectVideoSourceStatus::NotFound | DirectVideoSourceStatus::Missing => {
+                        fetched.retryable = no_payload;
+                        all_codecs_rejected = false;
+                    }
+                }
+            }
+        }
+    }
+
+    let resolution = if all_codecs_rejected {
+        VideoSourceResolution::CodecRejected
+    } else {
+        VideoSourceResolution::NotFound
+    };
+    StreamVideoResolution {
+        resolution,
+        resolved_source: None,
+    }
+}
+
+fn video_data_is_usable(root: &Value) -> bool {
+    let Some(data) = root
+        .get("data")
+        .and_then(Value::as_object)
+        .filter(|data| !data.is_empty())
+    else {
+        return false;
+    };
+    video_models(data).any(|model| video_model_has_candidate(&model))
+        || root
+            .get("data")
+            .is_some_and(|data| has_compatible_playable_url(data, 0))
+}
+
+fn video_model_has_candidate(model: &Map<String, Value>) -> bool {
+    if !fallback_api_url(model).is_empty() {
+        return true;
+    }
+    match model.get("video_list") {
+        Some(Value::Object(list)) => list.values().any(video_entry_has_candidate),
+        Some(Value::Array(list)) => list.iter().any(video_entry_has_candidate),
+        _ => false,
+    }
+}
+
+fn video_entry_has_candidate(entry: &Value) -> bool {
+    let Some(info) = entry.as_object() else {
+        return false;
+    };
+    video_quality_score(info).is_some()
+        && ["main_url", "backup_url_1", "play_url"].iter().any(|key| {
+            info.get(*key)
+                .and_then(Value::as_str)
+                .is_some_and(|url| !url.is_empty())
+        })
+}
+
+fn upstream_response_is_failure(root: &Value) -> bool {
+    if root.get("success").and_then(Value::as_bool) == Some(false)
+        || ["code", "Code"]
+            .iter()
+            .any(|key| upstream_code_is_failure(root.get(*key)))
+    {
+        return true;
+    }
+    root.get("BaseResp")
+        .and_then(Value::as_object)
+        .is_some_and(|base| {
+            ["code", "Code", "StatusCode"]
+                .iter()
+                .any(|key| upstream_code_is_failure(base.get(*key)))
+        })
+}
+
+fn upstream_code_is_failure(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Number(code)) => code
+            .as_i64()
+            .map(|code| code != 0 && code != 200)
+            .unwrap_or(false),
+        Some(Value::String(code)) => code
+            .trim()
+            .parse::<i64>()
+            .map(|code| code != 0 && code != 200)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn legacy_raw_response_has_playable_url(parsed: &ParsedVideoResponse) -> bool {
+    if !parsed.models.is_empty()
+        || upstream_response_is_failure(&parsed.root)
+        || parsed
+            .root
+            .get("data")
+            .is_some_and(|data| contains_known_video_shape(data, 0))
+    {
+        return false;
+    }
+    parsed
+        .root
+        .get("data")
+        .and_then(Value::as_object)
+        .is_some_and(|data| {
+            !data.is_empty()
+                && parsed
+                    .root
+                    .get("data")
+                    .is_some_and(|data| has_compatible_playable_url(data, 0))
+        })
+}
+
+fn contains_known_video_shape(value: &Value, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match value {
+        Value::Object(map) => {
+            map.keys().any(|key| {
+                matches!(
+                    key.as_str(),
+                    "video_model" | "video_info_list_map" | "video_list" | "play_info_list"
+                )
+            }) || map
+                .values()
+                .any(|nested| contains_known_video_shape(nested, depth + 1))
+        }
+        Value::Array(list) => list
+            .iter()
+            .any(|nested| contains_known_video_shape(nested, depth + 1)),
+        _ => false,
+    }
+}
+
+fn has_compatible_playable_url(value: &Value, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match value {
+        Value::Object(map) => {
+            if video_quality_score(map).is_some()
+                && ["video_url", "play_url", "main_url", "backup_url_1"]
+                    .iter()
+                    .filter_map(|key| map.get(*key).and_then(Value::as_str))
+                    .any(playable_url_text)
+            {
+                return true;
+            }
+            map.iter().any(|(key, nested)| {
+                key != "fallback_api" && has_compatible_playable_url(nested, depth + 1)
+            })
+        }
+        Value::Array(list) => list
+            .iter()
+            .any(|nested| has_compatible_playable_url(nested, depth + 1)),
+        _ => false,
+    }
+}
+
+fn playable_url_text(url: &str) -> bool {
+    let url = url.trim();
+    url.starts_with("http://") || url.starts_with("https://") || url.starts_with("/src/")
+}
+
+/// Queries the `aid=1967/novelapp` batch endpoint from the 2026-11-14 HAR.
+async fn fetch_dragon_batch_video_model(ctx: &Ctx, video_id: &str) -> ApiResult<Vec<u8>> {
+    let post_body = multi_video_model_body(video_id)?;
+    let mut url = dragon_batch_player_url();
+    url.push_str("&_rticket=");
+    url.push_str(&crate::timeutil::now_millis().to_string());
+    Upstream::new(ctx.up.clone())
+        .raw_with_device(&UpstreamRequestSpec {
+            mode: UpstreamMode::NoSign,
+            raw_url: Some(url),
+            body: Some(post_body),
+            headers: dragon_batch_player_headers(),
+            ..Default::default()
+        })
+        .await
+        .map(|(raw, _)| raw)
 }
 
 /// Queries the shortplay-style video_model endpoint used for short drama ids.
@@ -384,12 +953,43 @@ fn vertical_flag(value: &Value) -> Option<bool> {
     }
 }
 
-async fn resolve_video_source(ctx: &Ctx, parsed: &ParsedVideoResponse) -> VideoSourceResolution {
+fn resolve_video_source_direct(parsed: &ParsedVideoResponse) -> VideoSourceResolution {
+    let mut codec_rejected = false;
     for model in &parsed.models {
-        let source = extract_shortplay_video_model_source(model);
-        if source.is_terminal() {
-            return source;
+        match extract_shortplay_video_model_source(model) {
+            VideoSourceResolution::Found(url, key) => {
+                return VideoSourceResolution::Found(url, key);
+            }
+            VideoSourceResolution::CodecRejected => codec_rejected = true,
+            VideoSourceResolution::NotFound => {}
         }
+    }
+    if parsed.models.iter().any(model_needs_fallback) {
+        return if codec_rejected {
+            VideoSourceResolution::CodecRejected
+        } else {
+            VideoSourceResolution::NotFound
+        };
+    }
+    match extract_parsed_video_url(parsed) {
+        VideoSourceResolution::Found(url, key) => VideoSourceResolution::Found(url, key),
+        VideoSourceResolution::CodecRejected => VideoSourceResolution::CodecRejected,
+        VideoSourceResolution::NotFound if codec_rejected => VideoSourceResolution::CodecRejected,
+        VideoSourceResolution::NotFound => VideoSourceResolution::NotFound,
+    }
+}
+
+async fn resolve_video_source_fallback_status(
+    ctx: &Ctx,
+    video_id: &str,
+    source: StreamVideoSource,
+    parsed: &ParsedVideoResponse,
+    deadline: Instant,
+) -> FallbackResolution {
+    let mut codec_rejected = false;
+    let mut retryable = false;
+    let mut conclusive = true;
+    for model in &parsed.models {
         if !video_model_encrypted(model) {
             continue;
         }
@@ -397,15 +997,78 @@ async fn resolve_video_source(ctx: &Ctx, parsed: &ParsedVideoResponse) -> VideoS
         if fallback_url.is_empty() {
             continue;
         }
-        if let Some(fallback_data) = fetch_fallback_video_info(ctx, &fallback_url).await {
-            let source = extract_fallback_video_source(&fallback_data);
-            if source.is_terminal() {
-                return source;
+        if Instant::now() >= deadline {
+            retryable = true;
+            conclusive = false;
+            break;
+        }
+        match fetch_fallback_video_info(ctx, video_id, source.name(), &fallback_url, deadline).await
+        {
+            Ok(fallback_data) => match extract_fallback_video_source(&fallback_data) {
+                VideoSourceResolution::Found(url, key) => {
+                    return FallbackResolution::Found(url, key);
+                }
+                VideoSourceResolution::CodecRejected => codec_rejected = true,
+                VideoSourceResolution::NotFound => retryable = true,
+            },
+            Err(failure) => {
+                conclusive = false;
+                if failure == FallbackFetchFailure::Retryable {
+                    retryable = true;
+                }
             }
         }
     }
+    if !codec_rejected {
+        match extract_parsed_video_url(parsed) {
+            VideoSourceResolution::Found(url, key) => {
+                return FallbackResolution::Found(url, key);
+            }
+            VideoSourceResolution::CodecRejected => codec_rejected = true,
+            VideoSourceResolution::NotFound => {}
+        }
+    }
+    if codec_rejected && conclusive && !retryable {
+        FallbackResolution::CodecRejected
+    } else {
+        FallbackResolution::NotFound {
+            retryable,
+            conclusive,
+        }
+    }
+}
 
-    extract_parsed_video_url(parsed)
+fn model_needs_fallback(model: &Map<String, Value>) -> bool {
+    video_model_encrypted(model) && !fallback_api_url(model).is_empty()
+}
+
+async fn resolve_video_source_until(
+    ctx: &Ctx,
+    video_id: &str,
+    source: StreamVideoSource,
+    parsed: &ParsedVideoResponse,
+    deadline: Instant,
+) -> VideoSourceResolution {
+    let direct = resolve_video_source_direct(parsed);
+    if matches!(direct, VideoSourceResolution::Found(_, _)) {
+        return direct;
+    }
+    match resolve_video_source_fallback_status(ctx, video_id, source, parsed, deadline).await {
+        FallbackResolution::Found(url, key) => VideoSourceResolution::Found(url, key),
+        FallbackResolution::CodecRejected => VideoSourceResolution::CodecRejected,
+        FallbackResolution::NotFound {
+            retryable,
+            conclusive,
+        } => {
+            if retryable || !conclusive {
+                VideoSourceResolution::NotFound
+            } else if matches!(direct, VideoSourceResolution::CodecRejected) {
+                VideoSourceResolution::CodecRejected
+            } else {
+                VideoSourceResolution::NotFound
+            }
+        }
+    }
 }
 
 fn extract_shortplay_video_model_source(model: &Map<String, Value>) -> VideoSourceResolution {
@@ -432,7 +1095,6 @@ fn decrypt_variant_entry(
     info: &Map<String, Value>,
     key_seed: Option<&[u8]>,
 ) -> Option<(String, Vec<u8>)> {
-    let key_seed = key_seed?;
     let mut raw_url = info
         .get("main_url")
         .and_then(|v| v.as_str())
@@ -441,6 +1103,13 @@ fn decrypt_variant_entry(
     if raw_url.is_empty() {
         raw_url = info
             .get("backup_url_1")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    if raw_url.is_empty() {
+        raw_url = info
+            .get("play_url")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -459,12 +1128,32 @@ fn decrypt_variant_entry(
             }
         }
     }
-    let u = decrypt_spade_url(&raw_url, key_seed);
+    let u = if raw_url.starts_with("http") {
+        raw_url
+    } else {
+        let key_seed = key_seed?;
+        decrypt_spade_url(&raw_url, key_seed)
+    };
     if u.is_empty() {
         return None;
     }
-    let spade_a = info.get("spade_a").and_then(|v| v.as_str()).unwrap_or("");
-    Some((u, derive_spade_content_key(spade_a)))
+    Some((u, derive_variant_content_key(info)))
+}
+
+/// The CENC key fixture may sit at the entry root or inside `encrypt_info`
+/// (the HAR batch response uses the latter).
+fn derive_variant_content_key(info: &Map<String, Value>) -> Vec<u8> {
+    let spade_a = info
+        .get("spade_a")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            info.get("encrypt_info")
+                .and_then(Value::as_object)
+                .and_then(|encrypt| encrypt.get("spade_a"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("");
+    derive_spade_content_key(spade_a)
 }
 
 /// Display name for a variant height, mirroring the official mapping
@@ -506,43 +1195,59 @@ fn variant_display_name(height: i64) -> String {
 /// the client then hides the quality row entirely (official `oi3/k.P()` gate).
 async fn extract_stream_variants(
     ctx: &Ctx,
-    parsed: &ParsedVideoResponse,
-    extra: Option<&ParsedVideoResponse>,
+    video_id: &str,
+    bodies: &[ParsedVideoResponse],
+    deadline: Instant,
 ) -> Vec<Value> {
     let mut scored = Vec::new();
-    for body in std::iter::once(parsed).chain(extra) {
+    for body in bodies {
         for model in &body.models {
             // NOTE: 不用 video_model_encrypted() 做前置——它只认数组形状的
             // video_list；实测漫剧（series 7686494169098898456）的 video_list 是
             // object 且未标 encrypt，但每档照常带 spade_a/kid，选流门照常适用。
-            scored.extend(variant_rows_scored(
-                model.get("video_list").and_then(|v| v.as_object()),
+            scored.extend(variant_rows_scored_any(
+                model.get("video_list"),
                 model
                     .get("key_seed")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                     .and_then(|s| audio_b64_decode(s).ok()),
             ));
-            scored.extend(fallback_variant_rows(ctx, model).await);
+            if Instant::now() < deadline {
+                scored.extend(
+                    fallback_variant_rows(ctx, video_id, "variants", model, deadline).await,
+                );
+            }
         }
     }
     merge_variant_rows(scored)
 }
 
 /// The model's `fallback_api` list as scored rows; empty when the model has no
-/// fallback URL or it cannot be fetched. Same endpoint `resolve_video_source`
-/// falls back to.
-async fn fallback_variant_rows(ctx: &Ctx, model: &Map<String, Value>) -> Vec<(i64, Value)> {
+/// fallback URL or it cannot be fetched before the metadata deadline.
+async fn fallback_variant_rows(
+    ctx: &Ctx,
+    video_id: &str,
+    source: &str,
+    model: &Map<String, Value>,
+    deadline: Instant,
+) -> Vec<(i64, Value)> {
     let fallback_url = fallback_api_url(model);
-    if fallback_url.is_empty() {
+    if fallback_url.is_empty() || Instant::now() >= deadline {
         // 多数模型本来就没有这一条，不是异常。
         return Vec::new();
     }
-    let Some(fallback_data) = fetch_fallback_video_info(ctx, &fallback_url).await else {
-        // 有地址却拉不到，是这一档列表整片消失的另一种静默路径。
-        log::warn!("fallback_api fetch failed (quality tiers lost)");
-        return Vec::new();
-    };
+    let fallback_data =
+        match fetch_fallback_video_info(ctx, video_id, source, &fallback_url, deadline).await {
+            Ok(fallback_data) => fallback_data,
+            Err(_) => {
+                // 有地址却拉不到，是这一档列表整片消失的另一种静默路径。
+                log::warn!(
+                    "video {video_id}: {source} fallback_api fetch failed (quality tiers lost)"
+                );
+                return Vec::new();
+            }
+        };
     let list = fallback_data
         .get("video_info")
         .and_then(|v| v.get("data"))
@@ -552,10 +1257,8 @@ async fn fallback_variant_rows(ctx: &Ctx, model: &Map<String, Value>) -> Vec<(i6
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .and_then(|s| audio_b64_decode(s).ok());
-    let list = list
-        .and_then(|d| d.get("video_list"))
-        .and_then(|v| v.as_object());
-    variant_rows_scored(list, key_seed)
+    let list = list.and_then(|d| d.get("video_list"));
+    variant_rows_scored_any(list, key_seed)
 }
 
 /// Ranks rows best-first and keeps one row per resolution. A resolution offered
@@ -641,17 +1344,50 @@ fn json_type_of(value: Option<&Value>) -> &'static str {
 
 /// Builds the variant rows from one `video_list` object, keeping the quality
 /// score so callers can merge several upstream lists before ranking them.
+#[cfg(test)]
 fn variant_rows_scored(
     video_list: Option<&Map<String, Value>>,
     key_seed: Option<Vec<u8>>,
 ) -> Vec<(i64, Value)> {
-    let Some(video_list) = video_list else {
-        return Vec::new();
+    let entries: Vec<(String, &Map<String, Value>)> = video_list
+        .into_iter()
+        .flat_map(|list| {
+            list.iter()
+                .filter_map(|(slot, value)| value.as_object().map(|info| (slot.clone(), info)))
+        })
+        .collect();
+    variant_rows_from_entries(entries, key_seed)
+}
+
+fn variant_rows_scored_any(
+    video_list: Option<&Value>,
+    key_seed: Option<Vec<u8>>,
+) -> Vec<(i64, Value)> {
+    let entries: Vec<(String, &Map<String, Value>)> = match video_list {
+        Some(Value::Object(list)) => list
+            .iter()
+            .filter_map(|(slot, value)| value.as_object().map(|info| (slot.clone(), info)))
+            .collect(),
+        Some(Value::Array(list)) => list
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| value.as_object().map(|info| (index.to_string(), info)))
+            .collect(),
+        _ => return Vec::new(),
     };
-    let mut rows: Vec<(i64, Value)> = video_list
-        .iter()
-        .filter_map(|(slot, value)| {
-            let info = value.as_object()?;
+    variant_rows_from_entries(entries, key_seed)
+}
+
+fn variant_rows_from_entries(
+    entries: Vec<(String, &Map<String, Value>)>,
+    key_seed: Option<Vec<u8>>,
+) -> Vec<(i64, Value)> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let mut rows: Vec<(i64, Value)> = entries
+        .into_iter()
+        .filter_map(|(slot, info)| {
             let w = int64_from_any(info.get("vwidth").unwrap_or(&Value::Null));
             let h = int64_from_any(info.get("vheight").unwrap_or(&Value::Null));
             // 档位语义按**短边**：竖屏剧 1280×720 是 720P 而非 2K
@@ -711,7 +1447,21 @@ fn extract_video_model_url(model: &Map<String, Value>) -> VideoSourceResolution 
     let Some(video_list) = model.get("video_list").and_then(|v| v.as_array()) else {
         return VideoSourceResolution::NotFound;
     };
-    extract_video_list_source(video_list)
+    let has_quality_metadata = video_list.iter().any(|item| {
+        item.as_object().is_some_and(|info| {
+            ["vwidth", "vheight", "bitrate", "real_bitrate", "video_meta"]
+                .iter()
+                .any(|key| info.contains_key(*key))
+        })
+    });
+    if has_quality_metadata {
+        select_video_source(video_list.iter(), |info| decrypt_variant_entry(info, None))
+    } else {
+        // Legacy arrays without ranking metadata used their last entry.
+        select_video_source(video_list.iter().rev(), |info| {
+            decrypt_variant_entry(info, None)
+        })
+    }
 }
 
 fn extract_video_list_source(video_list: &[Value]) -> VideoSourceResolution {
@@ -776,19 +1526,59 @@ fn fallback_api_url(model: &Map<String, Value>) -> String {
     u
 }
 
-async fn fetch_fallback_video_info(ctx: &Ctx, u: &str) -> Option<Map<String, Value>> {
+async fn fetch_fallback_video_info(
+    ctx: &Ctx,
+    video_id: &str,
+    source: &str,
+    u: &str,
+    deadline: Instant,
+) -> Result<Map<String, Value>, FallbackFetchFailure> {
     // JSON response: same 64 MiB cap as every other API call.
-    let raw = unsigned_get(
-        ctx,
-        u,
-        FALLBACK_USER_AGENT,
-        crate::upstream::http::API_BODY_LIMIT_BYTES,
+    let raw = match tokio::time::timeout_at(
+        deadline,
+        unsigned_get(
+            ctx,
+            u,
+            FALLBACK_USER_AGENT,
+            crate::upstream::http::API_BODY_LIMIT_BYTES,
+        ),
     )
-    .await?;
-    serde_json::from_slice::<Value>(&raw)
-        .ok()?
-        .as_object()
+    .await
+    {
+        Ok(Some(raw)) => raw,
+        Ok(None) => {
+            log::warn!("video {video_id}: {source} fallback_api request failed");
+            return Err(FallbackFetchFailure::Retryable);
+        }
+        Err(_) => {
+            log::warn!("video {video_id}: {source} fallback_api request deadline exceeded");
+            return Err(FallbackFetchFailure::Retryable);
+        }
+    };
+    if raw.is_empty() {
+        log::warn!("video {video_id}: {source} fallback_api empty response body; body_len=0");
+        return Err(FallbackFetchFailure::Retryable);
+    }
+    let root = match serde_json::from_slice::<Value>(&raw) {
+        Ok(root) => root,
+        Err(error) => {
+            log::warn!(
+                "video {video_id}: {source} fallback_api response unusable: {error}; body_len={}",
+                raw.len()
+            );
+            return Err(FallbackFetchFailure::Retryable);
+        }
+    };
+    if upstream_response_is_failure(&root) {
+        log::warn!(
+            "video {video_id}: {source} fallback_api business rejection: {}",
+            body_envelope(&root)
+        );
+        return Err(FallbackFetchFailure::Permanent);
+    }
+    root.as_object()
         .cloned()
+        .ok_or(FallbackFetchFailure::Retryable)
 }
 
 fn extract_fallback_video_source(root: &Map<String, Value>) -> VideoSourceResolution {
@@ -808,25 +1598,7 @@ fn extract_fallback_video_source(root: &Map<String, Value>) -> VideoSourceResolu
     };
 
     select_video_source(video_list.values(), |info| {
-        let key_seed = key_seed.as_deref()?;
-        let mut raw_url = info
-            .get("main_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if raw_url.is_empty() {
-            raw_url = info
-                .get("backup_url_1")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
-        let u = decrypt_spade_url(&raw_url, key_seed);
-        if u.is_empty() {
-            return None;
-        }
-        let spade_a = info.get("spade_a").and_then(|v| v.as_str()).unwrap_or("");
-        Some((u, derive_spade_content_key(spade_a)))
+        decrypt_variant_entry(info, key_seed.as_deref())
     })
 }
 
