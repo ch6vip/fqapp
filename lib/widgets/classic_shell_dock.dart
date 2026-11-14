@@ -35,10 +35,12 @@ class ClassicShellDock extends StatefulWidget {
 }
 
 class _ClassicShellDockState extends State<ClassicShellDock> {
-  /// 同心圆角规则：dock 外轮廓是 [_dockHeight] 高的全胶囊（圆角 = 高/2），
-  /// 选中背景从 dock 内壁四周内缩 [_innerInset]，圆角取 `外圆角 − 内缩间距`
-  /// （内层背景高 64 − 8 = 56 = 2 × 28，同样是全胶囊），两层圆弧圆心同在
-  /// dock 中线上、四周间距均匀，观感是外轮廓正好比高亮背景大一圈。
+  /// 同心圆角规则：dock 外轮廓是 [_dockHeight] 高的全胶囊，选中背景从 dock
+  /// 内壁四周内缩 [_innerInset]，圆角取 `外圆角 − 内缩间距`（内层背景高
+  /// 64 − 8 = 56 = 2 × 28），两层圆弧圆心同在 dock 中线上、四周间距均匀。
+  /// 两层都画成 [RoundedSuperellipseBorder]（M3 连续曲率 squircle，对齐
+  /// PiliPlus 的 FloatingNavigationBar）：普通圆弧在胶囊两端有曲率突变，
+  /// 连续曲率的过渡更软，高亮块与外轮廓的弧度看起来是同一套。
   static const _dockHeight = 64.0;
   static const _dockRadius = _dockHeight / 2;
   static const _innerInset = 4.0;
@@ -336,9 +338,11 @@ class _ClassicShellDockState extends State<ClassicShellDock> {
                       child: RepaintBoundary(
                         child: DecoratedBox(
                           key: const ValueKey('classic-dock-selection'),
-                          decoration: BoxDecoration(
+                          decoration: ShapeDecoration(
                             color: indicatorColor,
-                            borderRadius: BorderRadius.circular(_innerRadius),
+                            shape: RoundedSuperellipseBorder(
+                              borderRadius: BorderRadius.circular(_innerRadius),
+                            ),
                           ),
                         ),
                       ),
@@ -373,15 +377,18 @@ class _ClassicShellDockState extends State<ClassicShellDock> {
     );
     // 描边画在 foregroundDecoration 而不是 border：border 会把内层内容挤压
     // 0.8px，破坏 [_innerInset] 的同心间距；foreground 层不参与布局。
+    // 形状与选中块同为 squircle，描边跟随连续曲率而不是四角圆弧。
     final bar = Container(
       key: const ValueKey('classic-dock-surface'),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: surfaceColor,
-        borderRadius: borderRadius,
+        shape: RoundedSuperellipseBorder(borderRadius: borderRadius),
       ),
-      foregroundDecoration: BoxDecoration(
-        borderRadius: borderRadius,
-        border: Border.all(color: borderColor, width: .8),
+      foregroundDecoration: ShapeDecoration(
+        shape: RoundedSuperellipseBorder(
+          borderRadius: borderRadius,
+          side: BorderSide(color: borderColor, width: .8),
+        ),
       ),
       child: navBar,
     );
@@ -400,6 +407,10 @@ class _ClassicShellDockState extends State<ClassicShellDock> {
             constraints: const BoxConstraints(maxWidth: _dockMaxWidth),
             child: RepaintBoundary(
               child: Container(
+                // 阴影保留普通圆弧：ShapeDecoration 目前不支持 BoxShadow（Flutter
+                // 已知限制），无法直接用 RoundedSuperellipseBorder。前景与阴影的形状
+                // 不一致在 64 px 高的胶囊上属于 subpixel 级别，肉眼几乎不可辨；日后
+                // ShapeDecoration 支持 BoxShadow 时可将本层一并 squircle 化。
                 decoration: BoxDecoration(
                   borderRadius: borderRadius,
                   boxShadow: eink
@@ -421,7 +432,7 @@ class _ClassicShellDockState extends State<ClassicShellDock> {
                           ),
                         ],
                 ),
-                child: ClipRRect(
+                child: ClipRSuperellipse(
                   borderRadius: borderRadius,
                   child:
                       eink ||
