@@ -296,8 +296,16 @@ void main() {
       );
       expect(underline.constraints!.maxWidth, 16);
       expect(underline.constraints!.maxHeight, 2);
+      // 48dp 热区：文字只占顶部约 39×15dp，四周留白也是可点区。覆盖
+      // 方案（#384）里热区不参与行高，若被祖先裁剪或 sibling 遮挡，边缘
+      // 两下会静默失效——只 tap 文字中心测不到这件事。
+      final moreBox = tester.getRect(find.byType(ClassicHomeBlockMore));
+      await tester.tapAt(Offset(moreBox.left + 2, moreBox.center.dy));
+      expect(more, 1, reason: '文字左侧留白必须可点');
+      await tester.tapAt(Offset(moreBox.center.dx, moreBox.bottom - 2));
+      expect(more, 2, reason: '文字下方的热区必须可点');
       await tester.tap(find.text('更多'));
-      expect(more, 1);
+      expect(more, 3);
       await tester.drag(
         find.byKey(const Key('classic_home_rank_rail')),
         const Offset(-780, 0),
@@ -598,6 +606,146 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('小说'), findsOneWidget);
     expect(find.text('排行榜'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('排行榜标题到榜单标签的留白不超过 24dp，且热区仍是 48dp（#384 回归）', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          homeProvider.overrideWith(
+            () => HomeNotifier(
+              usesLocalTabs: true,
+              homepageLoader:
+                  ({
+                    int tabType = 2,
+                    int offset = 0,
+                    String? sessionId,
+                  }) async => HomepagePage(
+                    items: [for (var i = 1; i <= 12; i++) _book(i)],
+                    cells: [_rankCell()],
+                    nextOffset: null,
+                    sessionId: null,
+                  ),
+              searchLoader: (query, {int page = 1}) async => const [],
+            ),
+          ),
+        ],
+        child: _classic(const HomePage()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 标题文字底部 → 「推荐榜」文字顶部。#372 把「更多」的 48dp 热区塞进
+    // 标题行、榜单标签的 48dp 热区居中排，这里曾空到 48.5dp。修复后标题
+    // 行只由文字决定、下方 padding 归零，标签热区上下各留 12.7dp。0
+    final title = tester.getRect(find.text('排行榜').first);
+    final board = tester.getRect(find.text('推荐榜').first);
+    final gap = board.top - title.bottom;
+    expect(gap, lessThanOrEqualTo(20), reason: '标题到榜单标签空出了 $gap dp');
+    expect(gap, greaterThanOrEqualTo(8), reason: '压得太狠会贴着标题');
+
+    // 下划线底部 → 第一张卡片顶部：热区下缘的 12.7dp 空白就是全部间距，
+    // 不再叠 SizedBox。曾因标签内容贴顶把热区剩余高度全堆在这里（37.4dp）。
+    final boardColumn = find
+        .ancestor(of: find.text('推荐榜'), matching: find.byType(Column))
+        .first;
+    final underline = tester.getRect(
+      find.descendant(of: boardColumn, matching: find.byType(Container)),
+    );
+    final firstCard = tester.getRect(
+      find.byKey(const ValueKey('rank:book:榜书-1')),
+    );
+    final cardGap = firstCard.top - underline.bottom;
+    expect(cardGap, lessThanOrEqualTo(20), reason: '下划线到卡片空出了 $cardGap dp');
+    expect(cardGap, greaterThanOrEqualTo(8), reason: '压得太狠会贴着下划线');
+
+    // 触控尺寸与语义没有回退：「更多」48×48 仍完整，标签热区高度 ≥ 48。
+    final more = find.byType(ClassicHomeBlockMore);
+    expect(tester.getSize(more), const Size(48, 48));
+    final boardTap = find
+        .ancestor(of: find.text('推荐榜'), matching: find.byType(InkWell))
+        .first;
+    expect(tester.getSize(boardTap).height, 48);
+    final handle = tester.ensureSemantics();
+    expect(
+      tester.getSemantics(more).flagsCollection.isButton,
+      isTrue,
+      reason: '「更多」必须保留按钮语义',
+    );
+    handle.dispose();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('多榜单横向滚到底时，最后一个标签的点击不被「更多」截获', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    var selected = -1;
+    var more = 0;
+    await tester.pumpWidget(
+      _classic(
+        ClassicHomeRankRail(
+          title: '排行榜',
+          names: [for (var i = 1; i <= 9; i++) '榜单$i'],
+          selectedIndex: 0,
+          books: [for (var i = 1; i <= 3; i++) _book(i)],
+          loading: false,
+          onSelect: (i) => selected = i,
+          onOpen: (_) {},
+          onMore: () => more++,
+        ),
+      ),
+    );
+    // 横向滚到底：最后一个标签右缘停在标签行的右侧让位 padding 处。
+    await tester.drag(find.text('榜单1'), const Offset(-600, 0));
+    await tester.pumpAndSettle();
+    // 标签文字（y 44~60）与「更多」热区（y 8~56）有垂直重叠；未让位时
+    // 滚到底的最后标签会钻到热区下面，这一下会命中「更多」而非标签。
+    await tester.tap(find.text('榜单9'));
+    expect(selected, 8, reason: '最后标签的点击不能被「更多」热区截获');
+    expect(more, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('单榜单不渲染标签行，标题到卡片保持紧凑', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+    var opened = 0;
+    await tester.pumpWidget(
+      _classic(
+        ClassicHomeRankRail(
+          title: '排行榜',
+          names: const ['推荐榜'],
+          selectedIndex: 0,
+          books: [for (var i = 1; i <= 3; i++) _book(i)],
+          loading: false,
+          onSelect: (_) {},
+          onOpen: (_) => opened++,
+          onMore: () {},
+        ),
+      ),
+    );
+    // 只有一个榜单没有可选项：标签行不渲染，间距回退到 homeHeaderGap
+    // 与「让开 48dp 热区」两者的较大值（约 25dp）。
+    expect(find.text('推荐榜'), findsNothing);
+    final title = tester.getRect(find.text('排行榜'));
+    final card = tester.getRect(find.byKey(const ValueKey('rank:book:榜书-1')));
+    final gap = card.top - title.bottom;
+    expect(gap, inInclusiveRange(8, 32), reason: '单榜单标题到卡片空出了 $gap dp');
+    // 没有标签行时，「更多」的 48dp 热区（y 8~56）只能借标题行下方的
+    // 间距。卡片必须整体从热区底部之下开始，否则最后一张卡片右上角的
+    // 点击会被「更多」截获（卡片横向排到右缘时与热区 x 范围重叠）。
+    final lastCard = tester.getRect(
+      find.byKey(const ValueKey('rank:book:榜书-3')),
+    );
+    await tester.tapAt(Offset(lastCard.right - 10, lastCard.top + 4));
+    expect(opened, 1, reason: '最后一张卡片顶部的点击被「更多」热区截获');
     expect(tester.takeException(), isNull);
   });
 

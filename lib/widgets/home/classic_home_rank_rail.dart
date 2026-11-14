@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_lucide/flutter_lucide.dart';
 
@@ -9,6 +11,12 @@ import 'home_shelf.dart';
 const double _rankCardWidth = 100;
 const double _rankCoverHeight = 140;
 const double _rankCardGap = 12;
+
+/// 最小触控尺寸（Material 48dp）：「更多」与榜单标签共用。
+const double _minTapSize = 48;
+
+/// 「更多」热区与标签内容之间保留的间距。
+const double _moreGap = 12;
 
 /// f329399's horizontal TOP-cover rail. Only presentation lives here:
 /// HomeRankCell retains the selected board, loader and request generation.
@@ -37,64 +45,90 @@ class ClassicHomeRankRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scaler = MediaQuery.textScalerOf(context);
+    // 标题行高（HomeSectionHeader：19sp × 1.25）；单榜单没有标签行借
+    // 热区时，用它算出让位高度。
+    final titleHeight = scaler.scale(19) * 1.25;
     final railHeight =
         _rankCoverHeight +
         8 +
         scaler.scale(13) * 1.35 * 2 +
         4 +
         scaler.scale(11) * 1.3;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: [
-        HomeSectionHeader(
-          title: title,
-          action: ClassicHomeBlockMore(onTap: onMore),
-          // 首页分类条下面的第一段：标签条已经有下缘留白，这里再叠 20 会让
-          // 「标签 → 排行榜」空出三十多个像素，中间一片空白。
-          topPadding: 8,
-          alignActionToTop: true,
-        ),
-        if (names.length > 1)
-          _BoardNames(
-            names: names,
-            selectedIndex: selectedIndex,
-            onSelect: onSelect,
-          ),
-        const SizedBox(height: 12),
-        if (loading)
-          SizedBox(
-            height: railHeight,
-            child: const Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: HomePalette.accent,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            HomeSectionHeader(
+              title: title,
+              // 零高占位，只给「更多」留水平空间；按钮本体浮在下面的
+              // 覆盖层里。若把 48 高的按钮当 action 传进来，标题行会被撑高
+              // 到 48dp，标题底部到榜单标签空出近 50dp（#372 回归，#384）。
+              action: const SizedBox(width: _minTapSize),
+              // 首页分类条下面的第一段：标签条已经有下缘留白，这里再叠 20 会让
+              // 「标签 → 排行榜」空出三十多个像素，中间一片空白。
+              topPadding: 8,
+              // 标签行自带的 48dp 热区上下各留 12.7dp 空白，标题下方不再
+              // 叠 12；下划线到卡片的间距也由热区下缘承担（不再加 SizedBox）。
+              bottomPadding: 0,
+            ),
+            if (names.length > 1)
+              _BoardNames(
+                names: names,
+                selectedIndex: selectedIndex,
+                onSelect: onSelect,
+              )
+            else
+              // 没有标签行时热区不存在，自己补回标题到卡片的间距；但卡片
+              // 必须落在「更多」热区（top 8 + 48）下方：否则卡片横向排到
+              // 右缘时，最后一张卡片顶部的点击会落到热区里。
+              SizedBox(
+                height: math.max(homeHeaderGap, _minTapSize - titleHeight + 1),
+              ),
+            if (loading)
+              SizedBox(
+                height: railHeight,
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: HomePalette.accent,
+                    ),
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: railHeight,
+                child: ListView.separated(
+                  key: const Key('classic_home_rank_rail'),
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+                  itemCount: books.length,
+                  separatorBuilder: (_, _) =>
+                      const SizedBox(width: _rankCardGap),
+                  itemBuilder: (context, index) {
+                    final item = books[index];
+                    return _RankCard(
+                      key: ValueKey('rank:${item.kind}:${item.id}'),
+                      item: item,
+                      rank: index + 1,
+                      onTap: () => onOpen(item),
+                    );
+                  },
                 ),
               ),
-            ),
-          )
-        else
-          SizedBox(
-            height: railHeight,
-            child: ListView.separated(
-              key: const Key('classic_home_rank_rail'),
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: homeGutter),
-              itemCount: books.length,
-              separatorBuilder: (_, _) => const SizedBox(width: _rankCardGap),
-              itemBuilder: (context, index) {
-                final item = books[index];
-                return _RankCard(
-                  key: ValueKey('rank:${item.kind}:${item.id}'),
-                  item: item,
-                  rank: index + 1,
-                  onTap: () => onOpen(item),
-                );
-              },
-            ),
-          ),
+          ],
+        ),
+        // 热区从标题文字顶部起算、向下 48dp：整块 Column 远高于它，
+        // RenderBox 的 hitTest 不会裁掉超出行高的部分。
+        Positioned(
+          top: 8,
+          right: homeGutter,
+          child: ClassicHomeBlockMore(onTap: onMore),
+        ),
       ],
     );
   }
@@ -165,7 +199,13 @@ class _BoardNames extends StatelessWidget {
     final palette = HomePalette.of(context);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: homeGutter),
+      // 右侧给「更多」的 48dp 热区 + 间距让位：热区浮在标题行上，横向
+      // 滚到底时最后一个标签不能钻到它下面，否则文字上半的点击会被
+      // 「更多」截获（窄屏 6 个以上榜单名就会滚）。
+      padding: const EdgeInsets.only(
+        left: homeGutter,
+        right: homeGutter + _minTapSize + _moreGap,
+      ),
       child: Row(
         children: [
           for (var index = 0; index < names.length; index++)
@@ -182,12 +222,16 @@ class _BoardNames extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(
-                      minWidth: 48,
-                      minHeight: 48,
+                      minWidth: _minTapSize,
+                      minHeight: _minTapSize,
                     ),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       child: Column(
+                        // 48dp 热区高于内容（文字 + 下划线 ≈ 23dp）：内容垂直
+                        // 居中，上下各留 12.7dp。标题下方的 padding 和卡片的
+                        // SizedBox 已置 0，这两段空白正好被热区溢出借走，
+                        // 标题→标签、下划线→卡片都是 12.7dp（#384）。
                         mainAxisAlignment: MainAxisAlignment.center,
                         mainAxisSize: MainAxisSize.min,
                         children: [
