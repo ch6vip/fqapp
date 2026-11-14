@@ -158,6 +158,44 @@ pub fn dragon_read_json_headers() -> Vec<(String, String)> {
     ]
 }
 
+/// Headers for the `aid=1967/novelapp` batch player endpoint observed in the
+/// 2026-11-14 HAR. This is the same product identity as the primary shortplay
+/// request, not the Phoenix (`aid=8662`) fallback identity.
+pub fn dragon_batch_player_headers() -> Vec<(String, String)> {
+    vec![
+        (
+            "User-Agent".to_string(),
+            "com.dragon.read/70932 (Linux; U; Android 16; zh_CN; 23078RKD5C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:b9c3e521 2025-09-09 QuicVersion:c67e9834 2025-09-08)".to_string(),
+        ),
+        (
+            "Accept".to_string(),
+            "application/json; charset=utf-8,application/x-protobuf".to_string(),
+        ),
+        (
+            "Content-Type".to_string(),
+            "application/json; charset=utf-8".to_string(),
+        ),
+        ("x-xs-from-web".to_string(), "0".to_string()),
+        ("sdk-version".to_string(), "2".to_string()),
+        (
+            "x-vc-bdturing-sdk-version".to_string(),
+            "4.0.3.cn".to_string(),
+        ),
+        ("passport-sdk-version".to_string(), "5051451".to_string()),
+    ]
+}
+
+/// The successful batch request shape from the 2026-11-14 HAR:
+/// `api5-normal-sinfonlinec`, `aid=1967/novelapp`, version 7.0.9.32.
+/// Device identifiers remain placeholders so every pooled device signs with
+/// its own identifiers.
+pub fn dragon_batch_player_url() -> String {
+    format!(
+        "{HOST_FQNOVELC}/novel/player/multi_video_model/v1/?iid={{install_id}}\
+&device_id={{device_id}}&ac=wifi&channel=vivo_1967_64&aid=1967&app_name=novelapp&version_code=70932&version_name=7.0.9.32&device_platform=android&os=android&ssmix=a&device_type=23078RKD5C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=70932&resolution=1220*2547&dpi=480&update_version_code=70932&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=70932&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&rom_version=miui_V816_OS3.0.305.0.WMLCNXM&cdid={{cdid}}"
+    )
+}
+
 pub fn phoenix_player_headers() -> Vec<(String, String)> {
     vec![
         (
